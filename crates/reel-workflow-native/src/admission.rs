@@ -1,5 +1,6 @@
 //! Bounded positive input claims over an EXISTING effects-enabled index.
 //! No initialization, payload availability, publication, retention or selection.
+mod response;
 use crate::{
     NativeProfile, SnapshotInputs, error,
     qualified::{self, slots},
@@ -87,7 +88,7 @@ pub struct ClaimsGuard {
     _fence: reel_assets::admission::MetadataLock,
     _prepared: Prepared,
 }
-fn limits() -> projection::Limits {
+pub(crate) fn limits() -> projection::Limits {
     projection::Limits {
         objects: 512,
         logical_bytes: 1024 * 1024 * 1024,
@@ -95,7 +96,7 @@ fn limits() -> projection::Limits {
         ..projection::Limits::default()
     }
 }
-fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
+pub(crate) fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
     let raw = serde_json::to_vec(value)
         .map_err(|_| error(ErrorKind::Invalid, "admission-control-json"))?;
     if raw.len() > metadata::MAX_NODE_BYTES {
@@ -107,7 +108,7 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
     )
     .map_err(|_| error(ErrorKind::Invalid, "admission-control-json"))
 }
-fn native_error(value: anyhow::Error) -> reel_workflow::Error {
+pub(crate) fn native_error(value: anyhow::Error) -> reel_workflow::Error {
     fn journal(e: &source_claims::Error) -> ErrorKind {
         match e {
             source_claims::Error::Busy => ErrorKind::Busy,
@@ -306,6 +307,13 @@ impl Prepared {
         })
     }
     fn stores(&self, receipt: Option<&Receipt>) -> Result<(Index, MetadataStore)> {
+        self.stores_with_pending(receipt, false)
+    }
+    fn stores_with_pending(
+        &self,
+        receipt: Option<&Receipt>,
+        allow_pending: bool,
+    ) -> Result<(Index, MetadataStore)> {
         let p = &self.profile;
         let check = Index::open(&p.index_root, &self.control_minimum)
             .map_err(|e| native_error(e.into()))?;
@@ -332,7 +340,7 @@ impl Prepared {
         // A live ClaimsGuard, however, requires a settled observed index.
         if observed.index != p.index_identity
             || observed.cancelled
-            || (observed.pending && receipt.is_some())
+            || (observed.pending && receipt.is_some() && !allow_pending)
         {
             return Err(error(ErrorKind::NeedsRecovery, "admission-index-not-ready"));
         }
@@ -460,6 +468,10 @@ impl Prepared {
     /// Actual readback of original completed WorkRef, activation and positive
     /// coverage. The returned fence must outlive any operation relying on it.
     pub fn reopen(self, receipt: &Receipt) -> Result<ClaimsGuard> {
+        self.check_receipt(receipt)?;
+        self.reopen_checked(receipt)
+    }
+    fn check_receipt(&self, receipt: &Receipt) -> Result<()> {
         if receipt.schema != "reel.workflow-native-admission-receipt.v1"
             || receipt.task_key != self.snapshot.packet.task_key
             || receipt.attempt_id != self.attempt
@@ -473,6 +485,9 @@ impl Prepared {
                 "admission-original-receipt-binding",
             ));
         }
+        Ok(())
+    }
+    fn reopen_checked(self, receipt: &Receipt) -> Result<ClaimsGuard> {
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
         let fence = qualified::prepublication::actor_fence(
             index.identity(),

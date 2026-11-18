@@ -110,7 +110,7 @@ fn ordinary(metadata: &fs::Metadata, directory: bool) -> bool {
             metadata.is_file()
         }
 }
-fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
+pub(crate) fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(windows)]
@@ -136,7 +136,7 @@ fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
     }
     Ok((raw, file))
 }
-fn portable(path: &str) -> bool {
+pub(crate) fn portable(path: &str) -> bool {
     !path.is_empty()
         && path.len() <= 256
         && path.split('/').count() <= 16

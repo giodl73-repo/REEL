@@ -450,6 +450,423 @@ fn existing_native_store_reads_exact_committed_input_with_guards_and_no_publicat
 
 // These admission fixtures create only isolated native metadata/index journals.
 // Their synthetic store declaration does not claim a real payload pool exists.
+#[cfg(windows)]
+fn response_fixture(
+    packet: &Packet,
+    root: &Path,
+) -> (ReturnedResult, reel_workflow_native::response::Returns) {
+    fs::create_dir(root).unwrap();
+    fs::write(root.join("note.txt"), b"synthetic response").unwrap();
+    (
+        ReturnedResult {
+            schema: RESULT_SCHEMA.into(),
+            task_id: packet.task.id.clone(),
+            task_key: packet.task_key.clone(),
+            attempt_id: "attempt-1".into(),
+            artifacts: BTreeMap::from([(
+                "note".into(),
+                Artifact {
+                    logical_id: "candidate/note".into(),
+                    sha256: digest(b"synthetic response"),
+                    bytes: 18,
+                    media_type: "text/plain".into(),
+                },
+            )]),
+            provenance: Provenance {
+                mode: Mode::Handoff,
+                provider: None,
+                model: None,
+                executable: None,
+            },
+        },
+        reel_workflow_native::response::Returns {
+            schema: "reel.workflow-returns.v1".into(),
+            root: root.into(),
+            files: BTreeMap::from([("note".into(), "note.txt".into())]),
+        },
+    )
+}
+
+#[cfg(windows)]
+#[test]
+fn external_registration_is_logically_idempotent_and_preserves_positive_claims() {
+    use reel_workflow_native::{admission::Prepared, response};
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let output = Object::from_bytes(b"synthetic response");
+    assert!(case.protected(&output).is_empty());
+    let first = response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let second = response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    assert_eq!(first.work, second.work);
+    assert_eq!(first.registration, second.registration);
+    assert_eq!(
+        case.protected(&output),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
+    let mut changed = result.clone();
+    changed.provenance.model = Some("different-model".into());
+    assert_eq!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &changed,
+            &returns
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Conflict
+    );
+    let mut changed = result.clone();
+    changed.artifacts.get_mut("note").unwrap().logical_id = "candidate/another-note".into();
+    assert_eq!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &changed,
+            &returns
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Conflict
+    );
+    fs::write(returns.root.join("note.txt"), b"changed response!!").unwrap();
+    assert!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &returns
+        )
+        .is_err()
+    );
+    assert_eq!(
+        case.protected(&output),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert!(!case.source.source.pool.repository.exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn external_registration_refuses_unsafe_or_incomplete_return_bindings() {
+    use reel_workflow_native::{admission::Prepared, response};
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let output = Object::from_bytes(b"synthetic response");
+    for bad_path in [
+        "../note.txt",
+        "C:/note.txt",
+        "note.txt:stream",
+        "NUL",
+        "nested/../note.txt",
+    ] {
+        let mut bad = returns.clone();
+        bad.files.insert("note".into(), bad_path.into());
+        assert!(
+            response::register(
+                &fixture.packet,
+                &case.source,
+                &case.profile,
+                &receipt,
+                &result,
+                &bad
+            )
+            .is_err()
+        );
+    }
+    let mut bad = returns.clone();
+    bad.files.clear();
+    assert!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &bad
+        )
+        .is_err()
+    );
+    let mut bad = returns.clone();
+    bad.root = case.profile.metadata_root.clone();
+    assert!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &bad
+        )
+        .is_err()
+    );
+    let mut changed = result.clone();
+    changed.attempt_id = "other-attempt".into();
+    assert!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &changed,
+            &returns
+        )
+        .is_err()
+    );
+    assert!(case.protected(&output).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn external_registration_recovers_original_native_prepare_without_new_identity() {
+    use reel_workflow_native::{admission::Prepared, response};
+    use tig_store::{
+        metadata::MetadataStore,
+        source_claims::protection::{self, Index, work},
+    };
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let staged = response::stage(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let output = Object::from_bytes(b"synthetic response");
+    assert!(case.protected(&output).is_empty());
+    let mut nodes =
+        MetadataStore::open(&case.profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
+    let mut index = Index::open(&case.profile.index_root, &receipt.index_checkpoint).unwrap();
+    let original = work::read(&mut index, &staged.work, &nodes).unwrap();
+    let mut interrupted = false;
+    assert!(
+        index
+            .update_hook(&original.update, &mut nodes, |stage| {
+                if stage == protection::Stage::Prepared {
+                    interrupted = true;
+                    Err(protection::Error::Unknown)
+                } else {
+                    Ok(())
+                }
+            })
+            .is_err()
+    );
+    assert!(interrupted);
+    drop(index);
+    drop(nodes);
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    let mut changed = result.clone();
+    changed.provenance.provider = Some("changed-provider".into());
+    assert_eq!(
+        response::register(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &changed,
+            &returns
+        )
+        .unwrap_err()
+        .kind,
+        ErrorKind::Conflict
+    );
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    let resumed = response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    assert_eq!(staged.work, resumed.work);
+    assert_eq!(staged.registration, resumed.registration);
+    assert_eq!(
+        case.protected(&output),
+        vec![case.profile.scope.actor.clone()]
+    );
+    Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .reopen(&receipt)
+        .unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "Publishes only a synthetic response into an explicitly declared existing test pool; no setup/hydration/selection"]
+fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
+    use reel_workflow_native::{NativeProfile, admission::Prepared, response};
+    use std::io::Read;
+    let path =
+        std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
+    let value: serde_json::Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+    let object: Object = serde_json::from_value(value["object"].clone()).unwrap();
+    let native: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
+    let mut fixture = Fixture::with_object(object.clone());
+    let git_raw = fs::read(&native.pool.git).unwrap();
+    fixture.profile.git = Tool {
+        path: native.pool.git.clone(),
+        sha256: digest(&git_raw),
+        bytes: git_raw.len() as u64,
+    };
+    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source = NativeProfile {
+        snapshot: fixture.profile.clone(),
+        annex,
+        source: native,
+    };
+    case.source.source.pool.control = control;
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let files = [
+        ("packet.json", serde_json::to_vec(&fixture.packet).unwrap()),
+        ("native.json", serde_json::to_vec(&case.source).unwrap()),
+        ("profile.json", serde_json::to_vec(&case.profile).unwrap()),
+        ("admission.json", receipt.canonical_bytes().unwrap()),
+        ("result.json", serde_json::to_vec(&result).unwrap()),
+        ("returns.json", serde_json::to_vec(&returns).unwrap()),
+    ];
+    for (name, raw) in &files {
+        fs::write(case.temp.path().join(name), raw).unwrap();
+    }
+    let invoke = |output: &str| {
+        Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+            .arg("ingest-response")
+            .args(files.iter().map(|(name, _)| case.temp.path().join(name)))
+            .arg(case.temp.path().join(output))
+            .arg("--apply")
+            .output()
+            .unwrap()
+    };
+    let first = invoke("candidate-1.json");
+    assert!(
+        first.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first.stdout)
+    );
+    // Simulate losing the first response: retry ORIGINAL result, not a new attempt.
+    let second = invoke("candidate-2.json");
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stdout)
+    );
+    let first_candidate: response::Candidate =
+        serde_json::from_slice(&fs::read(case.temp.path().join("candidate-1.json")).unwrap())
+            .unwrap();
+    let second_candidate: response::Candidate =
+        serde_json::from_slice(&fs::read(case.temp.path().join("candidate-2.json")).unwrap())
+            .unwrap();
+    assert_eq!(first_candidate.work, second_candidate.work);
+    assert_eq!(first_candidate.registration, second_candidate.registration);
+    let report: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(report["native_bytes_reopened"], true);
+    assert_eq!(report["retained_owner_acknowledged"], false);
+    assert_eq!(report["task_completed"], false);
+    assert_eq!(report["selected"], false);
+    let output = Object::from_bytes(b"synthetic response");
+    let mut reopened =
+        tig_git::annex::workflow::reader::open(&case.source.source, &output).unwrap();
+    let mut raw = Vec::new();
+    reopened.read_to_end(&mut raw).unwrap();
+    assert_eq!(raw, b"synthetic response");
+    assert_eq!(
+        case.protected(&output),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert_eq!(
+        case.protected(&object),
+        vec![case.profile.scope.actor.clone()]
+    );
+    assert_eq!(
+        fs::read(returns.root.join("note.txt")).unwrap(),
+        b"synthetic response"
+    );
+    if let Some(directory) = std::env::var_os("REEL_RESPONSE_EVIDENCE_DIRECTORY") {
+        use std::io::Write;
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        for (name, raw) in files.into_iter().chain([
+            (
+                "candidate.json",
+                serde_json::to_vec(&second_candidate).unwrap(),
+            ),
+            ("ingress-report.json", second.stdout),
+        ]) {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(directory.join(name))
+                .unwrap();
+            file.write_all(&raw).unwrap();
+            file.sync_all().unwrap();
+        }
+        let _ = case.temp.keep();
+        let _ = fixture.temp.keep();
+    }
+}
+
 struct AdmissionCase {
     temp: tempfile::TempDir,
     profile: reel_workflow_native::admission::Profile,

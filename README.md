@@ -18,12 +18,13 @@ than something REEL rewrites.
 The additive [workflow orchestration plan](docs/workflow-orchestration.md) maps
 the existing crates to direct and manual prompt/result execution. The
 `reel-workflow` prototype checks private task packets and returned candidate bytes;
-production staging, retention, providers and selection remain explicit next gates.
+production adoption, retention, providers and selection remain explicit next gates.
 The isolated [native workflow input bridge](crates/reel-workflow-native/README.md)
 now binds exact committed records to declared annex leaves and holds guarded
 native reads. Explicit input admission can protect declared resources in an
-existing job actor. Pinned private tickets support resumable input staging;
-retained-result completion remains open.
+existing job actor. Pinned private tickets support resumable input staging.
+Returned provider files can be registered by task/attempt, protected and ingested
+as unselected native candidates; retained-result completion remains open.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

@@ -181,3 +181,23 @@ remain private and exact; no browser package interpretation, provider dispatch,
 candidate ingestion, result retention, completion or selection is inferred.
 Comic source layout support is not an end-to-end native comic/render qualification.
 Native result registration and guarded retirement remain open acceptance gates.
+
+2026-11-18 response-ingress follow-up, producer-applied engineering,
+editor, comics-editor and rights/provenance checklists: returned images, text,
+audio and opaque browser payloads remain candidate bytes. Whole-set logical
+registration cannot be replaced by native content deduplication. Original
+task/attempt, admission, artifact identities and supplied provenance are frozen;
+changed results cannot silently register another candidate under that attempt.
+The native actor preserves original input/runtime history and acquires output
+claims before any payload publication. Private controls and return locations do
+not appear in portable CLI summaries; provider/model assertions stay unverified.
+
+Fault-injected native Prepare recovery must reconcile only matching original
+work. A changed result leaves pending work untouched. Explicit synthetic native
+ingress/reopen and a second CLI process verify publication/replay, not retained
+ownership, artistic merit, translation, editable comic sources, printer readiness
+or public release. Tool/comic responses are refused until their worker-receipt
+and native source-correspondence adapter exists. Return files, input claims and
+capacity remain preserved. Retained-owner ack, coordinator completion, expected
+baseline selection, actor close and guarded retirement remain open. These are
+producer-applied findings, not independent reviewers or human approvals.

@@ -130,7 +130,7 @@ Four original slot tests and six workflow/CLI admission fixtures exercise real
 isolated native metadata journals, restart/lost-response reuse, claim coverage,
 retained source metadata, scope refusal, node bounds and preserved CLI failures.
 They do not create a native payload pool. Full native-pool adoption, comic
-production, external candidate registration and retained-owner completion
+production and retained-owner completion
 still require end-to-end qualification before a real film/comic project adopts
 the workflow.
 
@@ -190,4 +190,67 @@ guarded access to an existing synthetic 1 MiB payload, preserved capacity and
 CLI restart/export. Its private controller enrollment/cooperating-writer scope
 is a declared fixture assumption; it changes no provider defaults or project
 bindings and does not attest all external writers. This qualifies bounded input
-staging, not result ingestion, retained ownership or production project adoption.
+staging, not retained ownership or production project adoption. Response ingress
+has its own additional qualification below.
+
+## External response registration and ingress
+
+The `response` adapter accepts the exact workflow packet, original input
+admission receipt, returned result and explicit `reel.workflow-returns.v1` file
+map. The return directory must already exist outside managed roots. For example:
+
+```json
+{"schema":"reel.workflow-returns.v1","root":"F:/private/returns/attempt-1","files":{"note":"note.txt"}}
+```
+
+`stage-response ... --apply` verifies all files and creates immutable native
+work under one logical task/attempt key. It does NOT admit output protection.
+`register-response ... --apply` additionally executes that original work and
+verifies positive job protection. `ingest-response ... --apply` also publishes
+each exact object through the pinned Rust native publisher and retains all
+publication handles until every object has reopened. Each command takes
+`PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETURNS NEW_CANDIDATE`.
+The candidate file is private, new and outside managed roots. A deserialized
+candidate or an old CLI success report is not current byte/ownership proof.
+
+Logical identity includes index, task key and attempt, not output hash, supplied
+provider identity, activation or file location. Its immutable evidence binds the
+whole returned artifact set, provenance claims, original admission and store.
+Identical retries reuse the exact WorkRef; changed bytes, logical IDs, provenance
+or source generation conflict. Content deduplication cannot bypass this check.
+All files are hash/length checked before staging; guarded files and directories
+remain held throughout the call. Paths are explicit portable relative names,
+case aliases are refused and no browser package is extracted or executed.
+
+Registration extends the original actor envelope, preserving its original native
+selection, policy, activation and every current reference/root. It uses existing
+SDK metadata/work/index transactions and the original actor fence, not a new
+cache or generic JobContext. Outputs are positively protected BEFORE native
+publication. One atomic update must fit the native 128 changed-path bound;
+there is no automatic splitting, new slot or substitution. An interrupted native
+Prepare can reconcile ONLY the original matching admitted WorkRef before settled
+claim verification; changed-result recovery refuses without reconciling it.
+
+On uncertainty, preserve returned files and retry the original result/attempt
+with a new candidate receipt destination. All files are reverified, even when
+native bytes already exist. Explicitly resupplying identical bytes at a new
+declared return location is allowed. Missing/corrupt returns stop; no fallback
+or fresh operation is inferred. Ingress may have succeeded before receipt writing
+fails. This is why failed files and original operation identities are preserved.
+
+Bounds: Windows/NTFS, one explicitly enrolled existing native store, 32 returned
+artifacts, 128 MiB total payload, one 64 KiB registration metadata node, and
+existing envelope/tree/native phase bounds. Only direct/manual provider results
+are accepted. Deterministic comic/tool responses are refused until their worker
+receipt and native source-correspondence adapter is installed. MIME declarations
+and supplied provenance are checked as contracts, not authenticated or creatively
+approved. Opaque browser payloads receive byte validation only.
+
+Three metadata/file fixtures cover original logical replay, logical-ID/provenance
+conflicts, unsafe/incomplete mappings, changed bytes and fault-injected native
+Prepare recovery. One explicit fixture ingests a synthetic response into the
+existing test store, reopens its exact bytes, retries in another CLI process and
+verifies the same WorkRef and original positive input/output claims. It initializes
+no pool, changes no defaults and selects no project asset. Retained-owner ack,
+handoff coordinator completion, capacity release, scratch retirement, actor close
+and selection remain separate unimplemented operations for this adapter.

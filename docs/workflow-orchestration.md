@@ -39,7 +39,9 @@ private handoff coordinator now records recovery intent through an injected
 managed-lifecycle port; the native implementation of that port remains open.
 The native input bridge now supports explicit durable input-claim admission in
 an existing actor and pinned resumable input export. It does not implement the
-full result-registration/retention lifecycle port.
+full result-registration/retention lifecycle port. A bounded provider-response
+adapter now stages logical registration, admits output claims and publishes exact
+unselected bytes; native retained-owner completion remains open.
 
 Example local contract commands (synthetic files only until W1/W2 qualify):
 
@@ -59,6 +61,26 @@ must pass the qualified source/retention adapter before using these contracts.
 Result checking establishes byte identity, declared type and byte allowance;
 it does not decode media, validate a browser package, evaluate semantic quality,
 authenticate provider/model assertions or establish rights.
+
+### Bounded response ingress (2026-11-18)
+
+The native adapter now verifies explicitly mapped external return files, freezes
+one immutable registration for an index/task/attempt and admits output protection
+before invoking the Rust native publisher. Replays reuse original WorkRef and
+evidence; changed results, logical IDs or provenance conflict even with matching
+bytes. Native Prepare recovery reconciles only matching original admitted work.
+Input selection, activation, policy and all current references/root are preserved.
+
+The three stages are `stage-response` (logical registration only),
+`register-response` (positive output claims) and `ingest-response` (verified native
+publication). They preserve returned files and require new private receipt paths.
+Bounds include 32 artifacts, 128 MiB total returned bytes, one 64 KiB native
+evidence node and the original native phase/resource limits. Qualification covers
+direct/manual provider returns in the explicit single-store Windows scope;
+deterministic comic/tool receipts are refused pending their native correspondence
+adapter. Retained-owner acknowledgement, task completion, coordinator integration,
+selection and retirement remain open. See the
+[ingress handoff](handoff/2026-11-18-workflow-response-ingress.md).
 
 ## Ownership
 
@@ -200,8 +222,10 @@ explicit Windows guarded read of a previously published synthetic 1 MiB object.
 All 247 source pins match, with source line endings preserved. This covers the
 tested source-binding/read behavior, not a full native comic workflow.
 W1 now has explicit positive input-claim admission and bounded resumable byte
-staging (below). Full managed result-lifecycle qualification and W2-W5 remain
-open. See the [current handoff](handoff/2026-11-18-workflow-staging.md).
+staging (below). W2 now has bounded provider-response registration and native
+ingress, with retained-owner completion still open. Full managed result-lifecycle
+qualification and W3-W5 remain open. See the
+[current handoff](handoff/2026-11-18-workflow-response-ingress.md).
 
 ### Durable input-claim admission (2026-11-18)
 
