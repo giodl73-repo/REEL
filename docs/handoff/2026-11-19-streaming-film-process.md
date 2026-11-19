@@ -37,9 +37,42 @@ recovery without launch or replacement. Existing v1 component fixtures remain.
 An explicit large-I/O fixture is prepared to preserve a 3,600,000,001-byte zero
 file under a 4 GiB reservation using an existing F-first capacity coordinator.
 It must hash the exact file under v2 bounds, refuse the v1 size allowance and
-round-trip an actual retained v1 request byte-for-byte. Source/tool/result pins
-and actual evidence will be recorded after execution. This fixture performs no
+round-trip an actual retained v1 request byte-for-byte. It passed in 221.69 test
+seconds, including expected-checksum construction. This fixture performs no
 native admission, media rendering, provider call, publication or consumer adoption.
+
+## Qualified I/O and compatibility scope
+
+Source: `34a23811a13af25645ba5730dceb52e359518ac6`. All 1,934 tracked files
+are archived and individually hash/length verified against build inputs. Frozen
+test executable SHA256:
+`76915674d49e6bd2e0ca819104bd890b3d14623afae62c7a89f6dda6218b172c`,
+28,313,088 bytes, test profile without debug information, with film support.
+
+The 3,600,000,001-byte regular zero file remains in preserved root `.tmppLTUKD`
+under its original 4 GiB capacity reservation. Its streamed SHA256 is
+`1800c39a6a2baaedb3760b6be6035276d6ca7602430e0f91fc671be1ee22a509`.
+V1 refused that size before reading; the explicit v2 allowance and verification
+deadline passed. The actual retained v1 render request (5,282 bytes, SHA256
+`13ada636d47805f44748d6194bf288f9454155e9bbcd1de4feedc88e35eb0eee`)
+round-tripped byte-for-byte. An in-run OS sample recorded an 8,777,728-byte peak
+working set at that sample, with 1,204,224 private bytes. This is a component
+observation, not a verified full-run or renderer memory peak.
+
+A separate 132.50-second native historical check at the same frozen source
+reopened the existing `.tmp7TWQrl/film` retained proof and full review copy after
+source slot reuse. Review IDs/copy and the claims manifest stayed identical;
+the old source activation remained refused. It performed no admission, render,
+publication, selection or retirement. This is retained v1 compatibility evidence,
+not multi-GB native custody or v2 media-production qualification.
+
+Private evidence certificate:
+`F:/src/tig-dev-temp/reel-streamed-process-20261119-v1/qualified-tools.json`,
+SHA256 `01ec24ff659a0eba84307474b47c5eff2e22e22e914ffb9f9ec133446820fc4b`.
+It binds source archive/manifest, frozen executable, both terminal logs/timings,
+outcomes, original request, capacity ticket and process sample. `pending-runs.json`
+is historical evidence only; sessions 12827 and 40275 terminated successfully.
+The large scratch file and reservation remain preserved; no fresh run is needed.
 
 Full v2 workflow production and retained movie verification remain explicitly
 gated by `require_native_v1`. Snapshot/projection admission, workspace/capacity

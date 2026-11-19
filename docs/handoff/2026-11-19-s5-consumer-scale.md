@@ -76,6 +76,14 @@ the qualified executable path. A preparatory bounded input port is implemented,
 but native multi-GB/projection, process, capacity/return/history and recovery
 qualification remain open.
 
+The subsequent [contained-process port](2026-11-19-streaming-film-process.md)
+carries versioned streaming limits and original evidence through file-backed
+producer/recovery APIs. A reserved 3,600,000,001-byte synthetic-file hash check
+passes alongside actual v1 request/history compatibility. This qualifies the
+hash primitive beyond the legacy 512 MiB bound, not the 600-resource native
+closure, complete v2 rendering or owned production adoption. The native workflow
+gate and remaining admission/capacity/return/history limits remain in force.
+
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
 recovery, native gates, tickets and claims. Its ten-input movie fixture passes

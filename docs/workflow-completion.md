@@ -23,6 +23,17 @@ native production/verification/process construction refuses v2 explicitly.
 The contained process, projection/admission, workspace/return/history budgets,
 composition and real-size recovery must still be ported and qualified.
 
+The [contained streaming process port](handoff/2026-11-19-streaming-film-process.md)
+now carries v2 bounds through child requests, file-backed render/recovery,
+input/output hashing and original-evidence checks. Its 221.69-second reserved
+3.6 GB synthetic I/O fixture passes exact streamed hashing, legacy-size refusal
+and actual v1 request byte compatibility. A separate 132.50-second retained v1
+movie-history check preserves review copy/IDs, claims manifest and old-activation
+fencing. All 113 workflow tests, 73 standard native tests, 247 SDK pins and strict
+Clippy pass. Full v2 workflow dispatch remains gated pending projection/admission,
+capacity/return/history budgets, composition and real-size process/recovery
+qualification. Large hashing alone establishes none of those gates.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial
