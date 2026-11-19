@@ -87,3 +87,31 @@ independently recompute, import, retain and replay it. This is manual return
 recovery, not evidence that the original automatic worker ran. It creates no new
 admission and checks the original packet/profile/receipt and all three parent
 claim files remain unchanged. Its actual result is recorded after execution.
+
+The original-runtime import has returned success with `state: retained` and
+`task_completed: true`. A live native retained guard has reopened the typed
+proposal and matched the manually prepared result. The returned proposal is
+byte-identical to the earlier qualified lineage proposal. The final original-CLI
+replay and post-replay claim/control comparisons are still pending; this is not
+yet a completed recovery qualification. The first recovery fixture reached these
+checks but then called `import-handoff` again on the Retained journal. The CLI
+correctly refused with `handoff-reconcile-original-import`; the fixture failed
+after 1,383.52 test seconds. This is a harness/API error, not loss of the retained
+result. The corrected fixture uses `resume-handoff ... - --apply` for replay.
+A separate continuation fixture resumes the existing retained job without return
+files, new admission or result generation, then checks claims, journal and controls.
+
+Source `4422a899ef129e0253587235fbe83057c1c6da27` passes all 63 standard native
+tests, all 247 SDK source-pin checks, strict all-target Clippy with and without
+film support, and the film-enabled build. Its 1,922 tracked files are archived
+and individually hash/length verified in the private
+`reel-resolution-recovery-20261119-v1` evidence directory. The corrected runtime
+is frozen separately and has not replaced the original admitted runtime.
+
+This uses producer-applied rights/provenance and comics-editor checklists:
+original language and context remain bound; technical retention is distinct
+from actual viewing, issue closure, creative/translation approval and release.
+The regression test checks that resolution dispatch still requires an owned
+worker configuration. Automatic resolution dispatch under the corrected
+runtime, retained tracker delivery/close evidence and managed close scheduling
+remain open.

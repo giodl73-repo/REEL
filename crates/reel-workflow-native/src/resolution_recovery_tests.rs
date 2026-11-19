@@ -167,7 +167,14 @@ fn recover_original_resolution_through_manual_return() {
     assert!(!typed.proposal.remote_issues_closed);
     drop(proof);
     let claims = fs::read(profile.admission.index_root.join("claims.json")).unwrap();
-    let replay = invoke();
+    let replay = Command::new(&profile.runtime.path)
+        .arg("resume-handoff")
+        .arg(root.join("journal"))
+        .arg(root.join("profile.json"))
+        .arg("-")
+        .arg("--apply")
+        .output()
+        .unwrap();
     assert!(
         replay.status.success(),
         "{}",
@@ -195,5 +202,101 @@ fn recover_original_resolution_through_manual_return() {
     save(
         root.join("recovery-qualified.json"),
         &serde_json::json!({"task_key":packet.task_key,"original_runtime":profile.runtime,"manual_return_retained":true,"typed_native_proof_reopened":true,"replay_claims_unchanged":true,"parent_claims_unchanged":true,"original_controls_unchanged":true,"automatic_dispatch":false,"new_admission":false,"issue_closed":false,"selected":false,"scratch_retired":false}),
+    );
+}
+
+#[test]
+#[ignore = "Existing retained resolution only; continue the original qualification after a repeated-import refusal, using resume without return files or re-admission"]
+fn resume_retained_resolution_after_import_replay_refusal() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("REEL_RESOLUTION_RECOVERY_ROOT").expect("Set preserved resolution root"),
+    );
+    let packet: Packet = load(root.join("packet.json"));
+    let profile: handoff::Profile = load(root.join("profile.json"));
+    let request: Request = load(root.join("request.json"));
+    let observed = handoff::observe(&root.join("journal"), &profile).unwrap();
+    assert_eq!(observed.state, reel_workflow::handoff::State::Retained);
+    assert_eq!(observed.ticket.packet, packet);
+    let bindings: crate::graph::Bindings = load(root.join("automatic-bindings.json"));
+    let (_, _profile_pin) = bindings.tasks[&packet.task.id].profile.read().unwrap();
+    let controls: Vec<_> = [
+        "packet.json",
+        "profile.json",
+        "receipt.json",
+        "recovery-result.json",
+        "recovery-returns.json",
+    ]
+    .into_iter()
+    .map(|p| (p, fs::read(root.join(p)).unwrap()))
+    .collect();
+    let parents = [
+        (
+            "baseline-claims-before.bin",
+            &request.baseline.admission.index_root,
+        ),
+        (
+            "follow-up-claims-before.bin",
+            &request.corrected["es"].admission.index_root,
+        ),
+        (
+            "producer-claims-before.bin",
+            &request.productions["comic-render"]
+                .profile
+                .admission
+                .index_root,
+        ),
+    ];
+    for (before, index) in parents {
+        assert_eq!(
+            fs::read(root.join(before)).unwrap(),
+            fs::read(index.join("claims.json")).unwrap()
+        );
+    }
+    let claims = fs::read(profile.admission.index_root.join("claims.json")).unwrap();
+    let journal_entries = fs::read_dir(root.join("journal")).unwrap().count();
+    save(
+        root.join("resume-qualification-intent.json"),
+        &serde_json::json!({"task_key":packet.task_key,"original_runtime":profile.runtime,"command":"resume-handoff","returns":null,"new_admission":false}),
+    );
+    let output = Command::new(&profile.runtime.path)
+        .arg("resume-handoff")
+        .arg(root.join("journal"))
+        .arg(root.join("profile.json"))
+        .arg("-")
+        .arg("--apply")
+        .output()
+        .unwrap();
+    save(
+        root.join("resume-qualification-output.json"),
+        &serde_json::json!({"exit":output.status.code(),"stdout":String::from_utf8_lossy(&output.stdout),"stderr":String::from_utf8_lossy(&output.stderr)}),
+    );
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let summary: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(summary["state"], "retained");
+    assert_eq!(summary["task_completed"], true);
+    assert_eq!(
+        claims,
+        fs::read(profile.admission.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        journal_entries,
+        fs::read_dir(root.join("journal")).unwrap().count()
+    );
+    for (name, raw) in controls {
+        assert_eq!(raw, fs::read(root.join(name)).unwrap());
+    }
+    for (before, index) in parents {
+        assert_eq!(
+            fs::read(root.join(before)).unwrap(),
+            fs::read(index.join("claims.json")).unwrap()
+        );
+    }
+    save(
+        root.join("resume-qualified.json"),
+        &serde_json::json!({"task_key":packet.task_key,"original_runtime":profile.runtime,"original_job_retained":true,"resume_without_return_files":true,"replay_claims_unchanged":true,"journal_unchanged":true,"parent_claims_unchanged":true,"controls_unchanged":true,"automatic_dispatch":false,"new_admission":false,"issue_closed":false,"selected":false,"scratch_retired":false}),
     );
 }
