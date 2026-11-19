@@ -46,6 +46,9 @@ mod movie_close;
 #[path = "support/movie_native.rs"]
 mod movie_native;
 #[cfg(all(windows, feature = "film"))]
+#[path = "support/movie_owned_files.rs"]
+mod movie_owned_files;
+#[cfg(all(windows, feature = "film"))]
 #[path = "support/movie_verify.rs"]
 mod movie_verify;
 #[cfg(windows)]

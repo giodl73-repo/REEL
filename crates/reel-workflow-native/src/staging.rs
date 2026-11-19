@@ -11,6 +11,7 @@ use reel_assets::{
 };
 use reel_workflow::{Artifact, ErrorKind, Packet, Result, publication::InputReader};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
@@ -188,6 +189,36 @@ pub(crate) fn open_held(path: &Path, maximum: u64) -> Result<File> {
         return Err(error(ErrorKind::Budget, "staging-file-bytes"));
     }
     Ok(file)
+}
+/// Observe bounded bytes without allocating the complete file. The returned
+/// ordinary-file guard prevents mutation/deletion in the qualified NTFS scope.
+pub(crate) fn observe_held(path: &Path, maximum: u64) -> Result<(Object, File)> {
+    let mut file = open_held(path, maximum)?;
+    let mut hash = Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let count = match file.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(io_error(e)),
+        };
+        bytes = bytes
+            .checked_add(count as u64)
+            .filter(|n| *n <= maximum)
+            .ok_or_else(|| error(ErrorKind::Budget, "staging-file-growth"))?;
+        hash.update(&buffer[..count]);
+    }
+    let digest: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    Ok((
+        Object {
+            sha256: tig_core::Digest::parse(&digest)
+                .map_err(|_| error(ErrorKind::Integrity, "staging-observed-digest"))?,
+            bytes,
+        },
+        file,
+    ))
 }
 pub(crate) fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
     let mut file = open_held(path, maximum)?;
@@ -613,19 +644,19 @@ fn scan(view: &mut View, profile: &Profile, plan: &Plan, complete: &[u8]) -> Res
                 }
                 found.ok_or_else(|| error(ErrorKind::Conflict, "staging-unexpected-file"))?
             };
-            let (raw, file) = read_held(&item.path(), maximum)?;
+            let (object, file) = observe_held(&item.path(), maximum)?;
             view.usage = view
                 .usage
-                .checked_add(raw.len() as u64)
+                .checked_add(object.bytes)
                 .ok_or_else(|| error(ErrorKind::Budget, "staging-byte-overflow"))?;
             if view.usage > profile.maximum_bytes {
                 return Err(error(ErrorKind::Budget, "staging-workspace-bytes"));
             }
-            if relative == "complete.json" && raw != complete {
+            if relative == "complete.json" && object != Object::from_bytes(complete) {
                 return Err(error(ErrorKind::Integrity, "staging-completion-content"));
             }
             if let Some(entry) = plan.manifest.files.get(&relative)
-                && Object::from_bytes(&raw) != entry.object
+                && object != entry.object
             {
                 return Err(error(
                     ErrorKind::Integrity,
@@ -784,7 +815,23 @@ fn materialize(
                     .ok_or_else(|| error(ErrorKind::Missing, "staging-payload-buffer"))?
                     .1
             }
-            None => &plan.controls[path],
+            None => match plan.controls.get(path) {
+                Some(raw) => raw,
+                None => {
+                    // Producer-owned file already at its exact final path.
+                    // No copy, implicit repair or buffer-backed fallback.
+                    let (actual, held) =
+                        observe_held(&view.root.path().join(path), entry.object.bytes)?;
+                    if actual != entry.object {
+                        return Err(error(
+                            ErrorKind::Integrity,
+                            "staging-existing-input-content",
+                        ));
+                    }
+                    view.files.push(held);
+                    continue;
+                }
+            },
         };
         if Object::from_bytes(raw) != entry.object {
             return Err(error(ErrorKind::Integrity, "staging-buffer-content"));

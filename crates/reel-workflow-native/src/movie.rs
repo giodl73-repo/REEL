@@ -3,7 +3,7 @@
 use crate::{
     NativeInputs, Tool, error,
     film_inputs::{Inputs, Programs},
-    film_process::{self, Rendered},
+    film_process::{self, Captured},
 };
 use reel::scene_delivery::FileRef;
 use reel_workflow::{
@@ -23,8 +23,19 @@ pub struct Generated {
     pub outputs: ArtifactSet,
     pub paths: BTreeMap<String, String>,
     pub receipt: film_render::Receipt,
+    _captured: FileGenerated,
+}
+/// Live file-backed candidate. Paths are private locators; keep this value alive
+/// through use/import. It supplies neither native retention nor task completion.
+pub struct FileGenerated {
+    pub controls: BTreeMap<String, Vec<u8>>,
+    pub files: BTreeMap<String, FileRef>,
+    pub outputs: ArtifactSet,
+    pub paths: BTreeMap<String, String>,
+    pub receipt: film_render::Receipt,
+    pub(crate) workspace: std::path::PathBuf,
     _inputs: Inputs,
-    _rendered: Rendered,
+    _rendered: Captured,
     _controls: Vec<File>,
 }
 fn reference(path: &str, artifact: &Artifact) -> FileRef {
@@ -34,9 +45,8 @@ fn reference(path: &str, artifact: &Artifact) -> FileRef {
         bytes: artifact.bytes,
     }
 }
-/// Produce a complete candidate packet for one exact FilmRender task. The
-/// guarded process port checks media. Automatic dispatch remains gated until
-/// independent returned/native verification and retained recovery are connected.
+/// Buffered compatibility API for one bounded FilmRender candidate. The owned
+/// worker uses file-backed capture instead; admission/completion remain separate.
 pub fn generate(
     packet: &Packet,
     native: NativeInputs,
@@ -44,6 +54,31 @@ pub fn generate(
     runtime: &Tool,
     workspace: &Path,
 ) -> Result<Generated> {
+    let captured = produce(packet, native, programs, runtime, workspace, false)?;
+    let mut files = captured.controls.clone();
+    for (name, pin) in &captured.files {
+        files.insert(
+            name.clone(),
+            crate::staging::read_held(&pin.path, pin.bytes)?.0,
+        );
+    }
+    Ok(Generated {
+        files,
+        outputs: captured.outputs.clone(),
+        paths: captured.paths.clone(),
+        receipt: captured.receipt.clone(),
+        _captured: captured,
+    })
+}
+/// Capture into a fresh caller-owned, capacity-admitted workspace without
+/// collecting complete media into memory. Inputs require live native authority.
+pub fn generate_files(
+    packet: &Packet,
+    native: NativeInputs,
+    programs: &BTreeMap<String, Tool>,
+    runtime: &Tool,
+    workspace: &Path,
+) -> Result<FileGenerated> {
     produce(packet, native, programs, runtime, workspace, false)
 }
 pub(crate) fn generate_or_adopt(
@@ -52,7 +87,7 @@ pub(crate) fn generate_or_adopt(
     programs: &BTreeMap<String, Tool>,
     runtime: &Tool,
     workspace: &Path,
-) -> Result<Generated> {
+) -> Result<FileGenerated> {
     let _namespace = reel_assets::jobs::open_workspace_directory(workspace)
         .map_err(|_| error(ErrorKind::Denied, "movie-owned-packet-namespace"))?;
     let existing = std::fs::read_dir(workspace)
@@ -68,7 +103,7 @@ fn produce(
     runtime: &Tool,
     workspace: &Path,
     adopt: bool,
-) -> Result<Generated> {
+) -> Result<FileGenerated> {
     let bound = film_render::bind(packet, &mut native)?;
     crate::worker::validate_programs(packet, programs)?;
     let tool = packet
@@ -134,7 +169,7 @@ fn produce(
             expected_outputs,
         )?
     } else {
-        film_process::render_declared(
+        film_process::render_declared_files(
             &inputs,
             &reference(&bound.request().job_path, bound.job()),
             &reference(&bound.request().production_path, bound.production()),
@@ -144,21 +179,43 @@ fn produce(
             Some(expected_outputs),
         )?
     };
-    let mut files: BTreeMap<_, _> = rendered
+    let files: BTreeMap<_, _> = rendered
         .files
         .iter()
-        .map(|(name, raw)| (format!("delivery/{name}"), raw.clone()))
+        .map(|(name, pin)| (format!("delivery/{name}"), pin.clone()))
         .collect();
+    let mut buffers: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut controls = Vec::new();
     for name in ["render-request.json", "render-result.json"] {
         let (raw, held) = crate::staging::read_held(
             &workspace.join(name),
             reel_workflow::MAX_CONTROL_BYTES as u64,
         )?;
-        files.insert(name.into(), raw);
+        buffers.insert(name.into(), raw);
         controls.push(held);
     }
-    let receipt = film_render::capture_outputs(packet, &bound, &files)?;
+    let mut pins: BTreeMap<_, _> = files
+        .iter()
+        .map(|(name, pin)| {
+            (
+                name.clone(),
+                film_render::OutputContent {
+                    sha256: pin.sha256.clone(),
+                    bytes: pin.bytes,
+                },
+            )
+        })
+        .collect();
+    pins.extend(buffers.iter().map(|(name, raw)| {
+        (
+            name.clone(),
+            film_render::OutputContent {
+                sha256: reel_workflow::digest(raw),
+                bytes: raw.len() as u64,
+            },
+        )
+    }));
+    let receipt = film_render::capture_output_pins(packet, &bound, &pins)?;
     let receipt_raw = serde_json::to_vec(&receipt)
         .map_err(|_| error(ErrorKind::Invalid, "movie-receipt-json"))?;
     if adopt && workspace.join("receipt.json").exists() {
@@ -171,11 +228,8 @@ fn produce(
         }
         controls.push(held);
     }
-    files
-        .values()
-        .try_fold(receipt_raw.len() as u64, |n, raw| {
-            n.checked_add(raw.len() as u64)
-        })
+    pins.values()
+        .try_fold(receipt_raw.len() as u64, |n, pin| n.checked_add(pin.bytes))
         .filter(|n| *n <= 128 * 1024 * 1024)
         .ok_or_else(|| error(ErrorKind::Budget, "movie-result-and-receipt-bytes"))?;
     let worker_receipt = Artifact {
@@ -184,22 +238,38 @@ fn produce(
         bytes: receipt_raw.len() as u64,
         media_type: "application/json".into(),
     };
-    files.insert("receipt.json".into(), receipt_raw);
-    let identities = files
+    buffers.insert("receipt.json".into(), receipt_raw);
+    let mut identities: BTreeMap<_, _> = files
         .iter()
-        .map(|(name, raw)| (name.clone(), tig_core::Object::from_bytes(raw)))
-        .collect();
+        .map(|(name, pin)| {
+            Ok((
+                name.clone(),
+                tig_core::Object {
+                    sha256: tig_core::Digest::parse(&pin.sha256)
+                        .map_err(|_| error(ErrorKind::Invalid, "movie-produced-file-pin"))?,
+                    bytes: pin.bytes,
+                },
+            ))
+        })
+        .collect::<Result<_>>()?;
+    identities.extend(
+        buffers
+            .iter()
+            .map(|(name, raw)| (name.clone(), tig_core::Object::from_bytes(raw))),
+    );
     crate::output_layout::check(
         &receipt.outputs,
         &worker_receipt,
         &bound.request().output_paths,
         &identities,
     )?;
-    Ok(Generated {
+    Ok(FileGenerated {
         outputs: receipt.outputs.clone(),
         paths: bound.request().output_paths.clone(),
         files,
+        controls: buffers,
         receipt,
+        workspace: workspace.canonicalize().map_err(crate::io_error)?,
         _inputs: inputs,
         _rendered: rendered,
         _controls: controls,

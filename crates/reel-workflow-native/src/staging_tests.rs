@@ -1,5 +1,100 @@
 //! Filesystem recovery component fixtures, not simulated native custody.
 use super::*;
+
+#[test]
+fn in_place_producer_file_survives_interruption_without_a_buffer_or_copy_part() {
+    let (_temp, profile, mut plan, _old_owner, buffers) = case();
+    plan.manifest.operation = reel_workflow::digest(b"in-place producer fixture");
+    let media = vec![37u8; 3 * 65536 + 17];
+    let path = "media/master.mkv";
+    plan.manifest.files.insert(
+        path.into(),
+        Entry {
+            object: Object::from_bytes(&media),
+            input: None,
+        },
+    );
+    assert!(!plan.controls.contains_key(path));
+    let parent = open_workspace_directory(&profile.parent).unwrap();
+    let owner = create_owner(&plan, &parent).unwrap();
+    let root = profile.parent.join(&owner.name);
+    fs::create_dir(root.join("media")).unwrap();
+    fs::write(root.join(path), &media).unwrap();
+    let hash = reel_workflow::digest(b"in-place producer completion");
+    let mut view = open_owner(&profile, &owner, &plan).unwrap();
+    assert!(
+        materialize(&mut view, &profile, &plan, &buffers, &hash, &mut |_| Err(
+            error(ErrorKind::NeedsRecovery, "injected-interruption")
+        ))
+        .is_err()
+    );
+    drop(view);
+    assert_eq!(fs::read(root.join(path)).unwrap(), media);
+    let mut view = open_owner(&profile, &owner, &plan).unwrap();
+    materialize(&mut view, &profile, &plan, &buffers, &hash, &mut |_| Ok(())).unwrap();
+    let media_index = plan.manifest.files.keys().position(|p| p == path).unwrap();
+    assert!(!root.join(format!("parts/{media_index:03}-0.part")).exists());
+    assert!(
+        scan(
+            &mut view,
+            &profile,
+            &plan,
+            &completion(&plan, &hash).unwrap()
+        )
+        .unwrap()
+    );
+    assert!(
+        fs::OpenOptions::new()
+            .write(true)
+            .open(root.join(path))
+            .is_err()
+    );
+}
+
+#[test]
+fn missing_or_corrupt_in_place_file_preserves_bytes_and_never_completes() {
+    for corrupt in [false, true] {
+        let (_temp, profile, mut plan, _old_owner, buffers) = case();
+        plan.manifest.operation = reel_workflow::digest(b"in-place refusal fixture");
+        let path = "media/master.mkv";
+        plan.manifest.files.insert(
+            path.into(),
+            Entry {
+                object: Object::from_bytes(b"original"),
+                input: None,
+            },
+        );
+        let parent = open_workspace_directory(&profile.parent).unwrap();
+        let owner = create_owner(&plan, &parent).unwrap();
+        let root = profile.parent.join(&owner.name);
+        fs::create_dir(root.join("media")).unwrap();
+        if corrupt {
+            fs::write(root.join(path), b"tampered").unwrap();
+        }
+        let mut view = open_owner(&profile, &owner, &plan).unwrap();
+        let err = materialize(
+            &mut view,
+            &profile,
+            &plan,
+            &buffers,
+            &reel_workflow::digest(b"in-place refusal"),
+            &mut |_| Ok(()),
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.kind,
+            if corrupt {
+                ErrorKind::Integrity
+            } else {
+                ErrorKind::Missing
+            }
+        );
+        assert!(!root.join("complete.json").exists());
+        if corrupt {
+            assert_eq!(fs::read(root.join(path)).unwrap(), b"tampered");
+        }
+    }
+}
 fn case() -> (tempfile::TempDir, Profile, Plan, Owner, Buffers) {
     let temp = tempfile::tempdir().unwrap();
     let profile = Profile {

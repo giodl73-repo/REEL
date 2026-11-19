@@ -1,4 +1,4 @@
-//! Owned deterministic comic dispatch. No arbitrary commands or provider calls.
+//! Owned deterministic producer dispatch. No arbitrary commands or provider calls.
 //! The original pinned executable must host both production and lifecycle effects.
 use super::*;
 use crate::{graph, handoff};
@@ -259,8 +259,12 @@ pub fn prepare_with_programs(
         auxiliary_programs: programs.clone(),
     })
 }
-fn result_plan(base: &Plan, mut controls: BTreeMap<String, Vec<u8>>) -> Result<Plan> {
-    let files: BTreeMap<_, _> = controls
+fn result_plan(
+    base: &Plan,
+    mut controls: BTreeMap<String, Vec<u8>>,
+    in_place: BTreeMap<String, Object>,
+) -> Result<Plan> {
+    let mut files: BTreeMap<_, _> = controls
         .iter()
         .map(|(name, raw)| {
             (
@@ -272,25 +276,35 @@ fn result_plan(base: &Plan, mut controls: BTreeMap<String, Vec<u8>>) -> Result<P
             )
         })
         .collect();
+    for (path, object) in in_place {
+        if !path.starts_with("packet/")
+            || files
+                .insert(
+                    path,
+                    Entry {
+                        object,
+                        input: None,
+                    },
+                )
+                .is_some()
+        {
+            return Err(error(ErrorKind::Conflict, "worker-produced-file-alias"));
+        }
+    }
     check_entries(&files)?;
     let manifest = Manifest {
         schema: "reel.workflow-worker-result-manifest.v1".into(),
         operation: base.manifest.operation.clone(),
-        files,
+        files: files.clone(),
     };
     controls.insert("result-manifest.json".into(), json(&manifest)?);
-    let files = controls
-        .iter()
-        .map(|(name, raw)| {
-            (
-                name.clone(),
-                Entry {
-                    object: Object::from_bytes(raw),
-                    input: None,
-                },
-            )
-        })
-        .collect();
+    files.insert(
+        "result-manifest.json".into(),
+        Entry {
+            object: Object::from_bytes(&controls["result-manifest.json"]),
+            input: None,
+        },
+    );
     check_entries(&files)?;
     Ok(Plan {
         manifest: Manifest { files, ..manifest },
@@ -498,7 +512,7 @@ fn execute(
             &view.root.path().join("packet"),
         )?;
         let receipt_raw = generated
-            .files()
+            .buffers()
             .get("receipt.json")
             .ok_or_else(|| error(ErrorKind::Missing, "worker-produced-receipt"))?;
         let result = ReturnedResult {
@@ -532,13 +546,18 @@ fn execute(
         let mut controls = base.controls.clone();
         controls.extend(
             generated
-                .files()
+                .buffers()
                 .iter()
                 .map(|(name, raw)| (format!("packet/{name}"), raw.clone())),
         );
         controls.insert("result.json".into(), json(&result)?);
         controls.insert("returns.json".into(), json(&returns)?);
-        let produced = result_plan(&base, controls)?;
+        let in_place = generated
+            .in_place_files()?
+            .into_iter()
+            .map(|(name, object)| (format!("packet/{name}"), object))
+            .collect();
+        let produced = result_plan(&base, controls, in_place)?;
         checked_budget(&ticket.profile, &produced)?;
         materialize(
             &mut view,

@@ -715,6 +715,39 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"native-original-admission-recovery","durable_input_claims_verified":true,"new_admission":false,"task_completed":false,"selected":false,"input_claims_released":false}),
             )
         }
+        [
+            command,
+            plan,
+            bindings,
+            batch,
+            pin,
+            task,
+            staging,
+            programs,
+            output,
+            apply,
+        ] if command == "prepare-worker" && apply == "--apply" => {
+            let plan = read_control(Path::new(plan))?;
+            let bindings = read_control(Path::new(bindings))?;
+            let staging = read_control(Path::new(staging))?;
+            let programs = read_control(Path::new(programs))?;
+            let batch = reel_workflow_native::graph::PinnedFile {
+                path: batch.into(),
+                sha256: pin.clone(),
+            };
+            reel_workflow_native::worker::prepare_file_with_programs(
+                &plan,
+                &bindings,
+                &batch,
+                task,
+                &staging,
+                Path::new(output),
+                &programs,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-worker-preparation","worker_executed":false,"task_completed":false,"selected":false,"scratch_retirement_authorized":false}),
+            )
+        }
         [command, plan, bindings, ticket, pin, apply]
             if command == "materialize-worker" && apply == "--apply" =>
         {
@@ -1263,6 +1296,7 @@ fn main() -> ExitCode {
             "reel-workflow-native accept-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native recover-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply\n",
+            "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE PROGRAMS_JSON NEW_TICKET --apply\n",
             "reel-workflow-native accept-upstream PACKET SOURCE ADMISSION ATTEMPT PARENTS NEW_RECEIPT --apply\n",
             "reel-workflow-native recover-admission PACKET SOURCE ADMISSION ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native run-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply\n",

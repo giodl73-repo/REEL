@@ -62,7 +62,7 @@ pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> R
 }
 pub(crate) enum Generated {
     #[cfg(all(windows, feature = "film"))]
-    Movie(Box<crate::movie::Generated>),
+    Movie(Box<crate::movie::FileGenerated>),
     Comic(Box<crate::comic::Generated>),
     Issue(Box<crate::issue::Generated>),
 }
@@ -74,7 +74,7 @@ impl Generated {
             _ => crate::output_layout::identity(self.outputs()),
         };
         let raw = self
-            .files()
+            .buffers()
             .get("receipt.json")
             .ok_or_else(|| crate::error(ErrorKind::Missing, "worker-produced-receipt"))?;
         let receipt = reel_workflow::Artifact {
@@ -83,21 +83,61 @@ impl Generated {
             bytes: raw.len() as u64,
             media_type: "application/json".into(),
         };
-        let files = self
-            .files()
+        let mut files: BTreeMap<_, _> = self
+            .buffers()
             .iter()
             .map(|(p, raw)| (p.clone(), tig_core::Object::from_bytes(raw)))
             .collect();
+        for (name, object) in self.in_place_files()? {
+            if files.insert(name, object).is_some() {
+                return Err(crate::error(
+                    ErrorKind::Conflict,
+                    "worker-produced-file-alias",
+                ));
+            }
+        }
         crate::output_layout::check(self.outputs(), &receipt, &paths, &files)?;
         Ok(paths)
     }
-    pub(crate) fn files(&self) -> &BTreeMap<String, Vec<u8>> {
+    pub(crate) fn buffers(&self) -> &BTreeMap<String, Vec<u8>> {
         match self {
             #[cfg(all(windows, feature = "film"))]
-            Self::Movie(g) => &g.files,
+            Self::Movie(g) => &g.controls,
             Self::Comic(g) => &g.files,
             Self::Issue(g) => &g.files,
         }
+    }
+    pub(crate) fn in_place_files(&self) -> Result<BTreeMap<String, tig_core::Object>> {
+        #[cfg(all(windows, feature = "film"))]
+        if let Self::Movie(g) = self {
+            return g
+                .files
+                .iter()
+                .map(|(name, pin)| {
+                    if pin.path.canonicalize().map_err(crate::io_error)?
+                        != g.workspace
+                            .join(name)
+                            .canonicalize()
+                            .map_err(crate::io_error)?
+                    {
+                        return Err(crate::error(
+                            ErrorKind::Conflict,
+                            "worker-produced-file-location",
+                        ));
+                    }
+                    Ok((
+                        name.clone(),
+                        tig_core::Object {
+                            sha256: tig_core::Digest::parse(&pin.sha256).map_err(|_| {
+                                crate::error(ErrorKind::Invalid, "worker-produced-file-pin")
+                            })?,
+                            bytes: pin.bytes,
+                        },
+                    ))
+                })
+                .collect();
+        }
+        Ok(BTreeMap::new())
     }
     pub(crate) fn outputs(&self) -> &ArtifactSet {
         match self {

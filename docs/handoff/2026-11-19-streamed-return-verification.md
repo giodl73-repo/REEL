@@ -60,11 +60,11 @@ The latter uses the already retained synthetic movie after its source slot was
 closed/reused, compares the full previously exported review copy/IDs and checks
 source activation fencing and unchanged claims. It creates no production job.
 
-This further removes whole-media buffering from **verification**, not producer
-capture. `film_process::Rendered` / `movie::Generated` still carry buffered
-producer outputs, and v1 movie, staging, return and admission limits remain.
-Streamed producer capture plus explicit large-job budgets and bounded native
-composition/recovery remain necessary for S5; this change does not adopt S5 or
+The subsequent [file-backed producer path](2026-11-19-file-backed-movie-capture.md)
+removes buffering from owned worker capture as well; explicit legacy buffered
+APIs remain. V1 movie, staging, return and admission limits remain.
+Explicit large-job budgets and bounded native composition/recovery remain
+necessary for S5; this change does not adopt S5 or
 modify existing E7 jobs/approvals. Editor and rights/provenance checks preserve
 unchanged identities, clocks and technical/creative authority separation.
 

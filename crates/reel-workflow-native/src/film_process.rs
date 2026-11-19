@@ -191,7 +191,28 @@ pub struct Rendered {
     _files: Vec<File>,
     _directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
 }
+/// File-backed collection for the owned worker; no complete media buffers.
+pub(crate) struct Captured {
+    pub receipt: scene_delivery::Receipt,
+    pub files: BTreeMap<String, FileRef>,
+    _files: Vec<File>,
+    _directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
+}
 fn collect(workspace: &Path, limits: &Limits) -> Result<Rendered> {
+    let captured = collect_files(workspace, limits)?;
+    let mut files = BTreeMap::new();
+    for (name, pin) in &captured.files {
+        let (raw, _held) = crate::staging::read_held(&pin.path, pin.bytes)?;
+        files.insert(name.clone(), raw);
+    }
+    Ok(Rendered {
+        receipt: captured.receipt,
+        files,
+        _files: captured._files,
+        _directories: captured._directories,
+    })
+}
+fn collect_files(workspace: &Path, limits: &Limits) -> Result<Captured> {
     let output = workspace.join("delivery");
     let mut directories = vec![directory(&output)?];
     let (raw, held) = crate::staging::read_held(&output.join("receipt.json"), 4 * 1024 * 1024)?;
@@ -208,9 +229,17 @@ fn collect(workspace: &Path, limits: &Limits) -> Result<Rendered> {
     if actual != expected {
         return Err(error(ErrorKind::Integrity, "film-process-output-inventory"));
     }
-    let mut files = BTreeMap::from([("receipt.json".into(), raw)]);
+    let receipt_bytes = raw.len() as u64;
+    let mut files = BTreeMap::from([(
+        "receipt.json".into(),
+        FileRef {
+            path: output.join("receipt.json"),
+            sha256: reel_workflow::digest(&raw),
+            bytes: receipt_bytes,
+        },
+    )]);
     let mut guards = vec![held];
-    let mut total = files["receipt.json"].len() as u64;
+    let mut total = receipt_bytes;
     if receipt.outputs.len() + 1 > crate::staging::MAX_FILES {
         return Err(error(ErrorKind::Budget, "film-process-output-count"));
     }
@@ -225,17 +254,24 @@ fn collect(workspace: &Path, limits: &Limits) -> Result<Rendered> {
             .ok_or_else(|| error(ErrorKind::Budget, "film-process-output-bytes"))?;
         let path = output.join(name);
         directories.push(directory(path.parent().unwrap())?);
-        let (raw, held) = crate::staging::read_held(&path, pin.bytes)?;
-        if raw.len() as u64 != pin.bytes || reel_workflow::digest(&raw) != pin.sha256 {
+        let (object, held) = crate::staging::observe_held(&path, pin.bytes)?;
+        if object.bytes != pin.bytes || object.sha256.as_str() != pin.sha256 {
             return Err(error(ErrorKind::Integrity, "film-process-output-pin"));
         }
-        files.insert(name.clone(), raw);
+        files.insert(
+            name.clone(),
+            FileRef {
+                path,
+                sha256: pin.sha256.clone(),
+                bytes: pin.bytes,
+            },
+        );
         guards.push(held);
     }
     if total > limits.output_bytes {
         return Err(error(ErrorKind::Budget, "film-process-output-bytes"));
     }
-    Ok(Rendered {
+    Ok(Captured {
         receipt,
         files,
         _files: guards,
@@ -363,6 +399,39 @@ pub(crate) fn render_declared(
     limits: &Limits,
     expected_outputs: Option<BTreeSet<String>>,
 ) -> Result<Rendered> {
+    // Explicit buffered compatibility API. The owned worker uses the file API.
+    let captured = render_declared_files(
+        inputs,
+        job,
+        production,
+        workspace,
+        runtime,
+        limits,
+        expected_outputs,
+    )?;
+    let mut files = BTreeMap::new();
+    for (name, pin) in &captured.files {
+        files.insert(
+            name.clone(),
+            crate::staging::read_held(&pin.path, pin.bytes)?.0,
+        );
+    }
+    Ok(Rendered {
+        receipt: captured.receipt,
+        files,
+        _files: captured._files,
+        _directories: captured._directories,
+    })
+}
+pub(crate) fn render_declared_files(
+    inputs: &Inputs,
+    job: &FileRef,
+    production: &FileRef,
+    workspace: &Path,
+    runtime: &Tool,
+    limits: &Limits,
+    expected_outputs: Option<BTreeSet<String>>,
+) -> Result<Captured> {
     let directory = directory(workspace)?;
     if fs::read_dir(directory.path())
         .map_err(io_error)?
@@ -385,7 +454,7 @@ pub(crate) fn render_declared(
     )?;
     request.expected_outputs = expected_outputs;
     launch(&request, "render-request.json")?;
-    collect(directory.path(), limits)
+    collect_files(directory.path(), limits)
 }
 /// Reconcile an existing rendered directory without rendering again. Requires
 /// the original request bytes and uses a separate, explicit verification launch.
@@ -432,7 +501,7 @@ pub(crate) fn adopt_declared(
     runtime: &Tool,
     limits: &Limits,
     expected_outputs: BTreeSet<String>,
-) -> Result<Rendered> {
+) -> Result<Captured> {
     let directory = directory(workspace)?;
     let mut expected = request(
         inputs,
@@ -476,7 +545,7 @@ pub(crate) fn adopt_declared(
             "movie-original-completed-render",
         ));
     }
-    collect(directory.path(), limits)
+    collect_files(directory.path(), limits)
 }
 /// Independent check over caller-held exact output files; no rendered movie is
 /// produced and no original worker directory is required. The caller admits
@@ -808,7 +877,7 @@ fn perform(request: &Request) -> Result<()> {
             return Ok(());
         }
     }
-    let rendered = collect(&request.workspace, &request.limits)?;
+    let rendered = collect_files(&request.workspace, &request.limits)?;
     if rendered
         .receipt
         .outputs
