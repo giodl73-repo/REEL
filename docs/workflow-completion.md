@@ -14,7 +14,7 @@ checked again before closing the objective.
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | [Built-in timed adapter](handoff/2026-11-19-elevenlabs-adapter.md), frozen source/catalogue/scope checks, candidate WAV/original alignment/language-local timing; bounded native complete-response staging/retention/replay passes after one HTTP call | Actual account/model/voice entitlement and real-service qualification; selected-take film integration and reuse of existing season-5 cues without regeneration. |
-| Film production | Existing root producers; [deterministic film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) connects exact selected recordings, authored semantic triggers and candidate graph/pointer generation to owned native dispatch; [contained film process port](handoff/2026-11-19-contained-film-process.md) renders/checks exact admitted inputs with pinned tools and finite process limits | Native scene-control retention/replay and contained 48-frame movie/check-only recovery pass. Connect workspace/capacity admission, generic owned movie dispatch, result registration/retention, historical checking and interrupted-production recovery. |
+| Film production | Existing root producers; [deterministic film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) connects exact selected recordings, authored semantic triggers and candidate graph/pointer generation to owned native dispatch; [contained film process port](handoff/2026-11-19-contained-film-process.md) and [task-bound movie candidate port](handoff/2026-11-19-movie-task-contract.md) render exact admitted inputs with pinned tools, finite limits and explicit outputs | Scene-control retention and bounded movie production pass; original failed movie admission/owned capacity resumes to twelve candidate outputs. Connect independent returned/native media verification, generic owned dispatch, result registration/retention, historical checking and interrupted-media recovery. Automatic FilmRender dispatch remains Unsupported. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md) burns compiled cel/shot IDs into review MP4s, with an exact selected font and retained source/frame/sample map; synthetic render, master parity, borrowed inputs/scattered outputs and tamper rejection pass | Translate workflow film controls into the renderer, qualify the complete native movie worker, then connect findings, fixes and affected-consumer invalidation. |
@@ -107,6 +107,16 @@ All 57 default native tests, strict Clippy and the root review-ID regression pas
 This port does not admit workspace/capacity or complete a retained movie task;
 generic dispatch, result retention, partial-media interruption, historical checks
 and final lifecycle integration remain open.
+The [movie task contract and candidate port](handoff/2026-11-19-movie-task-contract.md)
+now bind exact job/request/source metadata, media programs, render limits and
+nested output paths. Its native attempt exposed a duplicate metadata gate open;
+the bridge now reuses the original guarded reads. Recovery reopens the same
+admission, owned directory, capacity and renderer binary and returns twelve exact
+candidate artifacts plus the separate worker receipt, with unchanged claims.
+All 68 workflow tests, 57 default native tests and strict Clippy pass. No movie
+result is retained or task completed; independent media verification and full
+generic dispatch/retention/history integration remain required before enabling
+automatic FilmRender. Render frame caps do not implement creative cel cadence.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

@@ -54,8 +54,26 @@ identity/intent and preserved capacity before returning a namespace/capacity
 guard. It neither validates child contents nor grants staging/task completion.
 Trusted ports still verify their complete child namespace. The recovery fixture
 requires the original empty movie directory and original renderer executable;
-it does not prepare another job or reservation. Recovery evidence will be recorded
-separately after running it.
+it does not prepare another job or reservation.
+
+Recovery qualification passed in 43.02 seconds at fixture/library source
+`726b827bfa048f98ed2643c18384c9d510d940cd`. Evidence is
+`F:/src/tig-dev-temp/reel-movie-task-20261119-v2/qualified-tools.json`; all 1,863
+archived source files match. The renderer executable deliberately stays pinned
+to the original `d2f8a28` source/binary; the corrected fixture/controller library
+reuses that exact original renderer rather than replacing the task executable.
+Six original controls, the task key, admission, owned directory/capacity and
+claims remain unchanged. The fixture rendered 48 frames with the cel-ID cut at
+frame 24 and returned twelve exact output artifacts plus the separate worker
+receipt (thirteen candidate buffers). No candidate bytes were published and no
+task completed. The failed v1 evidence remains refused, not relabeled as passing.
+
+All 57 default native tests with `film`, strict native Clippy and the 247 SDK
+source pins pass. All 68 workflow tests and strict workflow Clippy pass; the
+22 workflow component files remain byte-identical to their tested `d2f8a28`
+versions. Formatting and `git diff --check` pass. The new empty-workspace movie
+fixture was not restarted under a fresh admission after the original refusal;
+the passing test reopens the preserved original operation.
 
 Producer-applied editor and rights/provenance review: limits must refuse instead
 of shortening the film; authored timing and selected cue recordings remain exact
