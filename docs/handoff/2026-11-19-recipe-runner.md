@@ -46,9 +46,23 @@ the immutable runner checkpoints preserve their original adoption snapshots.
 Metadata/claim tests cover bounded sequential admission, original pending
 adoption recovery after a lost checkpoint, independent Waiting jobs, blocked
 descendants, no-op claims stability, duplicate identities, changed configuration
-and preservation of partial checkpoints. A separate existing-pool fixture is
-being qualified for two staged tasks, retained synthetic parent completion and
-automatic admission of the newly eligible dependent.
+and preservation of partial checkpoints. All 45 default native tests and strict
+native Clippy pass. The separate existing-pool fixture passed in 305.45 seconds:
+two admitted and staged tasks, retained synthetic parent completion and automatic
+admission of the newly eligible dependent. The other original task stayed
+Waiting. A final no-op invocation preserved the claims header unchanged.
+
+Evidence: `F:/src/tig-dev-temp/reel-workflow-native-runner-20261119-v1/qualified-tools.json`.
+Source pin: `0d214d9`; all 1,824 archived files match. Frozen runtime SHA256:
+`c6c34c5042f7ed928a1b0d7e18bba556c5a98896dc6c28a9dd0fff31397cf982`.
+Frozen fixture SHA256:
+`42d3ff9a0707b7e3337d070b4912a0c4261d897815a8815c45db8642fed52780`.
+Preserved controller: `F:/src/tig-dev-temp/.tmpbBH8qB`; original source:
+`F:/src/tig-dev-temp/.tmpgZhhLS`. Task `one` is Retained; `two` and `after-one`
+are Waiting. Preserve their claims and scratch. This fixture uses explicitly
+enrolled actors, a single existing native pool and a synthetic returned response.
+It does not qualify actual provider calls, automatic worker dispatch, larger
+comic issues or multi-parent comic/control runner waves.
 
 Provider execution, scratch allocation/retirement, actor close, candidate
 selection and creative/release authority remain separate. Producer-applied

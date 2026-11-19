@@ -43,7 +43,14 @@ and old-close fencing after reuse; scratch retirement remains separate.
 [Expanded-task advancement](handoff/2026-11-19-expanded-advancement.md) now joins
 frozen proposals to durable admission, handoff journals and runnable graph
 bindings, with existing-pool CLI replay and protected prompt-batch staging.
-Connect automatic multi-wave recipe advancement and
+The [resumable recipe admission runner](handoff/2026-11-19-recipe-runner.md)
+now connects frontier observation, source freezing and durable graph adoption
+through bounded append-only checkpoints. It preserves Waiting jobs and resumes
+pending original adoption before admitting independent tasks. Full comic/control
+wave execution and project-specific configurations remain open. The existing-pool
+fixture now passes two admitted/staged tasks, retained parent completion and
+automatic admission of its dependent while preserving the other Waiting job.
+Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
