@@ -29,8 +29,8 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
-Current ordering: qualify the implemented [derived issue control producer](handoff/2026-11-18-derived-issue-controls.md)
-through native retention and final assembly. [Task expansion](handoff/2026-11-18-task-expansion.md)
+Current ordering: the [derived issue control producer](handoff/2026-11-18-derived-issue-controls.md)
+now passes native retention, final assembly and editable history recovery. [Task expansion](handoff/2026-11-18-task-expansion.md)
 now fills concrete tasks from verified retained parent selectors;
 [frozen expansion admission](handoff/2026-11-18-frozen-expansion.md) connects those
 proposals to exact source declarations, previews, acceptance and original receipt
