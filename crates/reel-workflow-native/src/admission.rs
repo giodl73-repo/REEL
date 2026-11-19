@@ -306,12 +306,37 @@ impl Prepared {
         }
         let packet_object = put(&mut memory, &encode(packet)?)?;
         let declaration = put(&mut memory, &source.snapshot.declaration_bytes()?)?;
-        let descriptor = encode(
-            &serde_json::json!({"schema":"reel.workflow-input-projection.v1","task_key":packet.task_key,"attempt_id":attempt,
+        let compact = packet.task.tool.as_ref().is_some_and(|tool| {
+            tool.capability == reel_workflow::ToolCapability::ComicIssueAssembly
+        });
+        let input_paths: BTreeMap<_, _> = snapshot
+            .objects
+            .keys()
+            .enumerate()
+            .map(|(index, id)| {
+                (
+                    id.clone(),
+                    if compact {
+                        format!("inputs/{index:03}")
+                    } else {
+                        format!("inputs/{id}")
+                    },
+                )
+            })
+            .collect();
+        let mut descriptor = serde_json::json!({"schema":"reel.workflow-input-projection.v1","task_key":packet.task_key,"attempt_id":attempt,
             "source_checkpoint":snapshot.checkpoint,"source_archive":snapshot.archive,"packet":packet_object,"native_declaration":declaration,
             "index":profile.index_identity,"actor":profile.scope.actor,"owner":profile.scope.owner,"operation":profile.scope.operation,
-            "store":profile.scope.store,"policy":profile.scope.policy,"runtime":runtime}),
-        )?;
+            "store":profile.scope.store,"policy":profile.scope.policy,"runtime":runtime});
+        if compact {
+            // Stable storage paths avoid extra tree nodes for nested asset IDs.
+            // Every original logical ID and its exact mapping remain in the
+            // versioned descriptor, packet and archived source declaration.
+            descriptor["schema"] = "reel.workflow-input-projection.v2".into();
+            descriptor["input_paths"] = serde_json::to_value(&input_paths)
+                .map_err(|_| error(ErrorKind::Invalid, "admission-input-path-map"))?;
+        }
+        let descriptor = encode(&descriptor)?;
         let candidate = put(&mut memory, &descriptor)?;
         let mut entries = BTreeMap::from([
             (LogicalPath::parse("control/packet").unwrap(), packet_object),
@@ -330,7 +355,7 @@ impl Prepared {
         ]);
         for (id, object) in &snapshot.objects {
             entries.insert(
-                LogicalPath::parse(&format!("inputs/{id}"))
+                LogicalPath::parse(&input_paths[id])
                     .map_err(|_| error(ErrorKind::Invalid, "admission-input-path"))?,
                 object.clone(),
             );

@@ -694,10 +694,47 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
         annex,
         source: pool,
     };
-    let admitted = upstream::Admission::prepare(&packet, &source, &case.profile, "attempt-1", refs)
-        .unwrap()
-        .accept()
+    save(&case_root.join("proposed-issue-packet.json"), &packet);
+    save(&case_root.join("proposed-issue-source.json"), &source);
+    save(
+        &case_root.join("proposed-issue-admission.json"),
+        &case.profile,
+    );
+    let prepared =
+        upstream::Admission::prepare(&packet, &source, &case.profile, "attempt-1", refs).unwrap();
+    let preview = prepared.preview().unwrap();
+    assert!(preview.declared_objects + 4 <= preview.changed_path_limit);
+    save(&case_root.join("issue-admission-preview.json"), &preview);
+    let admitted = prepared.accept().unwrap();
+    {
+        use tig_core::tree::{NodeStore, Tree, TreeLimits};
+        let mut nodes = tig_store::metadata::MetadataStore::open(
+            &case.profile.metadata_root,
+            &admitted.metadata_checkpoint,
+        )
         .unwrap();
+        let raw = nodes.get(&admitted.candidate).unwrap().unwrap();
+        let descriptor: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(descriptor["schema"], "reel.workflow-input-projection.v2");
+        let entries = Tree::from_root(admitted.input.root.clone())
+            .entries(&mut nodes, TreeLimits::default())
+            .unwrap()
+            .0;
+        let mut inputs = packet.task.inputs.iter().collect::<Vec<_>>();
+        inputs.sort_by(|a, b| a.logical_id.cmp(&b.logical_id));
+        for (index, a) in inputs.iter().enumerate() {
+            let path = format!("inputs/{index:03}");
+            assert_eq!(descriptor["input_paths"][&a.logical_id], path);
+            assert_eq!(
+                entries[&LogicalPath::parse(&path).unwrap()].sha256.as_str(),
+                a.sha256
+            );
+        }
+        assert_eq!(
+            descriptor["input_paths"].as_object().unwrap().len(),
+            inputs.len()
+        );
+    }
     for a in &packet.task.inputs {
         if !bindings.inputs.contains_key(&a.logical_id) && published.insert(a.sha256.clone()) {
             publish_input(&case_root, &source, &assets.values[&a.logical_id].1);

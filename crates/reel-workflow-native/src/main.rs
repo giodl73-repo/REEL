@@ -653,6 +653,7 @@ fn main() -> ExitCode {
             "reel-workflow-native export-ready PLAN RUN_BINDINGS TASK_IDS_JSON NEW_PRIVATE_BATCH --apply\n",
             "reel-workflow-native import-ready PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID RESULT RETURNS --apply\n",
             "reel-workflow-native comic-render REQUEST NEW_DIRECTORY\n",
+            "reel-workflow-native comic-issue-assemble REQUEST NEW_DIRECTORY\n",
             "reel-workflow-native comic-check REQUEST DIRECTORY\n",
             "reel-workflow-native check-publication-native PACKET PROFILE\n",
             "reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\n",

@@ -48,6 +48,21 @@ Its original operation/control roots are preserved even on failure.
 | Concurrency/recovery | Parent retention is checked before child admission. Shared retained replay uses sealed custody permits; owned work and original identities persist on uncertainty. Synthetic coverage removal does not qualify production slot retirement. |
 
 All 65 shared tests, all 37 default native tests and strict shared/native Clippy
-passed. End-to-end qualification is pending the actual native fixture and
-existing-store regression results in
+passed on the initial build. Its native issue fixture retained both parents, then
+refused child preparation with `admission-atomic-claim-bound`, before first child
+acceptance or work staging. Original parent controls, claims and retained results
+remain preserved. No uncertain effect is being retried under a fresh identity.
+
+Issue jobs now use versioned projection v2 with flat ordinal storage paths and
+an explicit logical-ID/path map. This preserves every declared payload, origin
+and required metadata object while avoiding tree nodes introduced solely by
+nested logical IDs. Other capabilities retain their v1 projection. The 128-path
+guard remains unchanged. The revised build still needs actual qualification.
+
+The revised build passes strict native Clippy, all 37 default native tests and
+the CLI help check. Its reader also reopens both original v1 part results with
+actual retained-owner verification. All 31 shared source/Cargo files match the
+65-test shared source snapshot. Its complete-issue fixture is still running.
+
+Initial failure and regression evidence is in
 `F:/src/tig-dev-temp/reel-workflow-native-issue-20261118-v1`.
