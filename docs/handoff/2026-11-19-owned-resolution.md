@@ -91,15 +91,29 @@ claim files remain unchanged. Its actual result is recorded after execution.
 The original-runtime import has returned success with `state: retained` and
 `task_completed: true`. A live native retained guard has reopened the typed
 proposal and matched the manually prepared result. The returned proposal is
-byte-identical to the earlier qualified lineage proposal. The final original-CLI
-replay and post-replay claim/control comparisons are still pending; this is not
-yet a completed recovery qualification. The first recovery fixture reached these
+byte-identical to the earlier qualified lineage proposal. The first recovery fixture reached these
 checks but then called `import-handoff` again on the Retained journal. The CLI
 correctly refused with `handoff-reconcile-original-import`; the fixture failed
 after 1,383.52 test seconds. This is a harness/API error, not loss of the retained
 result. The corrected fixture uses `resume-handoff ... - --apply` for replay.
 A separate continuation fixture resumes the existing retained job without return
 files, new admission or result generation, then checks claims, journal and controls.
+
+The continuation now passes: 372.31 test seconds, original runtime and original
+task key. Resume requires no return files; journal entries, input claims, original
+controls and all three parent claim files remain unchanged. Combined with the
+earlier successful import and typed-guard assertions, this qualifies bounded
+manual resolution retention and original-operation replay. The initial fixture
+failure remains recorded; it is not reported as a passing full fixture.
+
+Continuation source is `e35a9b6f94da2232ca977e9a05f9ca3b5c2cb110`, with 1,922
+archived and individually hash/length-verified tracked files. Its only changes
+since the full 63-test production snapshot are this note and the ignored recovery
+fixture; all 21 standard unit tests and strict Clippy in both feature modes pass
+after the harness correction. Private combined evidence is
+`F:/src/tig-dev-temp/reel-resolution-resume-20261119-v1/qualified-tools.json`.
+These unoptimized fixture timings establish correctness, not production
+throughput. No source actor was closed, slot reused or scratch retired.
 
 Source `4422a899ef129e0253587235fbe83057c1c6da27` passes all 63 standard native
 tests, all 247 SDK source-pin checks, strict all-target Clippy with and without

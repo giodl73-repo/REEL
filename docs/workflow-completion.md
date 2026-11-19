@@ -18,7 +18,7 @@ checked again before closing the objective.
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; [frozen film direction](handoff/2026-11-19-film-direction.md) integrates desired cel duration, separate visual school/performance/technique, delivery fps, exposure cadence and bounded drawing/storage/cost demand into v2 scene controls; ES/EN forecasting and native Spanish six-output retention/replay pass | Generate/bind actual additional drawings, connect exposure sheets and renderer-specific adapters, consume the frozen requirement in rendered editions and qualify multiple drawings per second. Forecasts do not prove animated footage. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md), retained movie worker and [native review export](handoff/2026-11-19-native-review-export.md) preserve compiled cel/shot IDs, review MP4/font and frame/sample map; bounded synthetic native export binds findings after slot reuse | Translate workflow film controls into the renderer; connect protected structured-review tasks, actual fixes and affected-consumer invalidation. |
-| Packaging, review, issue filing and fixes | Existing packaging/review checks; shared review/repair contracts and native producer-map export; [protected structured reports](handoff/2026-11-19-native-structured-review.md) qualify stale-report refusal before journal intent, native retention/completion/replay and bare history in the bounded comic fixture; [explicit issue delivery](handoff/2026-11-19-issue-delivery.md) adds retained-finding draft export, one-create transport and lookup-only reconciliation; [candidate repair plans](handoff/2026-11-19-repair-plan.md) replace exact pins and producer references with explicit new commit-bound declarations; [corrected comic execution](handoff/2026-11-19-corrected-comic.md) qualifies original-operation recovery, retained one-page render/replay and pixel/text checks; [resolution proposals](handoff/2026-11-19-resolution-proposals.md) now qualify a retained contextual follow-up report, exact retained producer-copy linkage, native proposal export and stale historical report refusal for one Spanish comic page | Complete issue review export, broader film/issue/project repairs, actual tracker/proxy qualification, native retention/adoption of delivery evidence, general repair/derived-control expansion, broader corrected-output/follow-up-review integration, retained resolution adoption and evidenced tracker closure. The follow-up is a scripted technical report/declaration; loopback tracker receipts and local resolution proposals do not establish actual creative review or these remaining boundaries. |
+| Packaging, review, issue filing and fixes | Existing packaging/review checks; shared review/repair contracts and native producer-map export; [protected structured reports](handoff/2026-11-19-native-structured-review.md) qualify stale-report refusal before journal intent, native retention/completion/replay and bare history in the bounded comic fixture; [explicit issue delivery](handoff/2026-11-19-issue-delivery.md) adds retained-finding draft export, one-create transport and lookup-only reconciliation; [candidate repair plans](handoff/2026-11-19-repair-plan.md) replace exact pins and producer references with explicit new commit-bound declarations; [corrected comic execution](handoff/2026-11-19-corrected-comic.md) qualifies original-operation recovery, retained one-page render/replay and pixel/text checks; [resolution proposals](handoff/2026-11-19-resolution-proposals.md) now qualify a retained contextual follow-up report, exact retained producer-copy linkage, native proposal export and stale historical report refusal for one Spanish comic page | Complete issue review export, broader film/issue/project repairs, actual tracker/proxy qualification, native retention/adoption of delivery evidence, general repair/derived-control expansion, broader corrected-output/follow-up-review integration, automatic resolution dispatch, retained delivery/close evidence and evidenced tracker closure. The follow-up is a scripted technical report/declaration; loopback tracker receipts and local resolution proposals do not establish actual creative review or these remaining boundaries. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
 | Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan; owned exact-runtime comic dispatch and composite art dependency replay; bounded two-part retained issue assembly/history/export/edit test passes | Automatic derived controls, complete issue scheduling and larger/project qualification. |
 | Larger complete comic issues | Explicit grouping preserves spreads; selected-part native admission binds the full master/plan; editable packet carriers reduce declared object counts; bounded native two-part issue preserves ordered reading and editable sources through retained assembly | Implement full part scheduling and automatic derived controls within actor/128-path bounds; qualify larger actual issues. Two-part native, three-page local assembly and 40-page metadata evidence do not establish arbitrary issue sizes. |
@@ -29,6 +29,21 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
+The [owned resolution job](handoff/2026-11-19-owned-resolution.md) now qualifies
+bounded manual native retention and original-operation replay for the corrected
+Spanish comic lineage. Its full parent payload closure is admitted through exact
+native streams (68 declared objects), with no change to Tig's admission limits.
+The original runtime retained the proposal, a live guard reopened its typed
+proof, and a 372.31-second continuation resumed without return files or changes
+to claims, journal or controls. The first recovery fixture's repeated-import
+error remains recorded; the continuation uses the required resume operation.
+All 63 standard native tests and strict Clippy pass; the harness-only correction
+also passes all 21 unit tests and both strict Clippy feature modes. Automatic
+resolution dispatch under the corrected capability registration, larger formats/
+languages/projects, retained tracker delivery/close evidence and managed close
+scheduling remain open. These are technical synthetic declarations, not actual
+creative review or issue closure.
+
 The [tracker close transport](handoff/2026-11-19-tracker-close.md) now reuses
 the existing create transport for one bounded close effect and lookup-only
 reconciliation. It verifies the original create delivery, exact target/revision/
@@ -37,7 +52,7 @@ Four loopback/CLI tests cover replay, truncation, changed intent, missing owner,
 per-call file loss and invalid receipts without another close POST. All 99
 workflow tests, 31 HTTP tests, 62 standard native tests, 247 SDK pins and strict
 Clippy pass. This is a custom proxy contract with no real tracker qualification.
-Retained resolution/delivery/close evidence, native close admission/scheduling,
+Retained delivery/close evidence, automatic resolution dispatch, native close admission/scheduling,
 actual tracker bridge and explicit reopened-issue generations remain open.
 
 The [native corrected-comic resolution chain](handoff/2026-11-19-resolution-proposals.md)
@@ -48,7 +63,7 @@ finding/producer claims. A 101.72-second read-only stale historical report expor
 refuses before output creation, with all three claim files unchanged. All 98
 workflow tests, 62 standard native tests, 247 SDK pins and strict Clippy pass.
 The report/evaluation are scripted technical declarations, not actual viewing.
-Next retain/adopt the resolution and delivery/close evidence and connect the
+Next qualify automatic resolution dispatch, retain/adopt delivery/close evidence and connect the
 checked close transport above to native admission/scheduling; broader
 formats/languages/projects and automatic fix/control scheduling remain open.
 
