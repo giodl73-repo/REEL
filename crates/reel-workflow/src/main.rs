@@ -224,6 +224,19 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"proposed-repair-impact-only","rebuild_tasks":impact.rebuild.len(),"edits_applied":false,"findings_closed":false,"approved":false}),
             )
         }
+        [command, plan, copy, report, repair, revision, output] if command == "revise-repair" => {
+            let checked = reel_workflow::review::check_report(&control(copy)?, &control(report)?)?;
+            let candidate = reel_workflow::repair::materialize(
+                &control(plan)?,
+                &checked,
+                &control(repair)?,
+                &control(revision)?,
+            )?;
+            publish_control(output, &candidate.plan)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"candidate-repair-plan","rebuild_tasks":candidate.impact.rebuild.len(),"production_admitted":false,"selected":false,"findings_closed":false,"approved":false}),
+            )
+        }
         [command, path] if command == "check-handoff" || command == "cancel-handoff" => {
             let mut journal = reel_workflow::handoff::Journal::open(Path::new(path))?;
             if command == "cancel-handoff" {
@@ -298,6 +311,7 @@ Usage: reel-workflow check-plan PLAN\n\
        reel-workflow check-review-result PACKET RESULT COPY_INPUT COPY_PATH REPORT_OUTPUT REPORT_PATH\n\
        reel-workflow export-review-issues COPY REPORT ROUTES NEW_PROPOSALS\n\
        reel-workflow plan-repair PLAN COPY REPORT REPAIR NEW_IMPACT\n\
+       reel-workflow revise-repair PLAN COPY REPORT REPAIR REVISION NEW_CANDIDATE\n\
        reel-workflow export-task PLAN TASK NEW_PACKET [DEPENDENCY_DESCRIPTORS]\n\
        reel-workflow check-result PACKET RESULT PAYLOAD_BINDINGS\n\
        reel-workflow check-handoff DIRECTORY\n\

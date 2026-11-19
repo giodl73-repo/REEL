@@ -14,6 +14,7 @@ pub mod issue;
 pub mod issue_control;
 pub mod publication;
 pub mod recipe;
+pub mod repair;
 pub mod review;
 pub mod review_control;
 pub mod tracker;

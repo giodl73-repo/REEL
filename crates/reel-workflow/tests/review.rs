@@ -817,6 +817,125 @@ fn finding_and_expanded_issue_output_budgets_refuse() {
 }
 
 #[test]
+fn repair_revision_materializes_exact_inputs_and_preserves_other_languages() {
+    for comic in [false, true] {
+        let copy = copy(comic, "es");
+        let checked = check_report(&copy, &report(&copy)).unwrap();
+        let baseline = plan();
+        let repair = repair(&checked, pin("input/es-text", b"Spanish text"));
+        let revision = reel_workflow::repair::Revision {
+            schema: "reel.workflow-repair-revision.v1".into(),
+            source_commit: "b".repeat(40),
+            native_inputs: BTreeMap::new(),
+        };
+        let candidate =
+            reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision).unwrap();
+        assert_eq!(
+            candidate.plan.tasks[1].inputs,
+            vec![repair.edits[0].after.clone()]
+        );
+        for index in [0, 2, 3, 4, 5] {
+            assert_eq!(candidate.plan.tasks[index], baseline.tasks[index]);
+        }
+        assert_eq!(
+            candidate.impact.rebuild,
+            ["es-lettering", "es-reading", "issue"]
+        );
+        assert_eq!(candidate.plan.source_commit, revision.source_commit);
+        assert_eq!(
+            candidate.plan_sha256,
+            canonical_digest(&candidate.plan).unwrap()
+        );
+        let mut bad = revision.clone();
+        bad.source_commit = baseline.source_commit.clone();
+        assert!(reel_workflow::repair::materialize(&baseline, &checked, &repair, &bad).is_err());
+        bad.source_commit = "0".repeat(40);
+        assert!(reel_workflow::repair::materialize(&baseline, &checked, &repair, &bad).is_err());
+    }
+}
+
+#[test]
+fn repair_revision_requires_every_native_declaration_and_updates_tool_references() {
+    let copy = copy(true, "es");
+    let checked = check_report(&copy, &report(&copy)).unwrap();
+    let mut baseline = plan();
+    for task in &mut baseline.tasks {
+        task.native_inputs = Some(pin(&format!("native/{}", task.id), b"old declaration"));
+    }
+    let publication = pin("input/publication", b"old master");
+    let request = pin("input/request", b"producer request");
+    let t = &mut baseline.tasks[0];
+    t.operation = Operation::DeterministicTool;
+    t.prompt.clear();
+    t.inputs.extend([publication.clone(), request.clone()]);
+    t.tool = Some(ToolContract {
+        schema: "reel.workflow-tool.v1".into(),
+        capability: ToolCapability::ComicRender,
+        executable: pin("tool/reel", b"runtime"),
+        auxiliary_executables: BTreeMap::new(),
+        publication: publication.clone(),
+        edition_id: "es".into(),
+        request,
+        source_bindings: BTreeMap::new(),
+        part: None,
+    });
+    let repair = repair(&checked, publication);
+    let mut revision = reel_workflow::repair::Revision {
+        schema: "reel.workflow-repair-revision.v1".into(),
+        source_commit: "b".repeat(40),
+        native_inputs: BTreeMap::new(),
+    };
+    assert_eq!(
+        reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision)
+            .unwrap_err()
+            .code,
+        "repair-revision-native-task-set"
+    );
+    for task in &baseline.tasks {
+        let before = task.native_inputs.clone().unwrap();
+        revision.native_inputs.insert(
+            task.id.clone(),
+            Edit {
+                after: pin(&before.logical_id, b"new declaration"),
+                before,
+            },
+        );
+    }
+    let candidate =
+        reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision).unwrap();
+    assert_eq!(
+        candidate.plan.tasks[0].tool.as_ref().unwrap().publication,
+        repair.edits[0].after
+    );
+    let runtime = baseline.tasks[0].tool.as_ref().unwrap().executable.clone();
+    let runtime_repair = self::repair(&checked, runtime);
+    let runtime_candidate =
+        reel_workflow::repair::materialize(&baseline, &checked, &runtime_repair, &revision)
+            .unwrap();
+    assert_eq!(runtime_candidate.impact.directly_affected, ["art"]);
+    assert_eq!(
+        runtime_candidate.plan.tasks[0]
+            .tool
+            .as_ref()
+            .unwrap()
+            .executable,
+        runtime_repair.edits[0].after
+    );
+    assert_eq!(candidate.impact.rebuild.len(), baseline.tasks.len());
+    assert_ne!(
+        candidate.plan.tasks[2].native_inputs,
+        baseline.tasks[2].native_inputs
+    );
+    revision.native_inputs.get_mut("art").unwrap().before.sha256 = "f".repeat(64);
+    assert_eq!(
+        reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Stale
+    );
+}
+
+#[test]
 fn cli_exports_new_private_controls_and_preserves_existing_files() {
     let root = tempfile::tempdir().unwrap();
     let copy = copy(true, "es");
@@ -829,6 +948,10 @@ fn cli_exports_new_private_controls_and_preserves_existing_files() {
         ("report", serde_json::to_value(report).unwrap()),
         ("plan", serde_json::to_value(plan).unwrap()),
         ("repair", serde_json::to_value(repair).unwrap()),
+        (
+            "revision",
+            serde_json::json!({"schema":"reel.workflow-repair-revision.v1","source_commit":"b".repeat(40),"native_inputs":{}}),
+        ),
         (
             "routes",
             serde_json::json!({"project":"example/project","reel":"example/reel","tig":"example/tig"}),
@@ -881,4 +1004,27 @@ fn cli_exports_new_private_controls_and_preserves_existing_files() {
     let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(result["edits_applied"], false);
     assert_eq!(result["findings_closed"], false);
+    let args = [
+        "revise-repair",
+        "plan",
+        "copy",
+        "report",
+        "repair",
+        "revision",
+        "candidate",
+    ];
+    let out = run(&args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let candidate = std::fs::read(root.path().join("candidate")).unwrap();
+    let executable_plan: Plan = serde_json::from_slice(&candidate).unwrap();
+    check_plan(&executable_plan).unwrap();
+    assert!(!run(&args).status.success());
+    assert_eq!(
+        candidate,
+        std::fs::read(root.path().join("candidate")).unwrap()
+    );
 }

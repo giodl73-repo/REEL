@@ -71,6 +71,57 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             receipt,
             result,
             ack,
+            plan,
+            repair,
+            revision,
+            output,
+            apply,
+        ] if command == "export-repair-plan" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let guard = reel_workflow_native::retention::verify(
+                &packet,
+                &source,
+                &profile,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(ack))?,
+            )?;
+            let report = guard.review_report().ok_or(reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Unsupported,
+                code: "repair-retained-review-required".into(),
+            })?;
+            let candidate = reel_workflow::repair::materialize(
+                &read_control(Path::new(plan))?,
+                report,
+                &read_control(Path::new(repair))?,
+                &read_control(Path::new(revision))?,
+            )?;
+            let raw = serde_json::to_vec(&candidate.plan).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "repair-candidate-json".into(),
+            })?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "repair-candidate-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"candidate-repair-plan-from-retained-review","production_admitted":false,"selected":false,"findings_closed":false,"approved":false}),
+            )
+        }
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
+            ack,
             routes,
             text,
             output,
@@ -1035,6 +1086,7 @@ fn main() -> ExitCode {
             "reel-workflow-native retain-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
             "reel-workflow-native export-issue-draft PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK ROUTES ISSUE_TEXT NEW_DRAFT --apply\n",
+            "reel-workflow-native export-repair-plan PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK PLAN REPAIR REVISION NEW_CANDIDATE --apply\n",
             "reel-workflow-native export-review-brief PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT NEW_BRIEF --apply\n",
             "reel-workflow-native pack-review-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT REPORT NEW_RESULT --apply\n",
             "reel-workflow-native export-review-copy PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK NEW_COPY [NEW_COMIC_MANIFEST] --apply\n",

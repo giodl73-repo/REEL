@@ -351,6 +351,9 @@ pub struct CheckedReport {
     findings: BTreeMap<String, CheckedFinding>,
 }
 impl CheckedReport {
+    pub fn copy(&self) -> &Copy {
+        &self.copy
+    }
     pub fn findings(&self) -> &BTreeMap<String, CheckedFinding> {
         &self.findings
     }
@@ -693,7 +696,21 @@ pub struct Impact {
     /// is a requirement, not evidence that such review has happened.
     pub contextual_review: Copy,
 }
-/// Plans required rebuilds from exact input pins and the declared dependency DAG.
+pub(crate) fn task_references(task: &Task) -> Vec<&Artifact> {
+    let mut pins: Vec<_> = task.inputs.iter().collect();
+    pins.extend(task.native_inputs.iter());
+    pins.extend(task.upstream_inputs.iter());
+    if let Some(tool) = &task.tool {
+        pins.extend([&tool.publication, &tool.request, &tool.executable]);
+        pins.extend(tool.auxiliary_executables.values());
+        if let Some(part) = &tool.part {
+            pins.push(&part.plan);
+        }
+    }
+    pins
+}
+
+/// Plans required rebuilds from exact artifact references and the dependency DAG.
 /// Does not mutate a plan, release old jobs, apply selections or close findings.
 pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Result<Impact> {
     let order = check_plan(plan)?;
@@ -733,7 +750,11 @@ pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Re
         {
             return fail(ErrorKind::Conflict, "review-repair-edit-duplicate");
         }
-        if !plan.tasks.iter().any(|t| t.inputs.contains(&edit.before)) {
+        if !plan
+            .tasks
+            .iter()
+            .any(|t| task_references(t).contains(&&edit.before))
+        {
             return fail(ErrorKind::Stale, "review-repair-input-pin");
         }
     }
@@ -741,8 +762,8 @@ pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Re
         .tasks
         .iter()
         .filter(|t| {
-            t.inputs
-                .iter()
+            task_references(t)
+                .into_iter()
                 .any(|a| changed.get(&a.logical_id).is_some_and(|old| **old == *a))
         })
         .map(|t| t.id.clone())

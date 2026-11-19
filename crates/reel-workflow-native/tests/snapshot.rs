@@ -46,6 +46,9 @@ mod movie_verify;
 #[path = "support/provider_native.rs"]
 mod provider_native;
 #[cfg(windows)]
+#[path = "support/repair_plan.rs"]
+mod repair_plan_native;
+#[cfg(windows)]
 #[path = "support/review_brief.rs"]
 mod review_brief_native;
 #[cfg(windows)]
