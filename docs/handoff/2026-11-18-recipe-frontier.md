@@ -37,8 +37,18 @@ separate effect boundaries and must revalidate the relevant evidence.
 All 60 workflow tests and strict shared Clippy pass. Three protocol fixtures
 cover bounded waves and single-session verification, waiting/retained transitions,
 descendant invalidation, forward-authored dependencies, authored proposal order,
-cycles, missing selectors, limits and immutable base tasks. Native CLI tests cover
-metadata export; positive native scheduling qualification remains pending.
+cycles, missing selectors, limits and immutable base tasks. All 40 default native
+tests and strict native Clippy pass. The native CLI case covers metadata export.
+
+Positive native scheduling also passed against the qualified retained issue and
+the protected waiting review job: it preserved that job, blocked its dependent
+step and proposed one independent task. Claims and metadata headers remained
+unchanged; no task was admitted or dispatched. Evidence is in
+`F:/src/tig-dev-temp/reel-workflow-native-recipe-20261118-v1/qualified-tools.json`.
+The source pin is `4733c18`; all 1,815 archived files match, with manifest SHA256
+`3297ad25cc7e66bb574461ead53887ac2acd2ed0fc47c0920607b511fa062f39`.
+The frozen runtime SHA256 is
+`2b226952c42279ab2d5e406cba096c477db8cc62b0f4e8b85c63877835cb20c9`.
 
 Producer-applied recovery/provenance checks preserve original jobs, exact result
 fingerprints, explicit budgets and separate approval authority. This is the

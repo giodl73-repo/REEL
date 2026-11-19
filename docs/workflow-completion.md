@@ -35,7 +35,9 @@ now fills concrete tasks from verified retained parent selectors;
 [frozen expansion admission](handoff/2026-11-18-frozen-expansion.md) connects those
 proposals to exact source declarations, previews, acceptance and original receipt
 recovery, with positive composite qualification through native staging and a
-protected waiting prompt batch. Implement automatic recipe scheduling, then
+protected waiting prompt batch. The [recipe frontier](handoff/2026-11-18-recipe-frontier.md)
+now proposes bounded eligible waves and blocks stale descendants using native
+observations. Connect effectful recipe advancement, guarded job-slot close/reuse and
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
