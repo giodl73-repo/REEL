@@ -63,6 +63,13 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        #[cfg(all(windows, feature = "film"))]
+        [command, request, pin, apply] if command == "film-process-child" && apply == "--apply" => {
+            reel_workflow_native::film_process::child(Path::new(request), pin)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"contained-film-process","task_completed":false,"selected":false}),
+            )
+        }
         [command, plan, bindings, id, config, directory, apply]
             if command == "dispatch-task" && apply == "--apply" =>
         {

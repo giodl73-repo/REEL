@@ -27,6 +27,9 @@ mod film_inputs;
 #[cfg(windows)]
 #[path = "support/film_native.rs"]
 mod film_native;
+#[cfg(all(windows, feature = "film"))]
+#[path = "support/film_process.rs"]
+mod film_process;
 #[cfg(windows)]
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;

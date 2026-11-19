@@ -200,6 +200,31 @@ impl Inputs {
     pub fn objects(&self) -> usize {
         self.held.len()
     }
+    /// Private child-process locators. The caller must keep this provider alive
+    /// until every child exits; these paths do not carry independent authority.
+    #[cfg(windows)]
+    pub(crate) fn process_files(&self) -> Result<BTreeMap<String, FileRef>> {
+        self.files
+            .iter()
+            .map(|(name, (object, index))| {
+                let path = self.held[*index]
+                    .with_path(Path::to_path_buf)
+                    .map_err(path_error)?;
+                Ok((
+                    name.clone(),
+                    FileRef {
+                        path,
+                        sha256: object.sha256.as_str().into(),
+                        bytes: object.bytes,
+                    },
+                ))
+            })
+            .collect()
+    }
+    #[cfg(windows)]
+    pub(crate) fn programs(&self) -> Programs {
+        self.programs.clone()
+    }
     fn binding(&self, item: &FileRef) -> anyhow::Result<&VerifiedRead> {
         let name = item
             .path

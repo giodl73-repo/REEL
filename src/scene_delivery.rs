@@ -2217,7 +2217,7 @@ pub fn render_with_inputs(
     output: &Path,
 ) -> Result<Receipt> {
     let (job, plan) = plan_with_inputs(job_path, asset_root)?;
-    render_planned(job, plan, asset_root, output, |root| {
+    render_planned(job, plan, asset_root, output, false, |root| {
         check_with_inputs(job_path, asset_root, root)
     })
 }
@@ -2231,8 +2231,32 @@ pub fn render_with_control_files(
     controls: &(impl InputFiles + ?Sized),
     output: &Path,
 ) -> Result<Receipt> {
+    render_controls(job, production, inputs, controls, output, false)
+}
+
+/// Owned workflow variant: retain the original failed staging directory for
+/// diagnosis/recovery. Success still atomically renames that directory to output.
+/// This grants neither workspace admission nor deletion authority.
+pub fn render_with_control_files_preserving(
+    job: &FileRef,
+    production: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    controls: &(impl InputFiles + ?Sized),
+    output: &Path,
+) -> Result<Receipt> {
+    render_controls(job, production, inputs, controls, output, true)
+}
+
+fn render_controls(
+    job: &FileRef,
+    production: &FileRef,
+    inputs: &(impl InputFiles + ?Sized),
+    controls: &(impl InputFiles + ?Sized),
+    output: &Path,
+    preserve_failed_stage: bool,
+) -> Result<Receipt> {
     let (parsed, plan) = plan_with_control_files(job, production, inputs, controls)?;
-    render_planned(parsed, plan, inputs, output, |root| {
+    render_planned(parsed, plan, inputs, output, preserve_failed_stage, |root| {
         let mut bytes = Vec::new();
         fs::File::open(root.join("receipt.json"))?
             .take(4 * 1024 * 1024 + 1)
@@ -2258,6 +2282,7 @@ fn render_planned(
     plan: Plan,
     asset_root: &(impl InputFiles + ?Sized),
     output: &Path,
+    preserve_failed_stage: bool,
     verify: impl FnOnce(&Path) -> Result<Receipt>,
 ) -> Result<Receipt> {
     if job
@@ -2275,9 +2300,10 @@ fn render_planned(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent)?;
-    let stage = tempfile::Builder::new()
+    let mut stage = tempfile::Builder::new()
         .prefix(".scene-delivery-")
         .tempdir_in(parent)?;
+    stage.disable_cleanup(preserve_failed_stage);
     let root = stage.path();
     let fps = format!("{}/{}", plan.fps_numerator, plan.fps_denominator);
     let overlays: Vec<_> = job

@@ -19,6 +19,8 @@ pub mod dispatch;
 pub mod expansion;
 #[cfg(feature = "film")]
 pub mod film_inputs;
+#[cfg(all(windows, feature = "film"))]
+pub mod film_process;
 pub mod graph;
 pub mod handoff;
 mod issue;
