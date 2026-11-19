@@ -319,3 +319,137 @@ fn packed_issue_rejects_same_byte_carrier_with_different_logical_origin() {
         "issue-part-bundle-binding"
     );
 }
+
+fn control_fixture() -> (Plan, Memory, Vec<u8>) {
+    let (mut workflow, mut memory) = packed_fixture();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let original = memory.bytes[&tool.request.logical_id].clone();
+    let assembly: Assembly = serde_json::from_slice(&original).unwrap();
+    let request = reel_workflow::issue_control::Request {
+        schema: "reel.workflow-issue-control.v1".into(),
+        plan_path: assembly.plan.path,
+        parts: BTreeMap::from([(
+            "opening".into(),
+            reel_workflow::issue_control::PartPaths {
+                receipt: assembly.parts["opening"].path.clone(),
+                bundle: assembly.bundles["opening"].path.clone(),
+            },
+        )]),
+        limits: assembly.limits,
+    };
+    let control = memory.put(
+        "issue/control-request",
+        "application/json",
+        serde_json::to_vec(&request).unwrap(),
+    );
+    task.inputs.retain(|a| a != &tool.request);
+    task.inputs.push(control.clone());
+    tool.request = control;
+    tool.capability = ToolCapability::ComicIssueControl;
+    task.outputs = BTreeMap::from([(
+        "assembly.json".into(),
+        reel_publication::OutputContract {
+            media_type: "application/json".into(),
+            required: true,
+            max_bytes: MAX_CONTROL_BYTES as u64,
+        },
+    )]);
+    (workflow, memory, original)
+}
+
+#[test]
+fn derived_control_produces_exact_assembly_then_binds_as_an_ordinary_input() {
+    let (workflow, mut memory, original) = control_fixture();
+    let packet = packet(&workflow);
+    let generated = reel_workflow::issue_control::generate(&packet, &mut memory).unwrap();
+    assert_eq!(generated.files["assembly.json"], original);
+    assert_eq!(generated.outputs["assembly.json"].sha256, digest(&original));
+    assert!(
+        generated.outputs["assembly.json"]
+            .logical_id
+            .contains(&packet.task_key)
+    );
+    let mut assembly_workflow = workflow.clone();
+    let task = &mut assembly_workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    task.inputs.retain(|a| a != &tool.request);
+    let a = generated.outputs["assembly.json"].clone();
+    memory.bytes.insert(a.logical_id.clone(), original);
+    tool.request = a.clone();
+    tool.capability = ToolCapability::ComicIssueAssembly;
+    task.inputs.push(a);
+    let master: Publication =
+        serde_json::from_slice(&memory.bytes[&tool.publication.logical_id]).unwrap();
+    task.outputs = master.editions[0].outputs.clone();
+    reel_workflow::issue::bind(&super::packet(&assembly_workflow), &mut memory).unwrap();
+}
+
+#[test]
+fn derived_control_refuses_changed_carrier_bytes_and_wrong_scoped_origin() {
+    let (workflow, mut memory, _) = control_fixture();
+    let id = "issue-demo/es/parts/opening/editable.packet";
+    memory.bytes.get_mut(id).unwrap().push(0);
+    assert_eq!(
+        reel_workflow::issue_control::generate(&packet(&workflow), &mut memory)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Integrity
+    );
+    let (mut workflow, mut memory, _) = control_fixture();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let a = task.inputs.iter_mut().find(|a| a.logical_id == id).unwrap();
+    a.logical_id = "alias/carrier".into();
+    memory
+        .bytes
+        .insert(a.logical_id.clone(), memory.bytes[id].clone());
+    tool.source_bindings
+        .insert("parts/opening/editable.packet".into(), a.logical_id.clone());
+    assert_eq!(
+        reel_workflow::issue_control::generate(&packet(&workflow), &mut memory)
+            .err()
+            .unwrap()
+            .code,
+        "issue-control-part-correspondence"
+    );
+}
+
+#[test]
+fn derived_control_recipe_does_not_depend_on_future_part_hashes() {
+    let (mut workflow, mut memory, _) = control_fixture();
+    let request_before = workflow.tasks[0].tool.as_ref().unwrap().request.clone();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let receipt_id = tool.source_bindings["parts/opening/receipt.json"].clone();
+    let carrier_id = tool.source_bindings["parts/opening/editable.packet"].clone();
+    let next = memory.put(
+        &carrier_id,
+        "application/vnd.reel.editable-packet.v1",
+        b"new unknown part bytes".to_vec(),
+    );
+    let mut receipt: Receipt = serde_json::from_slice(&memory.bytes[&receipt_id]).unwrap();
+    receipt
+        .outputs
+        .insert("editable.packet".into(), next.clone());
+    let next_receipt = memory.put(
+        &receipt_id,
+        "application/json",
+        serde_json::to_vec(&receipt).unwrap(),
+    );
+    for a in &mut task.inputs {
+        if a.logical_id == carrier_id {
+            *a = next.clone();
+        }
+        if a.logical_id == receipt_id {
+            *a = next_receipt.clone();
+        }
+    }
+    assert_eq!(tool.request, request_before);
+    let generated =
+        reel_workflow::issue_control::generate(&packet(&workflow), &mut memory).unwrap();
+    let assembly: Assembly = serde_json::from_slice(&generated.files["assembly.json"]).unwrap();
+    assert_eq!(assembly.bundles["opening"].sha256, next.sha256);
+    assert_eq!(assembly.parts["opening"].sha256, next_receipt.sha256);
+}

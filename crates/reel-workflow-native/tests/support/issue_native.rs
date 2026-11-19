@@ -112,6 +112,16 @@ struct Parent {
 #[test]
 #[ignore = "Complete synthetic two-part comic issue in explicitly declared existing native pool; no project adoption or automatic actor allocation"]
 fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bare_history() {
+    complete_issue(false);
+}
+
+#[test]
+#[ignore = "Synthetic retained derived-control job and final issue assembly in the explicitly declared existing native pool"]
+fn derived_issue_control_is_retained_upstream_before_final_issue_assembly() {
+    complete_issue(true);
+}
+
+fn complete_issue(derived_control: bool) {
     let descriptor: serde_json::Value = serde_json::from_slice(
         &fs::read(std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("native fixture required"))
             .unwrap(),
@@ -417,11 +427,36 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
         },
     };
     let assembly_raw = serde_json::to_vec_pretty(&assembly).unwrap();
-    let assembly_asset = assets.put(
+    let mut assembly_asset = assets.put(
         "comic/assembly",
         "assembly-request.json",
         "application/json",
-        assembly_raw.clone(),
+        if derived_control {
+            serde_json::to_vec(&reel_workflow::issue_control::Request {
+                schema: "reel.workflow-issue-control.v1".into(),
+                plan_path: "issue-plan.json".into(),
+                parts: plan
+                    .parts
+                    .iter()
+                    .map(|part| {
+                        (
+                            part.id.clone(),
+                            reel_workflow::issue_control::PartPaths {
+                                receipt: format!("parts/{}/receipt.json", part.id),
+                                bundle: format!("parts/{}/editable.packet", part.id),
+                            },
+                        )
+                    })
+                    .collect(),
+                limits: Limits {
+                    input_bytes: 32 * 1024 * 1024,
+                    output_bytes: 32 * 1024 * 1024,
+                },
+            })
+            .unwrap()
+        } else {
+            assembly_raw.clone()
+        },
     );
     let definition =
         Object::from_bytes(&fs::read(fixture_root.join("definitions/input.json")).unwrap());
@@ -487,7 +522,7 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
         schema: "reel.workflow-run-bindings.v1".into(),
         tasks: BTreeMap::new(),
     };
-    let parent_plan = Plan {
+    let mut parent_plan = Plan {
         schema: PLAN_SCHEMA.into(),
         project: "synthetic-comic".into(),
         source_commit: fixture.profile.commit.clone(),
@@ -605,6 +640,250 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
                     sha256: digest(&fs::read(profile_path).unwrap()),
                 },
                 staging_ticket: None,
+            },
+        );
+        parents.push(Parent {
+            packet,
+            source,
+            profile,
+            receipt: admitted,
+            result,
+            ack,
+        });
+    }
+    if derived_control {
+        let bindings = reel_workflow::upstream::Bindings {
+            schema: "reel.workflow-upstream-inputs.v1".into(),
+            inputs: upstream_refs.clone(),
+        };
+        let refs = parents
+            .iter()
+            .map(|p| {
+                (
+                    p.packet.task.id.clone(),
+                    upstream::Parent {
+                        packet: &p.packet,
+                        result: &p.result,
+                        source: &p.source,
+                        admission: &p.profile,
+                        receipt: &p.receipt,
+                        acknowledgement: &p.ack,
+                    },
+                )
+            })
+            .collect();
+        let originals = vec![master.clone(), plan_asset.clone(), assembly_asset.clone()];
+        let mut snapshot = assets.snapshot(&fixture, &originals);
+        snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
+        snapshot.upstream = Some(upstream::Frozen::capture(&bindings, &refs));
+        let mut inputs: BTreeMap<_, _> = originals
+            .into_iter()
+            .map(|a| (a.logical_id.clone(), a))
+            .collect();
+        for id in issue_paths.values() {
+            inputs.insert(id.clone(), assets.values[id].0.clone());
+        }
+        let binding_raw = bindings.canonical_bytes().unwrap();
+        let task = Task {
+            id: "issue-control".into(),
+            native_inputs: Some(Fixture::declaration(&snapshot)),
+            upstream_inputs: Some(Artifact {
+                logical_id: "control/upstream".into(),
+                sha256: digest(&binding_raw),
+                bytes: binding_raw.len() as u64,
+                media_type: "application/json".into(),
+            }),
+            operation: Operation::DeterministicTool,
+            tool: Some(ToolContract {
+                schema: "reel.workflow-tool.v1".into(),
+                capability: ToolCapability::ComicIssueControl,
+                executable: tool.clone(),
+                publication: master.clone(),
+                edition_id: "es".into(),
+                request: assembly_asset.clone(),
+                source_bindings: issue_paths.clone(),
+                part: None,
+            }),
+            language: Some("es".into()),
+            prompt: String::new(),
+            inputs: inputs.into_values().collect(),
+            depends_on: parents.iter().map(|p| p.packet.task.id.clone()).collect(),
+            outputs: BTreeMap::from([(
+                "assembly.json".into(),
+                OutputContract {
+                    media_type: "application/json".into(),
+                    required: true,
+                    max_bytes: reel_workflow::MAX_CONTROL_BYTES as u64,
+                },
+            )]),
+        };
+        parent_plan.tasks.push(task);
+        let dependencies = parents
+            .iter()
+            .map(|p| {
+                (
+                    p.packet.task.id.clone(),
+                    DependencyResult {
+                        result_sha256: canonical_digest(&p.result).unwrap(),
+                        artifacts: p.result.artifacts.clone(),
+                    },
+                )
+            })
+            .collect();
+        let packet = make_packet(&parent_plan, "issue-control", dependencies).unwrap();
+        let source = NativeProfile {
+            snapshot,
+            annex: annex.clone(),
+            source: pool.clone(),
+        };
+        let mut profile = case.profile.clone();
+        profile.scope.actor = tig_store::Key::parse("slot4").unwrap();
+        profile.scope.operation = tig_store::Key::parse("derived-issue-control").unwrap();
+        let prepared =
+            upstream::Admission::prepare(&packet, &source, &profile, "attempt-1", refs).unwrap();
+        let admitted = prepared.accept().unwrap();
+        publish_input(
+            &case_root,
+            &source,
+            &assets.values[&assembly_asset.logical_id].1,
+        );
+        let acks = case_root.join("control-acks");
+        fs::create_dir(&acks).unwrap();
+        let handoff = reel_workflow_native::handoff::Profile {
+            schema: "reel.workflow-native-handoff.v1".into(),
+            source: clone_source(&source),
+            admission: profile.clone(),
+            binding: reel_workflow_native::handoff::Binding {
+                schema: "reel.workflow-native-handoff-binding.v1".into(),
+                admission: admitted.clone(),
+                target: retained_target(),
+            },
+            runtime: Tool {
+                path: executable.clone(),
+                sha256: tool.sha256.clone(),
+                bytes: tool.bytes,
+            },
+            acknowledgements: acks.clone(),
+        };
+        let packet_path = case_root.join("control-packet.json");
+        let profile_path = case_root.join("control-profile.json");
+        let journal = case_root.join("control-journal");
+        save(&packet_path, &packet);
+        save(&profile_path, &handoff);
+        run(
+            &executable,
+            &[
+                "create-handoff".as_ref(),
+                packet_path.as_os_str(),
+                profile_path.as_os_str(),
+                journal.as_os_str(),
+                "--apply".as_ref(),
+            ],
+        );
+        let scratch = case_root.join("control-input-scratch");
+        fs::create_dir(&scratch).unwrap();
+        let stage = staging::Profile {
+            schema: "reel.workflow-staging.v1".into(),
+            parent: scratch,
+            maximum_bytes: 128 * 1024 * 1024,
+            capacity_policy: reel_assets::admission::Policy {
+                minimum_free_bytes: 65536,
+                minimum_free_basis_points: 0,
+                max_object_bytes: 512 * 1024 * 1024,
+                ..Default::default()
+            },
+        };
+        let stage_ticket = staging::prepare(&packet, &source, &profile, &admitted, &stage).unwrap();
+        let stage_raw = stage_ticket.canonical_bytes().unwrap();
+        staging::export(&packet, &source, &profile, &stage_raw, &digest(&stage_raw)).unwrap();
+        let stage_path = case_root.join("control-input-ticket.json");
+        save(&stage_path, &stage_ticket);
+        graph_bindings.tasks.insert(
+            packet.task.id.clone(),
+            graph::Binding {
+                journal,
+                profile: graph::PinnedFile {
+                    path: profile_path.clone(),
+                    sha256: digest(&fs::read(&profile_path).unwrap()),
+                },
+                staging_ticket: Some(graph::PinnedFile {
+                    path: stage_path.clone(),
+                    sha256: digest(&fs::read(stage_path).unwrap()),
+                }),
+            },
+        );
+        let batch_path = case_root.join("control-ready.json");
+        graph::export_ready(
+            &parent_plan,
+            &graph_bindings,
+            std::slice::from_ref(&packet.task.id),
+            &batch_path,
+        )
+        .unwrap();
+        let batch = graph::PinnedFile {
+            sha256: digest(&fs::read(&batch_path).unwrap()),
+            path: batch_path,
+        };
+        let scratch = case_root.join("control-worker-scratch");
+        fs::create_dir(&scratch).unwrap();
+        let worker_stage = staging::Profile {
+            parent: scratch,
+            ..stage
+        };
+        let plan_path = case_root.join("control-plan.json");
+        let bindings_path = case_root.join("control-bindings.json");
+        let stage_path = case_root.join("control-worker-profile.json");
+        let ticket_path = case_root.join("control-worker-ticket.json");
+        save(&plan_path, &parent_plan);
+        save(&bindings_path, &graph_bindings);
+        save(&stage_path, &worker_stage);
+        run(
+            &executable,
+            &[
+                "prepare-worker".as_ref(),
+                plan_path.as_os_str(),
+                bindings_path.as_os_str(),
+                batch.path.as_os_str(),
+                batch.sha256.as_ref(),
+                packet.task.id.as_ref(),
+                stage_path.as_os_str(),
+                ticket_path.as_os_str(),
+                "--apply".as_ref(),
+            ],
+        );
+        let raw = fs::read(&ticket_path).unwrap();
+        let ticket: worker::Ticket = serde_json::from_slice(&raw).unwrap();
+        run(
+            &executable,
+            &[
+                "run-worker".as_ref(),
+                plan_path.as_os_str(),
+                bindings_path.as_os_str(),
+                ticket_path.as_os_str(),
+                digest(&raw).as_ref(),
+                "--apply".as_ref(),
+            ],
+        );
+        let directory = ticket.directory();
+        let result: ReturnedResult =
+            serde_json::from_slice(&fs::read(directory.join("result.json")).unwrap()).unwrap();
+        let ack: retention::Acknowledgement = serde_json::from_slice(
+            &fs::read(acks.join(format!("retained-{}-attempt-1.json", packet.task_key))).unwrap(),
+        )
+        .unwrap();
+        retention::verify(&packet, &source, &profile, &admitted, &result, &ack).unwrap();
+        assembly_asset = result.artifacts["assembly.json"].clone();
+        let raw = fs::read(directory.join("packet/assembly.json")).unwrap();
+        let derived: Assembly = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(derived.parts.len(), 2);
+        assert!(!assets.values.contains_key(&assembly_asset.logical_id));
+        upstream_refs.insert(
+            assembly_asset.logical_id.clone(),
+            reel_workflow::upstream::Reference {
+                task_id: packet.task.id.clone(),
+                artifact: reel_workflow::upstream::Selector::Output {
+                    name: "assembly.json".into(),
+                },
             },
         );
         parents.push(Parent {

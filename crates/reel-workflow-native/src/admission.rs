@@ -307,8 +307,11 @@ impl Prepared {
         let packet_object = put(&mut memory, &encode(packet)?)?;
         let declaration = put(&mut memory, &source.snapshot.declaration_bytes()?)?;
         let compact = packet.task.tool.as_ref().is_some_and(|tool| {
-            tool.capability == reel_workflow::ToolCapability::ComicIssueAssembly
-                || packet.task.outputs.contains_key("editable.packet")
+            matches!(
+                tool.capability,
+                reel_workflow::ToolCapability::ComicIssueAssembly
+                    | reel_workflow::ToolCapability::ComicIssueControl
+            ) || packet.task.outputs.contains_key("editable.packet")
         });
         let input_paths: BTreeMap<_, _> = snapshot
             .objects

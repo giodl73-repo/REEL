@@ -35,7 +35,9 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
     if packet.task.operation != reel_workflow::Operation::DeterministicTool
         || !matches!(
             tool.capability,
-            ToolCapability::ComicRender | ToolCapability::ComicIssueAssembly
+            ToolCapability::ComicRender
+                | ToolCapability::ComicIssueAssembly
+                | ToolCapability::ComicIssueControl
         )
         || tool.executable.sha256 != selected.profile.runtime.sha256
         || tool.executable.bytes != selected.profile.runtime.bytes

@@ -29,8 +29,9 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
-Current ordering: extend automatic derived controls and larger issue scheduling
-beyond the bounded retained issue fixture and its passing native regressions;
+Current ordering: qualify the implemented [derived issue control producer](handoff/2026-11-18-derived-issue-controls.md)
+through native retention and final assembly, then extend automatic graph expansion
+and larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
 explicit selection/retirement and project adoption qualification. Independent

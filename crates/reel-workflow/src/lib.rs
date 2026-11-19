@@ -8,6 +8,7 @@ use std::fmt;
 pub mod graph;
 pub mod handoff;
 pub mod issue;
+pub mod issue_control;
 pub mod publication;
 pub mod upstream;
 
@@ -87,6 +88,7 @@ pub enum Operation {
 pub enum ToolCapability {
     ComicRender,
     ComicIssueAssembly,
+    ComicIssueControl,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

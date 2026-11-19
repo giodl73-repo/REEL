@@ -31,6 +31,10 @@ pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> R
         ToolCapability::ComicIssueAssembly => {
             Ok(reel_workflow::issue::bind(packet, inputs)?.output_bytes())
         }
+        ToolCapability::ComicIssueControl => {
+            reel_workflow::issue_control::generate(packet, inputs)?;
+            Ok(2 * reel_workflow::MAX_CONTROL_BYTES as u64)
+        }
     }
 }
 pub(crate) enum Generated {
@@ -47,7 +51,7 @@ impl Generated {
     pub(crate) fn outputs(&self) -> &ArtifactSet {
         match self {
             Self::Comic(g) => &g.receipt.outputs,
-            Self::Issue(g) => &g.receipt.outputs,
+            Self::Issue(g) => &g.outputs,
         }
     }
 }
@@ -56,7 +60,7 @@ pub(crate) fn generate(packet: &Packet, inputs: NativeInputs) -> Result<Generate
         ToolCapability::ComicRender => {
             crate::comic::generate(packet, inputs).map(|g| Generated::Comic(Box::new(g)))
         }
-        ToolCapability::ComicIssueAssembly => {
+        ToolCapability::ComicIssueAssembly | ToolCapability::ComicIssueControl => {
             crate::issue::generate(packet, inputs).map(|g| Generated::Issue(Box::new(g)))
         }
     }
@@ -72,7 +76,7 @@ pub(crate) fn check_returned(
         ToolCapability::ComicRender => {
             crate::comic::check_returned(packet, inputs, result, root, paths)
         }
-        ToolCapability::ComicIssueAssembly => {
+        ToolCapability::ComicIssueAssembly | ToolCapability::ComicIssueControl => {
             crate::issue::check_returned(packet, inputs, result, root, paths)
         }
     }
@@ -122,7 +126,7 @@ fn native(
             crate::comic::check_native(packet, source, result, permit)
         }
         .map(|p| p.map(|p| Proof::Comic(Box::new(p)))),
-        ToolCapability::ComicIssueAssembly => {
+        ToolCapability::ComicIssueAssembly | ToolCapability::ComicIssueControl => {
             crate::issue::native_proof(packet, source, result, capture, permit)
                 .map(|p| Some(Proof::Issue(Box::new(p))))
         }

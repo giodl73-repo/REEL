@@ -26,8 +26,8 @@ impl InputReader for Inputs {
 }
 pub(crate) struct Generated {
     _inputs: NativeInputs,
-    bound: reel_workflow::issue::BoundIssue,
-    pub(crate) receipt: reel_publication::comic_issue_source::AssemblyReceipt,
+    bound: Option<reel_workflow::issue::BoundIssue>,
+    pub(crate) outputs: reel_workflow::ArtifactSet,
     pub(crate) files: BTreeMap<String, Vec<u8>>,
 }
 fn source(packet: &Packet, inputs: &Inputs, path: &str, max: u64) -> anyhow::Result<Vec<u8>> {
@@ -55,6 +55,20 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         native,
         bytes: BTreeMap::new(),
     };
+    if packet
+        .task
+        .tool
+        .as_ref()
+        .is_some_and(|t| t.capability == reel_workflow::ToolCapability::ComicIssueControl)
+    {
+        let generated = reel_workflow::issue_control::generate(packet, &mut inputs)?;
+        return Ok(Generated {
+            _inputs: inputs.native,
+            bound: None,
+            outputs: generated.outputs,
+            files: generated.files,
+        });
+    }
     let bound = reel_workflow::issue::bind(packet, &mut inputs)?;
     let raw = source(
         packet,
@@ -69,8 +83,8 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
     .map_err(|_| error(ErrorKind::Integrity, "issue-worker-production"))?;
     Ok(Generated {
         _inputs: inputs.native,
-        bound,
-        receipt,
+        bound: Some(bound),
+        outputs: receipt.outputs,
         files,
     })
 }
@@ -91,7 +105,19 @@ fn receipt(generated: &Generated, result: &ReturnedResult, raw: &[u8]) -> Result
     {
         return Err(error(ErrorKind::Integrity, "issue-worker-receipt-replay"));
     }
-    reel_workflow::issue::check_receipt(&generated.bound, result, raw)
+    if let Some(bound) = &generated.bound {
+        reel_workflow::issue::check_receipt(bound, result, raw)
+    } else {
+        // Both the receipt and every output must equal deterministic replay.
+        // check_result independently enforces the pinned tool provenance.
+        if result.artifacts != generated.outputs {
+            return Err(error(
+                ErrorKind::Conflict,
+                "issue-control-result-correspondence",
+            ));
+        }
+        Ok(())
+    }
 }
 pub(crate) fn check_returned(
     packet: &Packet,
@@ -100,6 +126,7 @@ pub(crate) fn check_returned(
     root: &std::path::Path,
     paths: &BTreeMap<String, String>,
 ) -> Result<(Vec<File>, Vec<reel_assets::jobs::WorkspaceDirectory>)> {
+    reel_workflow::check_result(packet, result)?;
     let generated = generate(packet, native)?;
     let (raw, held) =
         crate::staging::read_held(&root.join("receipt.json"), receipt_pin(result)?.bytes)?;
@@ -151,6 +178,7 @@ pub(crate) fn native_proof(
     capture: bool,
     permit: InputPermit,
 ) -> Result<Proof> {
+    reel_workflow::check_result(packet, result)?;
     let native = NativeInputs::from_permit(packet, profile, permit)?;
     let generated = generate(packet, native)?;
     let mut held = Vec::new();
