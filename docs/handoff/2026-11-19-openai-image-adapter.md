@@ -98,3 +98,34 @@ Applied rights/provenance and animation-direction producer checklists: explicit
 input egress, pinned source bytes, private evidence, bounded decode and no automatic
 selection. No real API call or private reference upload is required for the
 synthetic qualification fixtures.
+
+## Qualification
+
+Source `2fcaa3413322caed191eadf343cb2ca57f0c94e8` adds the adapter;
+`9d3af1f0617202eb937e329b2baf51efcd407133` fixes a shared test helper to
+repin the supplied task ID. The initial native fixture stopped in that helper,
+before admission, publication or HTTP; its failure/source logs remain preserved.
+No accepted operation was restarted under another identity.
+
+There are 23 passing HTTP tests, including five image cases covering generation,
+ordered references/masks, endpoint/credential restrictions, invalid outputs and
+full 16-bit alpha precision. The native regression suite passed 59 tests, including
+egress/operation/output refusal and all 247 SDK source pins. Native standard checks
+preceded the final PNG16 precision refinement/helper repair; that refinement has
+HTTP regression coverage and the final native execution below. Strict HTTP and
+native Clippy checks pass. All 1,900 archived final source files verified.
+
+The protected loopback edit fixture passed in 207.11 test seconds (207.77 wall),
+with one exact reference PNG, one request, a checked 1024×1024 candidate, six
+retained outputs and replay without another POST. The truncated-response fixture
+passed in 80.02 test seconds (80.04 wall): it retained the request ID/prefix,
+preserved claims and refused another call, including when local call files were
+temporarily moved within their owned workspace. The uncertain job remains Waiting.
+Generation and masks are component-qualified; native execution qualification is
+the single-reference edit path. No real service account/model was contacted.
+
+Preserved roots are `F:/src/tig-dev-temp/.tmpIrOFpr` (positive) and
+`F:/src/tig-dev-temp/.tmpJXuW6J` (uncertain), with their original source/workspace
+paths pinned in the evidence. The combined source/tools/checks/operation manifest is
+`F:/src/tig-dev-temp/reel-openai-image-20261119-v2/qualified-tools.json`,
+SHA256 `f3c606b404d0572dba3510395902778d8c147ea5d70d71ba636c4f718cee2549`.
