@@ -34,6 +34,9 @@ mod film_process;
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
 #[cfg(all(windows, feature = "film"))]
+#[path = "support/movie_close.rs"]
+mod movie_close;
+#[cfg(all(windows, feature = "film"))]
 #[path = "support/movie_native.rs"]
 mod movie_native;
 #[cfg(all(windows, feature = "film"))]
