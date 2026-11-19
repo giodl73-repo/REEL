@@ -55,6 +55,15 @@ of large native payload custody, a 600-resource lifecycle or v2 film dispatch.
 All 78 standard native tests, 247 SDK source pins and strict Clippy with/without
 film pass; existing large/native effect fixtures were not rerun for this port.
 
+The [streamed return budgets](handoff/2026-11-19-streamed-return-budgets.md) now
+pin explicit total/object byte and verification-time allowances inside v2 native
+declarations, preserving absent-field bytes and the legacy 128 MiB allowance.
+Declared ceilings and actual alias/receipt totals are bounded before effects;
+file verification uses 64 KiB buffers and retained checks use the same budget.
+Full v2 film dispatch remains gated. The pinned SDK's fixed 30-second native
+transfer/reopen checks are a separate qualification boundary; this port does
+not establish multi-GB publication, retained custody or episode-scale recovery.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial

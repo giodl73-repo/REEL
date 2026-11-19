@@ -42,7 +42,7 @@ output size and lifecycle transaction changes distinct during admission.
 | Film process timeout 3,600 seconds and aggregate raw RGB 16 GiB | `reel-workflow/src/film_render.rs` | Five-hour render windows and full-episode frame demand need an explicit bounded composition contract. Runtime budget and film duration remain distinct. |
 | Contained-process input hash bound 512 MiB per file | `reel-workflow-native/src/film_process.rs` | Streaming hash implementation still explicitly refuses the reported individual masters. |
 | Owned input staging 512 MiB maximum reservation | `reel-workflow-native/src/staging.rs` | Materializing the reported full closure is unsupported. |
-| Generic candidate return total 128 MiB | `reel-workflow-native/src/response.rs` | Current return ingestion cannot admit multi-GB masters. |
+| Legacy candidate return total 128 MiB | `reel-workflow-native/src/response.rs` | Explicit task-bound return budgets now allow larger streamed verification; large native publication/retention and complete film return qualification remain open. |
 | Resolution resource closure 126 objects / 512 MiB | `reel-workflow-native/src/resolution_job.rs` | The qualified one-page repair resolution does not cover an E7-sized closure. |
 | Atomic admission change budget; 16 total actors | `reel-workflow-native/src/admission.rs`, qualified Tig SDK | Media/task counts alone do not predict feasibility; previews include source/record/runtime metadata. No implicit per-chunk actor allocation. |
 
@@ -93,6 +93,12 @@ input/object/projection budgets to exact task identity, including retention and
 close checks. Synthetic metadata tests cover a declared 3.6 GB object and stale
 budget refusal. No multi-GB native payload or 600-resource lifecycle is qualified
 by those tests; the actor/object/path limits and full film gate remain in force.
+
+The [return budget port](2026-11-19-streamed-return-budgets.md) carries explicit
+total/object/deadline allowances through returned-file verification and retained
+checks. Omitted allowances keep the legacy 128 MiB behavior. The pinned native
+publisher/reopen hash still has a fixed 30-second deadline; explicit byte budgets
+do not qualify multi-GB native ingestion or complete film production.
 
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy

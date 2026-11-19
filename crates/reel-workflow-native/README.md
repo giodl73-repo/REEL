@@ -99,6 +99,17 @@ These are metadata/admission budgets, not evidence of large native byte access,
 available capacity, a 600-resource lifecycle or v2 film execution. See the
 [snapshot budget qualification](../../docs/handoff/2026-11-19-snapshot-budgets.md).
 
+V2 snapshot budgets may additionally pin `returns` with schema
+`reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and
+`verify_millis`. Total is at most 16 GiB and no greater than projection allowance;
+object is at most total; the per-file deadline is at most 300,000 ms. Declared
+output ceilings plus a 1 MiB tool-receipt allowance must fit before admission.
+Return verification streams ordinary files in 64 KiB buffers and retains exact
+length/hash checks. Registration, publication and retained verification share
+the task-bound allowance. Without `returns`, the 128 MiB legacy limit remains.
+Native SDK transfer/reopen deadlines and producer-specific limits still apply;
+see [return budget scope](../../docs/handoff/2026-11-19-streamed-return-budgets.md).
+
 `check-snapshot` binds actual committed metadata without reading payloads.
 `check-publication-native` additionally checks the comic closure using guarded
 native reads. Both report durable job protection false. Their output is an

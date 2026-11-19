@@ -297,6 +297,7 @@ fn versioned_snapshot_budget_resolves_large_declared_bytes_and_preserves_legacy_
     let old_key = fixture.packet.task_key.clone();
     fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
     fixture.profile.budget = Some(reel_workflow_native::SnapshotBudget {
+        returns: None,
         schema: "reel.workflow-snapshot-budget.v1".into(),
         input_bytes: 4 * 1024 * 1024 * 1024,
         input_object_bytes: 4 * 1024 * 1024 * 1024,
@@ -352,6 +353,7 @@ fn projection_budget_covers_the_full_resource_closure_and_cannot_be_rebound_afte
     });
     fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
     fixture.profile.budget = Some(reel_workflow_native::SnapshotBudget {
+        returns: None,
         schema: "reel.workflow-snapshot-budget.v1".into(),
         input_bytes: bytes,
         input_object_bytes: bytes,
@@ -410,6 +412,7 @@ fn snapshot_budget_versions_and_consumed_object_bounds_refuse_before_payload_acc
         let mut fixture = Fixture::new();
         fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
         fixture.profile.budget = Some(reel_workflow_native::SnapshotBudget {
+            returns: None,
             schema: "reel.workflow-snapshot-budget.v1".into(),
             input_bytes: 1024,
             input_object_bytes: 1024,
@@ -433,6 +436,138 @@ fn snapshot_budget_versions_and_consumed_object_bounds_refuse_before_payload_acc
             "{change}"
         );
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn return_budget_binds_admission_and_preserves_legacy_declaration_bytes() {
+    use reel_workflow_native::{SnapshotBudget, admission::Prepared, response};
+    let mut fixture = Fixture::new();
+    fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
+    fixture.profile.budget = Some(SnapshotBudget {
+        input_bytes: 1024,
+        input_object_bytes: 1024,
+        projection_bytes: 1024 * 1024 * 1024,
+        schema: "reel.workflow-snapshot-budget.v1".into(),
+        returns: None,
+    });
+    let before = fixture.profile.declaration_bytes().unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&before).unwrap();
+    assert!(value["budget"].get("returns").is_none());
+    fixture.profile.budget.as_mut().unwrap().returns = Some(response::Budget {
+        schema: "reel.workflow-return-budget.v1".into(),
+        total_bytes: 1024,
+        object_bytes: 512,
+        verify_millis: 5000,
+    });
+    fixture.repin();
+    let mut case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let (result, returns) = response_fixture(&fixture.packet, &case.temp.path().join("returns"));
+    let first = response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    let replay = response::register(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        &receipt,
+        &result,
+        &returns,
+    )
+    .unwrap();
+    assert_eq!(first, replay);
+    case.source
+        .snapshot
+        .budget
+        .as_mut()
+        .unwrap()
+        .returns
+        .as_mut()
+        .unwrap()
+        .verify_millis += 1;
+    assert_eq!(
+        response::stage(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &result,
+            &returns
+        )
+        .unwrap_err()
+        .code,
+        "task-native-binding-content"
+    );
+    let old_key = fixture.packet.task_key.clone();
+    fixture.profile = case.source.snapshot.clone();
+    fixture.repin();
+    assert_ne!(fixture.packet.task_key, old_key);
+    assert!(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .is_err()
+    );
+    fixture
+        .packet
+        .task
+        .outputs
+        .get_mut("note")
+        .unwrap()
+        .max_bytes = 513;
+    fixture.repin();
+    assert_eq!(
+        SnapshotInputs::open(&fixture.packet, &fixture.profile)
+            .err()
+            .unwrap()
+            .code,
+        "response-declared-object-limit"
+    );
+    fixture
+        .packet
+        .task
+        .outputs
+        .get_mut("note")
+        .unwrap()
+        .max_bytes = 100;
+    fixture.packet.task.outputs.insert(
+        "extra".into(),
+        OutputContract {
+            media_type: "text/plain".into(),
+            max_bytes: 1,
+            required: false,
+        },
+    );
+    let budget = fixture
+        .profile
+        .budget
+        .as_mut()
+        .unwrap()
+        .returns
+        .as_mut()
+        .unwrap();
+    budget.object_bytes = 100;
+    budget.total_bytes = 100;
+    fixture.repin();
+    assert_eq!(
+        SnapshotInputs::open(&fixture.packet, &fixture.profile)
+            .err()
+            .unwrap()
+            .code,
+        "response-declared-byte-limit"
+    );
+    fixture.profile.budget.as_mut().unwrap().returns = None;
+    assert_eq!(fixture.profile.declaration_bytes().unwrap(), before);
 }
 
 #[test]

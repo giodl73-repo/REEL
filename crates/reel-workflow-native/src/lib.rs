@@ -88,6 +88,8 @@ pub struct SnapshotBudget {
     pub input_bytes: u64,
     pub input_object_bytes: u64,
     pub projection_bytes: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returns: Option<response::Budget>,
 }
 impl SnapshotBudget {
     pub fn validate(&self) -> Result<()> {
@@ -102,10 +104,43 @@ impl SnapshotBudget {
         {
             return Err(error(ErrorKind::Budget, "native-snapshot-budget"));
         }
+        if let Some(returns) = &self.returns {
+            returns.validate()?;
+            if returns.total_bytes > self.projection_bytes {
+                return Err(error(ErrorKind::Budget, "native-return-projection-budget"));
+            }
+        }
         Ok(())
     }
 }
 impl SnapshotProfile {
+    pub(crate) fn check_binding(&self, packet: &Packet) -> Result<()> {
+        reel_workflow::check_packet(packet)?;
+        let schema = match (self.upstream.is_some(), self.budget.is_some()) {
+            (false, false) => "reel.workflow-native-snapshot.v1",
+            (true, false) => "reel.workflow-native-composite-snapshot.v1",
+            (false, true) => "reel.workflow-native-snapshot.v2",
+            (true, true) => "reel.workflow-native-composite-snapshot.v2",
+        };
+        if self.schema != schema || self.commit != packet.source_commit {
+            return Err(error(ErrorKind::Stale, "native-task-commit"));
+        }
+        let binding = packet
+            .task
+            .native_inputs
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Missing, "task-native-binding-pin"))?;
+        let declaration = self.declaration_bytes()?;
+        if declaration.len() as u64 != binding.bytes
+            || reel_workflow::digest(&declaration) != binding.sha256
+        {
+            return Err(error(ErrorKind::Conflict, "task-native-binding-content"));
+        }
+        if let Some(returns) = self.budget.as_ref().and_then(|b| b.returns.as_ref()) {
+            returns.check_task(packet)?;
+        }
+        Ok(())
+    }
     /// Portable authored declaration; machine repository/tool locators are not
     /// authored identity. Pin these exact canonical bytes in task.native_inputs.
     pub fn declaration_bytes(&self) -> Result<Vec<u8>> {
@@ -270,35 +305,13 @@ impl SnapshotInputs {
             (Some(_), Some(frozen)) => frozen.bound(packet)?,
             _ => return Err(error(ErrorKind::Conflict, "composite-origin-declaration")),
         };
-        let schema = match (profile.upstream.is_some(), profile.budget.is_some()) {
-            (false, false) => "reel.workflow-native-snapshot.v1",
-            (true, false) => "reel.workflow-native-composite-snapshot.v1",
-            (false, true) => "reel.workflow-native-snapshot.v2",
-            (true, true) => "reel.workflow-native-composite-snapshot.v2",
-        };
-        if profile.schema != schema || profile.commit != packet.source_commit {
-            return Err(error(ErrorKind::Stale, "native-task-commit"));
-        }
-        if let Some(budget) = &profile.budget {
-            budget.validate()?;
-        }
+        profile.check_binding(packet)?;
         let projection_bytes = profile
             .budget
             .as_ref()
             .map(|b| b.projection_bytes)
             .unwrap_or(1024 * 1024 * 1024);
         let commit = GitId::parse(&profile.commit).map_err(git_error)?;
-        let binding = packet
-            .task
-            .native_inputs
-            .as_ref()
-            .ok_or_else(|| error(ErrorKind::Missing, "task-native-binding-pin"))?;
-        let declaration = profile.declaration_bytes()?;
-        if declaration.len() as u64 != binding.bytes
-            || reel_workflow::digest(&declaration) != binding.sha256
-        {
-            return Err(error(ErrorKind::Conflict, "task-native-binding-content"));
-        }
         if !profile.repository.is_absolute() {
             return Err(error(ErrorKind::Invalid, "native-repository-path"));
         }

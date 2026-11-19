@@ -16,6 +16,9 @@ use tig_core::{Digest, LogicalPath, Object};
 use tig_store::{Key, source_claims::protection::work::WorkRef};
 
 const MAX_BYTES: u64 = 128 * 1024 * 1024;
+mod budget;
+pub(crate) use budget::Bound;
+pub use budget::Budget;
 pub(crate) fn artifacts(result: &ReturnedResult) -> impl Iterator<Item = &Artifact> {
     result
         .artifacts
@@ -48,6 +51,7 @@ struct Verified {
     _directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
     _files: Vec<File>,
     root: PathBuf,
+    budget: Bound,
 }
 
 fn verify(
@@ -59,6 +63,8 @@ fn verify(
     returns: &Returns,
 ) -> Result<Verified> {
     check_result(packet, result)?;
+    let budget = Bound::open(packet, source)?;
+    budget.check(result)?;
     if result.attempt_id != receipt.attempt_id {
         return Err(error(ErrorKind::Conflict, "response-original-attempt"));
     }
@@ -101,7 +107,6 @@ fn verify(
     }
     let mut paths = BTreeSet::new();
     let mut files = Vec::new();
-    let mut total = 0u64;
     let review = if packet.task.operation == reel_workflow::Operation::ReviewReport {
         let mut native = crate::NativeInputs::open_admitted(packet, source, profile, receipt)?;
         let bound = reel_workflow::review::bind(packet, &mut native)?;
@@ -129,10 +134,6 @@ fn verify(
         {
             return Err(error(ErrorKind::Budget, "image-return-png-bytes"));
         }
-        total = total
-            .checked_add(artifact.bytes)
-            .filter(|n| *n <= MAX_BYTES)
-            .ok_or_else(|| error(ErrorKind::Budget, "response-byte-limit"))?;
         let path = root.join(path);
         directories.push(
             reel_assets::jobs::open_workspace_directory(path.parent().unwrap())
@@ -144,6 +145,7 @@ fn verify(
             .as_ref()
             .is_some_and(|(_, bound)| bound.report_output() == name);
         let held = if image || report {
+            let started = std::time::Instant::now();
             let (raw, held) = crate::staging::read_held(&path, artifact.bytes.min(MAX_BYTES))?;
             reel_workflow::check_output(packet, result, name, &raw)?;
             if image {
@@ -152,10 +154,11 @@ fn verify(
             if report {
                 review_output = Some(raw);
             }
+            budget.check_elapsed(started)?;
             held
         } else {
-            let mut held = crate::staging::open_held(&path, artifact.bytes.min(MAX_BYTES))?;
-            reel_workflow::check_output_reader(packet, result, name, &mut held, MAX_BYTES)?;
+            let mut held = crate::staging::open_held(&path, artifact.bytes.min(budget.object))?;
+            budget.verify(artifact, &mut held)?;
             held
         };
         files.push(held);
@@ -170,16 +173,6 @@ fn verify(
         if paths.contains("receipt.json") {
             return Err(error(ErrorKind::Conflict, "comic-receipt-path-alias"));
         }
-        let worker_receipt = result
-            .worker_receipt
-            .as_ref()
-            .ok_or_else(|| error(ErrorKind::Missing, "comic-worker-receipt-required"))?;
-        if total
-            .checked_add(worker_receipt.bytes)
-            .is_none_or(|n| n > MAX_BYTES)
-        {
-            return Err(error(ErrorKind::Budget, "response-byte-limit"));
-        }
         let native = crate::NativeInputs::open_admitted(packet, source, profile, receipt)?;
         let (extra_files, extra_directories) =
             crate::producer::check_returned(packet, source, native, result, &root, &returns.files)?;
@@ -190,6 +183,7 @@ fn verify(
         _directories: directories,
         _files: files,
         root,
+        budget,
     })
 }
 
@@ -340,7 +334,7 @@ pub fn ingest(
                     bytes: artifact.bytes,
                 }),
                 include_private_location: false,
-                maximum_bytes: MAX_BYTES,
+                maximum_bytes: held.budget.object,
                 minimum_free_bytes: 100 * 1024 * 1024,
             },
         )

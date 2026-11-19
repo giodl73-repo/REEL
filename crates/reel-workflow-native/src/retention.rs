@@ -73,7 +73,7 @@ pub(crate) fn pin_for_read(
     parent: &crate::upstream::Parent<'_>,
     session: &mut admission::RetainedFences,
 ) -> Result<ReadPin> {
-    check(parent.packet, parent.receipt, parent.result)?;
+    check(parent.packet, parent.source, parent.receipt, parent.result)?;
     let annex = hold_tool(&parent.source.annex)?;
     let prepared = Prepared::open(
         parent.packet,
@@ -121,7 +121,12 @@ impl RetainedGuard {
     }
 }
 
-fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<()> {
+fn check(
+    packet: &Packet,
+    source: &NativeProfile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+) -> Result<()> {
     check_result(packet, result)?;
     if result.attempt_id != receipt.attempt_id {
         return Err(error(ErrorKind::Conflict, "retention-original-attempt"));
@@ -129,13 +134,7 @@ fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<
     if result.provenance.mode == reel_workflow::Mode::Tool && result.worker_receipt.is_none() {
         return Err(error(ErrorKind::Missing, "comic-worker-receipt-required"));
     }
-    if result.artifacts.len() > reel_publication::MAX_OUTPUTS
-        || response::artifacts(result)
-            .try_fold(0u64, |n, a| n.checked_add(a.bytes))
-            .is_none_or(|n| n > 128 * 1024 * 1024)
-    {
-        return Err(error(ErrorKind::Budget, "retention-output-bounds"));
-    }
+    response::Bound::open(packet, source)?.check(result)?;
     Ok(())
 }
 fn outputs(
@@ -197,7 +196,7 @@ pub fn stage(
     result: &ReturnedResult,
     target: &Target,
 ) -> Result<Acknowledgement> {
-    check(packet, receipt, result)?;
+    check(packet, source, receipt, result)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     if let Some(ack) = prepared
         .completed_retention(receipt, result, target)
@@ -221,7 +220,7 @@ pub fn retain(
     result: &ReturnedResult,
     target: &Target,
 ) -> Result<Acknowledgement> {
-    check(packet, receipt, result)?;
+    check(packet, source, receipt, result)?;
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     if let Some(ack) = prepared
@@ -347,7 +346,7 @@ fn verify_inner(
     acknowledgement: &Acknowledgement,
     capture: bool,
 ) -> Result<RetainedGuard> {
-    check(packet, receipt, result)?;
+    check(packet, source, receipt, result)?;
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
