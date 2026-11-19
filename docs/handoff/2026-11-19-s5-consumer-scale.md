@@ -5,6 +5,24 @@ The S4 assembly lane reported an E7 parent with approximately 600 resources and
 requirements, not a local media inventory or a completed REEL qualification.
 No S4/S5 job, selected take, profile, media cache or approval was changed here.
 
+The retained consumer contract was subsequently read and matched to its selected
+record at exact Melena planning commit
+`f01f06fbab40b7566ca7c578f2036dd73f9b48ee`:
+
+- Asset ID: `planning/season-05-opening/workflow-requirements/v1`.
+- Record: `episodes/season-05/opening/preparation/workflow-requirements-v1.tig`.
+- Payload SHA256: `2a665407e45639f6f3b0bfe7426f0d52821580f20b1b02827148540595ea07d1`;
+  5,135 bytes. Its inspected REEL checkpoint is `e35a9b6`.
+- Schema: `melena.reel-workflow-consumer-requirements.v1`; production readiness
+  and public release are false. Existing cached bytes were read without asset
+  restoration, hydration, publication or production adoption.
+
+The exact reported logical total is **7,936,104,893 bytes**, and the consumer
+requires five-hour render windows. Source captions comprise fourteen tracks /
+787 cues and 336 Spanish review-label spans; these counts do not establish
+whole-film conformance. Melena retains the contract payload and creative choices;
+REEL stores this small requirement/evidence mapping.
+
 The bounded movie/comic fixtures in the completion ledger do not establish this
 scale. Keep actual input count, logical byte total, largest object, scratch,
 output size and lifecycle transaction changes distinct during admission.
@@ -14,6 +32,7 @@ output size and lifecycle transaction changes distinct during admission.
 | 128 task inputs/source bindings; 128 plan tasks | `reel-workflow/src/lib.rs` | A flat 600-input task cannot be admitted. |
 | Comic input closure 64 MiB, output 128 MiB | `reel-workflow/src/publication.rs` | Comic-specific limits; do not describe 64 MiB as a universal film input limit. |
 | Film output 128 MiB and workspace 512 MiB | `reel-workflow/src/film_render.rs` | Multi-GB masters cannot use the present movie task contract. |
+| Film process timeout 3,600 seconds and aggregate raw RGB 16 GiB | `reel-workflow/src/film_render.rs` | Five-hour render windows and full-episode frame demand need an explicit bounded composition contract. Runtime budget and film duration remain distinct. |
 | Contained-process input hash bound 512 MiB per file | `reel-workflow-native/src/film_process.rs` | Streaming hash implementation still explicitly refuses the reported individual masters. |
 | Owned input staging 512 MiB maximum reservation | `reel-workflow-native/src/staging.rs` | Materializing the reported full closure is unsupported. |
 | Generic candidate return total 128 MiB | `reel-workflow-native/src/response.rs` | Current return ingestion cannot admit multi-GB masters. |
@@ -57,3 +76,16 @@ output size and lifecycle transaction changes distinct during admission.
 The current automatic resolution qualification addresses a separate missing
 dispatch boundary using the existing small retained comic lineage. It must not
 be represented as solving these film scale, content or delivery requirements.
+
+## Retained consumer requirement mapping
+
+| ID | Acceptance requirement | Current boundary / remaining evidence |
+| --- | --- | --- |
+| S5WF-01 | Streamed large-resource composition and explicit bounded scene/chapter decomposition on existing F-first storage | Limits above refuse the reported production. Generic protocol and native lifecycle qualification remain required. |
+| S5WF-02 | Owned project profile adoption/rollback; reuse corrected S5 recordings and current/prior media | Historical input/retention fixtures exist; real Melena adoption, rollback and selected-take reuse are open. |
+| S5WF-03 | Stable story/C IDs across immutable drawing versions; exact scene/profile approvals; affected consumers only | Review-ID fixtures exist; versioned-story identity, drawing substitutions and affected-language/episode invalidation require production integration. |
+| S5WF-04 | Complete bilingual parent with chapters, poem/title/attribution breaths, lyric-synchronized opening, full poem-song closing over episode cels and actual-use credits | Components and the architecture target exist; complete consumer assembly and semantic/actual-use checks are open. |
+| S5WF-05 | SRT/VTT from retained conform receipts and selected-take clocks; differing ES/EN timing; complete decode/frame/sample/order and scoped image/listening checks | Language-local trigger controls are qualified in bounded fixtures; full edition clocks, caption conformance and actual modalities remain open. |
+| S5WF-06 | H264/MP3 local review; H264/AAC 48 kHz stereo ES/EN and ES-ID; exact ID tables and eleven-file private handoff; shelf fallback and prior deliveries | Complete workflow delivery integration and target checks remain open. Private, public and Golden authority are separate. |
+| S5WF-07 | Interrupted long-movie/controller recovery, completed-render adoption, original runtime/work/claims and no duplicate effects | Bounded movie/history/replay evidence exists; interruption/adoption at consumer scale remains open. Routine technical steps must not create repeated creative approval prompts. |
+| S5WF-08 | Declarative cast role/age, exact likeness sheet, wardrobe/jewelry, selected voice consent/stage, location/date and pacing; distinct narrator/poet roles | Direction abstractions exist; exact project data bindings and actual creative/rights decisions remain with Melena. Private identity details must stay out of shareable review evidence. |

@@ -129,3 +129,34 @@ The regression test checks that resolution dispatch still requires an owned
 worker configuration. Automatic resolution dispatch under the corrected
 runtime, retained tracker delivery/close evidence and managed close scheduling
 remain open.
+
+## Automatic dispatch qualification in progress
+
+Source `f94b50414e1c272ab6675d49af71d4baf5bcfe16` adds a distinct fixture for
+explicit close of the original retained resolution, reuse of its **same Index
+and slot**, automatic owned worker dispatch/retention/replay, stale-close
+fencing and reopening the original retained history. It never substitutes a new
+runtime into the original handoff profile. Close has its own explicit pinned
+closer identity; the replacement is a new task and activation.
+
+All 63 standard native tests pass in the optimized release profile, including
+all 247 original SDK source-pin checks; strict all-target Clippy passes with and
+without film support. The full 1,924-file source archive is individually
+hash/length verified. The frozen release runtime is
+`0f178dc1f023c5ea572f08786c257905e65dbe11121c1ebda3b21a3d23ca8d6f`
+(24,407,552 bytes); the frozen fixture is
+`94e0ee49a5a18295feb1bc59535489127a5f209fa597d42184b8df97ae7e1e1b`
+(27,770,880 bytes).
+
+The actual native fixture is running with preserved root `.tmpCNEYpK`, original
+root `.tmp4xlWag` and replacement task key
+`cd92c7076a03ed829f838dc0632888a0019979faab9bb8cebb4683bddcfa9234`.
+The pinned close preview has succeeded; no final automatic qualification result
+exists yet. Private evidence is under
+`F:/src/tig-dev-temp/reel-resolution-automatic-20261119-v1`.
+Do not rerun the fixture as a fresh operation. Poll/reconcile its original work,
+including any partial close/admission/publication, and preserve scratch.
+
+This bounded comic test does not qualify the large-film consumer described in
+the [S5 scale audit](2026-11-19-s5-consumer-scale.md), whose eight retained
+requirements and exact Melena record/payload pins are recorded separately.
