@@ -7,6 +7,13 @@ or a small comic fixture does not establish project completion. The original
 ownership reference. Actual implementation and qualification evidence must be
 checked again before closing the objective.
 
+The [S5 consumer scale review](handoff/2026-11-19-s5-consumer-scale.md) records
+the assembly lane's reported 600-resource/~7.94 GB E7 closure and 2.9–3.36 GB
+masters. Current task, movie output/workspace, contained-input hashing, staging,
+return and native admission bounds do not qualify that consumer. Streamed
+composition, complete bilingual content/delivery and original-operation recovery
+at that scale remain required; small comic/movie fixtures cannot close them.
+
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
 | Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic/issue workers, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Broader execution/admission scheduling, automatic derived controls and project configuration; preserve existing producers. |
