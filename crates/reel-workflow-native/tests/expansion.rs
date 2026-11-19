@@ -91,6 +91,35 @@ fn expansion_cli_exports_only_new_private_planning_controls_and_refuses_unretain
     let pending = root.join("pending.json");
     assert!(!run(&pending, false).status.success());
     assert!(!pending.exists());
+    let recipe_path = root.join("recipe.json");
+    let recipe = reel_workflow::recipe::Recipe {
+        schema: "reel.workflow-recipe.v1".into(),
+        base: plan.clone(),
+        steps: vec![template.task.clone()],
+    };
+    save(&recipe_path, &recipe);
+    let schedule_path = root.join("schedule.json");
+    let scheduled = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+        .args([
+            "schedule-recipe".as_ref(),
+            recipe_path.as_os_str(),
+            plan_path.as_os_str(),
+            bindings_path.as_os_str(),
+            "1".as_ref(),
+            schedule_path.as_os_str(),
+            "--apply".as_ref(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        scheduled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&scheduled.stdout)
+    );
+    let scheduled: serde_json::Value =
+        serde_json::from_slice(&fs::read(schedule_path).unwrap()).unwrap();
+    assert_eq!(scheduled["rows"][0]["state"], "ready");
+    assert_eq!(scheduled["proposals"].as_array().unwrap().len(), 1);
     template.task.depends_on.push("root".into());
     save(&template_path, &template);
     let refused = run(&pending, true);

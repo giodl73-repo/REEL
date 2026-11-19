@@ -192,6 +192,35 @@ pub fn export_expansion(
     template: &reel_workflow::expansion::Template,
     output: &Path,
 ) -> Result<usize> {
+    export_planning(plan, bindings, output, |observer| {
+        let expansion = reel_workflow::expansion::prepare(plan, template, observer)?;
+        let count = expansion.packet.task.inputs.len();
+        let raw = serde_json::to_vec(&expansion)
+            .map_err(|_| error(ErrorKind::Invalid, "expansion-output-json"))?;
+        Ok((raw, count))
+    })
+}
+pub fn export_recipe(
+    plan: &Plan,
+    bindings: &Bindings,
+    recipe: &reel_workflow::recipe::Recipe,
+    limit: usize,
+    output: &Path,
+) -> Result<usize> {
+    export_planning(plan, bindings, output, |observer| {
+        let schedule = reel_workflow::recipe::inspect(recipe, plan, limit, observer)?;
+        let count = schedule.proposals.len();
+        let raw = serde_json::to_vec(&schedule)
+            .map_err(|_| error(ErrorKind::Invalid, "recipe-output-json"))?;
+        Ok((raw, count))
+    })
+}
+fn export_planning(
+    plan: &Plan,
+    bindings: &Bindings,
+    output: &Path,
+    produce: impl FnOnce(&mut NativeObserver<'_>) -> Result<(Vec<u8>, usize)>,
+) -> Result<usize> {
     if !output.is_absolute()
         || output
             .components()
@@ -215,7 +244,7 @@ pub fn export_expansion(
         return Err(error(ErrorKind::Conflict, "expansion-existing-output"));
     }
     let mut observer = observer(plan, bindings)?;
-    let expansion = reel_workflow::expansion::prepare(plan, template, &mut observer)?;
+    let (raw, count) = produce(&mut observer)?;
     for job in observer.loaded.values() {
         staging::check_parent(parent.path(), &job.profile.source, &job.profile.admission)?;
         for root in [
@@ -234,8 +263,6 @@ pub fn export_expansion(
             }
         }
     }
-    let raw = serde_json::to_vec(&expansion)
-        .map_err(|_| error(ErrorKind::Invalid, "expansion-output-json"))?;
     if raw.len() > reel_workflow::MAX_CONTROL_BYTES {
         return Err(error(ErrorKind::Budget, "expansion-output-bytes"));
     }
@@ -252,7 +279,7 @@ pub fn export_expansion(
     if written != raw {
         return Err(error(ErrorKind::Integrity, "expansion-output-readback"));
     }
-    Ok(expansion.packet.task.inputs.len())
+    Ok(count)
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

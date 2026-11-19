@@ -98,6 +98,133 @@ impl Observer for Fixture {
     }
 }
 
+fn recipe_fixture() -> (recipe::Recipe, Fixture) {
+    let base = plan();
+    let mut one = expansion_template(&base).task;
+    one.id = "one".into();
+    let mut two = one.clone();
+    two.id = "two".into();
+    let mut three = one.clone();
+    three.id = "three".into();
+    three.depends_on = vec!["one".into()];
+    three.inputs = vec![expansion::Input::Parent {
+        reference: upstream::Reference {
+            task_id: "one".into(),
+            artifact: upstream::Selector::Output {
+                name: "note".into(),
+            },
+        },
+    }];
+    let mut observer = Fixture::default();
+    observer.jobs.insert(
+        "a".into(),
+        job(
+            make_packet(&base, "a", BTreeMap::new()).unwrap(),
+            State::Retained,
+        ),
+    );
+    (
+        recipe::Recipe {
+            schema: "reel.workflow-recipe.v1".into(),
+            base,
+            steps: vec![one, two, three],
+        },
+        observer,
+    )
+}
+#[test]
+fn recipe_proposes_bounded_waves_without_unlocking_unretained_descendants() {
+    let (recipe, mut observer) = recipe_fixture();
+    let wave = recipe::inspect(&recipe, &recipe.base, 1, &mut observer).unwrap();
+    assert_eq!(wave.proposals.len(), 1);
+    assert_eq!(wave.proposals[0].packet.task.id, "one");
+    assert_eq!(wave.rows[0].state, recipe::State::Ready);
+    assert_eq!(wave.rows[1].state, recipe::State::Deferred);
+    assert_eq!(wave.rows[2].state, recipe::State::Blocked);
+    assert_eq!(wave.rows[2].waiting_on, ["one"]);
+    assert_eq!(observer.verified, ["a"]);
+    assert_eq!(
+        wave.proposals[0].template.base_plan_sha256,
+        canonical_digest(&recipe.base).unwrap()
+    );
+}
+#[test]
+fn recipe_keeps_waiting_steps_and_unlocks_children_only_after_verified_retention() {
+    let (mut recipe, mut observer) = recipe_fixture();
+    let wave = recipe::inspect(&recipe, &recipe.base, 1, &mut observer).unwrap();
+    let mut current = recipe.base.clone();
+    current.tasks.push(wave.proposals[0].packet.task.clone());
+    observer.jobs.insert(
+        "one".into(),
+        job(wave.proposals[0].packet.clone(), State::Waiting),
+    );
+    let wave = recipe::inspect(&recipe, &current, 16, &mut observer).unwrap();
+    assert_eq!(wave.rows[0].state, recipe::State::Existing);
+    assert_eq!(wave.rows[0].existing_status, Some(Status::Waiting));
+    assert_eq!(wave.rows[2].state, recipe::State::Blocked);
+    assert!(wave.proposals.iter().all(|p| p.packet.task.id != "one"));
+    let packet = observer.jobs["one"].ticket.packet.clone();
+    observer
+        .jobs
+        .insert("one".into(), job(packet, State::Retained));
+    let wave = recipe::inspect(&recipe, &current, 16, &mut observer).unwrap();
+    assert_eq!(wave.rows[2].state, recipe::State::Ready);
+    recipe.steps.swap(0, 2);
+    let wave = recipe::inspect(&recipe, &current, 1, &mut observer).unwrap();
+    assert_eq!(wave.proposals[0].packet.task.id, "three");
+    recipe.steps.swap(0, 2);
+    recipe.steps[0].prompt.push_str(" edited");
+    let wave = recipe::inspect(&recipe, &current, 16, &mut observer).unwrap();
+    assert_eq!(wave.rows[0].state, recipe::State::Refused);
+    assert_eq!(wave.rows[0].error.as_ref().unwrap().kind, ErrorKind::Stale);
+    assert_eq!(wave.rows[2].state, recipe::State::Blocked);
+    assert!(wave.proposals.iter().all(|p| p.packet.task.id != "three"));
+    recipe.steps.swap(0, 2);
+    let wave = recipe::inspect(&recipe, &current, 1, &mut observer).unwrap();
+    assert_eq!(wave.rows[0].state, recipe::State::Blocked);
+    assert_eq!(wave.proposals[0].packet.task.id, "two");
+    assert_eq!(observer.jobs["one"].ticket.packet.task, current.tasks[3]);
+}
+#[test]
+fn recipe_refuses_cycles_bad_selectors_limits_and_replaced_base_tasks() {
+    let (mut recipe, mut observer) = recipe_fixture();
+    assert_eq!(
+        recipe::inspect(&recipe, &recipe.base, 17, &mut observer)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Budget
+    );
+    assert!(observer.verified.is_empty());
+    let mut current = recipe.base.clone();
+    current.tasks[0].prompt.push_str(" changed");
+    assert_eq!(
+        recipe::inspect(&recipe, &current, 1, &mut observer)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Stale
+    );
+    recipe.steps[0].inputs = vec![expansion::Input::Parent {
+        reference: upstream::Reference {
+            task_id: "a".into(),
+            artifact: upstream::Selector::Output {
+                name: "absent".into(),
+            },
+        },
+    }];
+    assert_eq!(
+        recipe::check(&recipe).unwrap_err().code,
+        "recipe-parent-selector"
+    );
+    recipe.steps[0].inputs.clear();
+    recipe.steps[0].depends_on = vec!["three".into()];
+    assert_eq!(
+        recipe::check(&recipe).unwrap_err().code,
+        "recipe-dependency-cycle"
+    );
+}
+
 fn expansion_template(plan: &Plan) -> expansion::Template {
     expansion::Template {
         schema: "reel.workflow-expansion-template.v1".into(),

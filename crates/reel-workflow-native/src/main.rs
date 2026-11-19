@@ -63,6 +63,25 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, recipe, plan, bindings, limit, output, apply]
+            if command == "schedule-recipe" && apply == "--apply" =>
+        {
+            let limit = limit.parse().map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "recipe-proposal-limit".into(),
+            })?;
+            let count = reel_workflow_native::graph::export_recipe(
+                &read_control(Path::new(plan))?,
+                &read_control(Path::new(bindings))?,
+                &read_control(Path::new(recipe))?,
+                limit,
+                Path::new(output),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-recipe-proposals","proposed_tasks":count,"production_admitted":false,
+                "atomic_custody_snapshot":false,"provider_invoked":false,"task_completed":false,"selected":false}),
+            )
+        }
         [
             command,
             plan,
@@ -701,6 +720,7 @@ fn main() -> ExitCode {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
+            "reel-workflow-native schedule-recipe RECIPE PLAN RUN_BINDINGS LIMIT NEW_PRIVATE_SCHEDULE --apply\n",
             "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
             "reel-workflow-native prepare-expanded PLAN RUN_BINDINGS TEMPLATE SOURCE ADMISSION ATTEMPT NEW_FROZEN --apply\n",
             "reel-workflow-native accept-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
