@@ -76,6 +76,14 @@ attempt. A separate fresh fixture checks the corrected executable independently.
 Both end-to-end checks are pending; all 37 default tests and strict Clippy pass
 on this corrected build.
 
+Both loose-part end-to-end attempts subsequently reached result registration
+and refused `response-job-close-path-limit`. They remain incomplete; staging
+recovery did not establish task completion. All ten corrected-build regression
+cases passed separately. The [editable-packet carrier format](2026-11-18-editable-packet-carriers.md)
+preserves the complete part bytes while reducing the child's declared object
+count. Its new end-to-end fixture is being qualified independently, without
+releasing or rewriting the two original attempts.
+
 Initial failure and regression evidence is in
 `F:/src/tig-dev-temp/reel-workflow-native-issue-20261118-v1`.
 The admitted staging refusal and cross-version readback are in `...-v2`;

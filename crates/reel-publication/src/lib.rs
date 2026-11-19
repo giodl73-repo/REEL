@@ -9,6 +9,8 @@ pub mod comic;
 pub mod comic_issue;
 pub mod comic_issue_source;
 pub mod comic_source;
+#[cfg(feature = "comic")]
+pub mod packet;
 
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;

@@ -97,6 +97,7 @@ fn build() -> (Plan, Memory, Receipt) {
         serde_json::to_vec(&source).unwrap(),
     );
     let request = Request {
+        editable_packet: false,
         part_id: None,
         schema: "reel.comic-build.v1".into(),
         publication_id: "issue-demo".into(),

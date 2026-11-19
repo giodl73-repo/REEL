@@ -397,11 +397,27 @@ fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>)
         "transcript.json".into(),
         serde_json::to_vec_pretty(&transcript)?,
     );
+    inputs.files.insert("request.json".into(), raw.to_vec());
+    let source_files = inputs
+        .files
+        .iter()
+        .map(|(name, bytes)| (name.clone(), object(bytes)))
+        .collect();
+    for (name, bytes) in inputs.files {
+        files.insert(format!("sources/{name}"), bytes);
+    }
+    if request.editable_packet {
+        let carrier = crate::packet::encode(&files)?;
+        files.insert("editable.packet".into(), carrier);
+    }
     let outputs: ArtifactSet = files
         .iter()
+        .filter(|(name, _)| !name.starts_with("sources/"))
         .map(|(name, bytes)| {
             let obj = object(bytes);
-            let media = if name.ends_with(".svg") {
+            let media = if name == "editable.packet" {
+                crate::packet::MEDIA_TYPE
+            } else if name.ends_with(".svg") {
                 "image/svg+xml"
             } else if name.ends_with(".png") {
                 "image/png"
@@ -429,15 +445,6 @@ fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>)
         })
         .collect();
     crate::check_artifact_set(&outputs)?;
-    inputs.files.insert("request.json".into(), raw.to_vec());
-    let source_files = inputs
-        .files
-        .iter()
-        .map(|(name, bytes)| (name.clone(), object(bytes)))
-        .collect();
-    for (name, bytes) in inputs.files {
-        files.insert(format!("sources/{name}"), bytes);
-    }
     let receipt = Receipt {
         schema: "reel.comic-build-receipt.v1".into(),
         part_id: request.part_id,

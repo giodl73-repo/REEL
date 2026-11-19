@@ -198,6 +198,13 @@ unscoped requests/receipts remain readable with their original identities.
 `comic_issue_source::{Assembly, AssemblyReceipt}` are available without the
 renderer feature, alongside `Plan` and `Part`.
 
+`editable_packet: true` adds a deterministic `editable.packet` output to a comic
+request. An issue can then bind its exact carrier under `bundles[PART_ID]` plus
+the existing separate receipt under `parts[PART_ID]`. The carrier contains all
+rendered and editable source files except the receipt, so no hashes refer to
+themselves. Assembly checks and replays every embedded file, and keeps complete
+editable parts in the result. See the [carrier contract and limits](handoff/2026-11-18-editable-packet-carriers.md).
+
 `reel.comic-issue-assembly.v1` has `plan` (a relative path/hash/length pin),
 `parts` (part ID to exact relative packet `receipt.json` pin), and `limits`
 with `input_bytes` and `output_bytes`, each at most 128 MiB. Packet locations

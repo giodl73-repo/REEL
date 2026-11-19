@@ -13,6 +13,9 @@ pub struct Assembly {
     pub plan: Pin,
     /// Part ID -> exact packet receipt. Paths are private, request-relative.
     pub parts: BTreeMap<String, Pin>,
+    /// Optional immutable editable-packet carrier per part. Receipt remains separate.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub bundles: BTreeMap<String, Pin>,
     pub limits: Limits,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

@@ -308,6 +308,7 @@ impl Prepared {
         let declaration = put(&mut memory, &source.snapshot.declaration_bytes()?)?;
         let compact = packet.task.tool.as_ref().is_some_and(|tool| {
             tool.capability == reel_workflow::ToolCapability::ComicIssueAssembly
+                || packet.task.outputs.contains_key("editable.packet")
         });
         let input_paths: BTreeMap<_, _> = snapshot
             .objects

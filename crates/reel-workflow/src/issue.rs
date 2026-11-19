@@ -107,6 +107,13 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
     {
         return fail(ErrorKind::Conflict, "issue-master-part-binding");
     }
+    if request
+        .bundles
+        .keys()
+        .any(|id| !request.parts.contains_key(id))
+    {
+        return fail(ErrorKind::Conflict, "issue-unused-bundle");
+    }
     let edition = publication
         .editions
         .iter()
@@ -165,6 +172,20 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
             return fail(ErrorKind::Conflict, "issue-source-path-alias");
         }
         parts.insert(part.id.clone(), pin_object(pin));
+        if let Some(bundle) = request.bundles.get(&part.id) {
+            let object = pin_object(bundle);
+            let asset = leaf(packet, &bundle.path, &object)?;
+            if bundle.path != format!("{prefix}editable.packet")
+                || receipt.outputs.get("editable.packet") != Some(asset)
+                || asset.media_type != "application/vnd.reel.editable-packet.v1"
+            {
+                return fail(ErrorKind::Conflict, "issue-part-bundle-binding");
+            }
+            if expected.insert(bundle.path.clone(), object).is_some() {
+                return fail(ErrorKind::Conflict, "issue-source-path-alias");
+            }
+            continue;
+        }
         for (path, source) in &receipt.source_files {
             let path = format!("{prefix}sources/{path}");
             leaf(packet, &path, source)?;

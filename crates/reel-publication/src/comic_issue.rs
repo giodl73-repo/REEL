@@ -80,7 +80,20 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
             .keys()
             .filter_map(|name| name.strip_prefix(&prefix).map(str::to_owned))
             .collect();
-        ensure!(actual == expected, "comic packet file set differs");
+        let packed = BTreeSet::from(["receipt.json".to_owned(), "editable.packet".to_owned()]);
+        ensure!(
+            actual == expected || (request.bundles.contains_key(id) && actual == packed),
+            "comic packet file set differs"
+        );
+        for name in &actual {
+            ensure!(
+                comic::read(
+                    &packet_root.join(name),
+                    files[&format!("{prefix}{name}")].len() as u64
+                )? == files[&format!("{prefix}{name}")],
+                "comic packet differs"
+            );
+        }
     }
     comic::write_new(&destination, &files)?;
     Ok(receipt)
@@ -112,6 +125,13 @@ pub fn capture_with(
             && plan.parts.iter().all(|p| request.parts.contains_key(&p.id)),
         "issue part receipt set differs"
     );
+    ensure!(
+        request
+            .bundles
+            .keys()
+            .all(|id| request.parts.contains_key(id)),
+        "unknown part bundle"
+    );
     let edition = plan
         .publication
         .editions
@@ -138,26 +158,46 @@ pub fn capture_with(
             .path
             .strip_suffix("receipt.json")
             .context("part packet path")?;
-        let build_raw = read_with(
-            &mut input,
-            &format!("{prefix}sources/request.json"),
-            crate::MAX_CONTROL_BYTES as u64,
-        )?;
+        let carrier = if let Some(bundle) = request.bundles.get(&part.id) {
+            ensure!(
+                bundle.path == format!("{prefix}editable.packet"),
+                "part bundle path differs"
+            );
+            let raw = pinned(&mut input, bundle, request.limits.input_bytes)?;
+            let mut files = crate::packet::decode(&raw)?;
+            ensure!(
+                !files.contains_key("receipt.json") && !files.contains_key("editable.packet"),
+                "recursive/self-referential packet refused"
+            );
+            files.insert("editable.packet".into(), raw);
+            files.insert("receipt.json".into(), receipt_raw.clone());
+            Some(files)
+        } else {
+            None
+        };
+        let mut part_read = |name: &str, max: u64| -> Result<Vec<u8>> {
+            if let Some(files) = &carrier {
+                let raw = files.get(name).context("missing packed part file")?;
+                ensure!(raw.len() as u64 <= max, "packed part byte bound");
+                Ok(raw.clone())
+            } else {
+                read_with(&mut input, &format!("{prefix}{name}"), max)
+            }
+        };
+        let build_raw = part_read("sources/request.json", crate::MAX_CONTROL_BYTES as u64)?;
         let (part_receipt, part_files) = comic::capture_with(&build_raw, |source| {
-            read_with(
-                &mut input,
-                &format!("{prefix}sources/{}", source.path),
-                source.bytes,
-            )
+            part_read(&format!("sources/{}", source.path), source.bytes)
         })?;
         for (name, expected) in &part_files {
             ensure!(
-                read_with(
-                    &mut input,
-                    &format!("{prefix}{name}"),
-                    expected.len() as u64
-                )? == *expected,
+                part_read(name, expected.len() as u64)? == *expected,
                 "comic packet differs"
+            );
+        }
+        if let Some(carrier) = &carrier {
+            ensure!(
+                carrier.keys().eq(part_files.keys()),
+                "packed part file set differs"
             );
         }
         let packet = comic::Packet {
@@ -286,6 +326,19 @@ pub fn capture_with(
                     id.clone(),
                     Pin {
                         path: format!("parts/{id}/receipt.json"),
+                        ..pin.clone()
+                    },
+                )
+            })
+            .collect(),
+        bundles: request
+            .bundles
+            .iter()
+            .map(|(id, pin)| {
+                (
+                    id.clone(),
+                    Pin {
+                        path: format!("parts/{id}/editable.packet"),
                         ..pin.clone()
                     },
                 )

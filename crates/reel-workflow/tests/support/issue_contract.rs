@@ -56,6 +56,7 @@ fn fixture() -> (Plan, Memory, AssemblyReceipt) {
         serde_json::to_vec(&receipt).unwrap(),
     );
     let assembly = Assembly {
+        bundles: BTreeMap::new(),
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: pin("plan.json", &plan_asset),
         parts: BTreeMap::from([(
@@ -228,5 +229,93 @@ fn complete_issue_rejects_unused_inputs_and_same_byte_output_aliases() {
             .unwrap_err()
             .code,
         "issue-part-output-logical-binding"
+    );
+}
+
+fn packed_fixture() -> (Plan, Memory) {
+    let (mut workflow, mut memory, _) = fixture();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let receipt_id = tool.source_bindings["parts/opening/receipt.json"].clone();
+    let mut receipt: Receipt = serde_json::from_slice(&memory.bytes[&receipt_id]).unwrap();
+    // This is metadata correspondence only; native production must decode/replay.
+    let carrier = memory.put(
+        "issue-demo/es/parts/opening/editable.packet",
+        "application/vnd.reel.editable-packet.v1",
+        b"synthetic opaque carrier".to_vec(),
+    );
+    receipt
+        .outputs
+        .insert("editable.packet".into(), carrier.clone());
+    let receipt_asset = memory.put(
+        &receipt_id,
+        "application/json",
+        serde_json::to_vec(&receipt).unwrap(),
+    );
+    let mut assembly: Assembly =
+        serde_json::from_slice(&memory.bytes[&tool.request.logical_id]).unwrap();
+    assembly.parts.insert(
+        "opening".into(),
+        pin("parts/opening/receipt.json", &receipt_asset),
+    );
+    assembly.bundles.insert(
+        "opening".into(),
+        pin("parts/opening/editable.packet", &carrier),
+    );
+    let request = memory.put(
+        &tool.request.logical_id,
+        "application/json",
+        serde_json::to_vec(&assembly).unwrap(),
+    );
+    tool.source_bindings
+        .retain(|path, _| path == "plan.json" || path == "parts/opening/receipt.json");
+    tool.source_bindings.insert(
+        "parts/opening/editable.packet".into(),
+        carrier.logical_id.clone(),
+    );
+    let plan = task
+        .inputs
+        .iter()
+        .find(|a| a.logical_id == tool.source_bindings["plan.json"])
+        .unwrap()
+        .clone();
+    task.inputs = vec![
+        tool.publication.clone(),
+        plan,
+        request.clone(),
+        receipt_asset,
+        carrier,
+    ];
+    tool.request = request;
+    (workflow, memory)
+}
+#[test]
+fn packed_issue_declares_carrier_and_receipt_without_undeclared_loose_reads() {
+    let (workflow, mut memory) = packed_fixture();
+    reel_workflow::issue::bind(&packet(&workflow), &mut memory).unwrap();
+    assert_eq!(memory.reads.len(), 5);
+    assert!(!memory.reads.contains_key("input/font"));
+    assert!(!memory.reads.contains_key("input/image"));
+}
+#[test]
+fn packed_issue_rejects_same_byte_carrier_with_different_logical_origin() {
+    let (mut workflow, mut memory) = packed_fixture();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let id = tool.source_bindings["parts/opening/editable.packet"].clone();
+    let carrier = task.inputs.iter_mut().find(|a| a.logical_id == id).unwrap();
+    carrier.logical_id = "alias/carrier".into();
+    memory
+        .bytes
+        .insert(carrier.logical_id.clone(), memory.bytes[&id].clone());
+    tool.source_bindings.insert(
+        "parts/opening/editable.packet".into(),
+        carrier.logical_id.clone(),
+    );
+    assert_eq!(
+        reel_workflow::issue::bind(&packet(&workflow), &mut memory)
+            .unwrap_err()
+            .code,
+        "issue-part-bundle-binding"
     );
 }

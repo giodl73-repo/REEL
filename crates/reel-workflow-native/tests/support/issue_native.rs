@@ -259,9 +259,11 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
     let mut issue_paths =
         BTreeMap::from([("issue-plan.json".into(), plan_asset.logical_id.clone())]);
     let mut receipt_pins = BTreeMap::new();
+    let mut bundle_pins = BTreeMap::new();
     let mut upstream_refs = BTreeMap::new();
     for part in &plan.parts {
         let request = Request {
+            editable_packet: true,
             schema: "reel.comic-build.v1".into(),
             part_id: Some(part.id.clone()),
             publication_id: plan.publication.id.clone(),
@@ -303,10 +305,6 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
             } else {
                 assets.values[&assets.paths[path]].0.clone()
             };
-            issue_paths.insert(
-                format!("parts/{}/sources/{path}", part.id),
-                asset.logical_id.clone(),
-            );
             if path != "request.json" {
                 source_paths.insert(path.clone(), asset.logical_id.clone());
             }
@@ -344,14 +342,24 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
                 &a.media_type,
                 files[name].clone(),
             );
-            issue_paths.insert(format!("parts/{}/{name}", part.id), a.logical_id.clone());
-            upstream_refs.insert(
-                a.logical_id.clone(),
-                reel_workflow::upstream::Reference {
-                    task_id: part.id.clone(),
-                    artifact: reel_workflow::upstream::Selector::Output { name: name.clone() },
-                },
-            );
+            if name == "editable.packet" {
+                issue_paths.insert(format!("parts/{}/{name}", part.id), a.logical_id.clone());
+                bundle_pins.insert(
+                    part.id.clone(),
+                    Pin {
+                        path: format!("parts/{}/{name}", part.id),
+                        sha256: a.sha256.clone(),
+                        bytes: a.bytes,
+                    },
+                );
+                upstream_refs.insert(
+                    a.logical_id.clone(),
+                    reel_workflow::upstream::Reference {
+                        task_id: part.id.clone(),
+                        artifact: reel_workflow::upstream::Selector::Output { name: name.clone() },
+                    },
+                );
+            }
         }
         let outputs = receipt
             .outputs
@@ -399,6 +407,7 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
         part_data[1].1.outputs["reading.pdf"].logical_id
     );
     let assembly = Assembly {
+        bundles: bundle_pins,
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: assets.pin("issue-plan.json"),
         parts: receipt_pins,
@@ -801,6 +810,7 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
         plan,
         graph_bindings,
         stage,
+        expect_close_refusal: false,
     });
 }
 
@@ -813,12 +823,13 @@ struct Continuation {
     plan: Plan,
     graph_bindings: graph::Bindings,
     stage: staging::Profile,
+    expect_close_refusal: bool,
 }
 
 /// A bounded recovery fixture for the recorded export refusal, not a new attempt.
 #[test]
 #[ignore = "Requires the preserved admitted synthetic issue root and its exact original frozen CLI; resumes original ticket/WorkRef only"]
-fn admitted_issue_resumes_original_ticket_after_staging_dispatch_refusal() {
+fn admitted_issue_staging_recovery_preserves_original_close_refusal() {
     fn load<T: serde::de::DeserializeOwned>(path: &Path) -> T {
         serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
     }
@@ -827,6 +838,13 @@ fn admitted_issue_resumes_original_ticket_after_staging_dispatch_refusal() {
             .expect("original recovery root required"),
     );
     assert!(case_root.is_absolute() && case_root.is_dir());
+    if case_root.join("ready.json").exists() {
+        let profile: reel_workflow_native::handoff::Profile =
+            load(&case_root.join("issue-recovery-profile.json"));
+        let packet: Packet = load(&case_root.join("issue-packet.json"));
+        verify_pending_close_refusal(&case_root, &packet, &profile);
+        return;
+    }
     assert!(!case_root.join("ready.json").exists());
     assert!(!case_root.join("worker-ticket.json").exists());
     let packet: Packet = load(&case_root.join("issue-packet.json"));
@@ -924,6 +942,7 @@ fn admitted_issue_resumes_original_ticket_after_staging_dispatch_refusal() {
         plan,
         graph_bindings,
         stage,
+        expect_close_refusal: true,
     });
 }
 
@@ -937,6 +956,7 @@ fn continue_issue(state: Continuation) {
         plan,
         mut graph_bindings,
         stage,
+        expect_close_refusal,
     } = state;
     let admission = profile.admission.clone();
     let admitted = profile.binding.admission.clone();
@@ -1002,6 +1022,10 @@ fn continue_issue(state: Continuation) {
     let worker_raw = fs::read(&worker_path).unwrap();
     let worker_pin = digest(&worker_raw);
     let worker_ticket: worker::Ticket = serde_json::from_slice(&worker_raw).unwrap();
+    if expect_close_refusal {
+        verify_pending_close_refusal(&case_root, &packet, &profile);
+        return;
+    }
     run(
         &executable,
         &[
@@ -1213,5 +1237,105 @@ fn continue_issue(state: Continuation) {
             &json!({"root":case_root,"fixture":fixture_root,"packet":packet_path,"profile":profile_path,"worker":worker_ticket.directory(),"exported":exported,"rebuilt":rebuilt,"restored":restored,"edited":edited}),
         );
         fs::write(evidence.join("historical.json"), historical).unwrap();
+    }
+}
+
+fn verify_pending_close_refusal(
+    root: &Path,
+    packet: &Packet,
+    profile: &reel_workflow_native::handoff::Profile,
+) {
+    use tig_store::source_claims::protection::Index;
+    assert_eq!(packet.project, "synthetic-comic");
+    assert!(profile.admission.index_root.starts_with(root));
+    let receipt = &profile.binding.admission;
+    let runtime_raw = fs::read(&profile.runtime.path).unwrap();
+    assert_eq!(digest(&runtime_raw), profile.runtime.sha256);
+    assert_eq!(runtime_raw.len() as u64, profile.runtime.bytes);
+    let original = reel_workflow::handoff::Journal::open(&root.join("issue-journal")).unwrap();
+    assert_eq!(
+        original.ticket().native_binding,
+        profile.binding.artifact().unwrap()
+    );
+    assert_eq!(
+        original.ticket().lifecycle_tool.sha256,
+        profile.runtime.sha256
+    );
+    assert_eq!(original.ticket().packet, *packet);
+    let before = Index::open(&profile.admission.index_root, &receipt.index_checkpoint)
+        .unwrap()
+        .checkpoint();
+    drop(
+        admission::Prepared::open(
+            packet,
+            &profile.source,
+            &profile.admission,
+            &receipt.attempt_id,
+        )
+        .unwrap()
+        .reopen(receipt)
+        .unwrap(),
+    );
+    let ticket = root.join("worker-ticket.json");
+    let raw = fs::read(&ticket).unwrap();
+    let output = Command::new(&profile.runtime.path)
+        .args([
+            "run-worker".as_ref(),
+            root.join("workflow-plan.json").as_os_str(),
+            root.join("workflow-bindings.json").as_os_str(),
+            ticket.as_os_str(),
+            digest(&raw).as_ref(),
+            "--apply".as_ref(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["error"]["kind"], "budget");
+    assert_eq!(
+        response["error"]["code"],
+        "handoff-ingest:response-job-close-path-limit"
+    );
+    assert_eq!(
+        Index::open(&profile.admission.index_root, &receipt.index_checkpoint)
+            .unwrap()
+            .checkpoint(),
+        before
+    );
+    drop(
+        admission::Prepared::open(
+            packet,
+            &profile.source,
+            &profile.admission,
+            &receipt.attempt_id,
+        )
+        .unwrap()
+        .reopen(receipt)
+        .unwrap(),
+    );
+    let journal = reel_workflow::handoff::Journal::open(&root.join("issue-journal")).unwrap();
+    assert_eq!(
+        journal.state(),
+        reel_workflow::handoff::State::ImportPending
+    );
+    assert!(journal.result().is_some());
+    assert!(
+        !profile
+            .acknowledgements
+            .join(format!(
+                "retained-{}-{}.json",
+                packet.task_key, receipt.attempt_id
+            ))
+            .exists()
+    );
+    if let Some(directory) = std::env::var_os("REEL_NATIVE_ISSUE_EVIDENCE_DIRECTORY") {
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        save(
+            &directory.join("guarded-original-refusal.json"),
+            &json!({"root":root,"work":receipt.work,"activation":receipt.activation,
+            "task_key":packet.task_key,"attempt":receipt.attempt_id,"state":"import-pending","task_completed":false,
+            "original_claims_reopened":true,"index_unchanged":true,"scratch_preserved":true,"response":response}),
+        );
     }
 }

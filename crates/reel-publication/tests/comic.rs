@@ -169,6 +169,7 @@ fn request(
     pages: Vec<Pin>,
 ) -> PathBuf {
     let build = Request {
+        editable_packet: false,
         part_id: None,
         schema: "reel.comic-build.v1".into(),
         publication_id: "synthetic-lamp".into(),
@@ -337,6 +338,7 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
     invalid.parts[1].id = "OPENING".into();
     assert!(invalid.check().is_err());
     let mut part_receipts = BTreeMap::new();
+    let mut bundles = BTreeMap::new();
     for (id, page_pins) in [
         ("opening", vec![pins[0].clone()]),
         ("spread", pins[1..].to_vec()),
@@ -354,6 +356,7 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
         let output = packets.path().join(id);
         let mut scoped: Request = serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
         scoped.part_id = Some(id.into());
+        scoped.editable_packet = true;
         fs::write(&request, serde_json::to_vec_pretty(&scoped).unwrap()).unwrap();
         render(&request, &output).unwrap();
         let scoped_receipt: Receipt =
@@ -374,6 +377,15 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
                 bytes: receipt.bytes,
             },
         );
+        let carrier = object(&fs::read(output.join("editable.packet")).unwrap());
+        bundles.insert(
+            id.into(),
+            Pin {
+                path: format!("{id}/editable.packet"),
+                sha256: carrier.sha256,
+                bytes: carrier.bytes,
+            },
+        );
     }
     // Only captured sources are available to assembly; the source checkout is gone.
     source.close().unwrap();
@@ -388,6 +400,7 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
     assert_eq!(report["outputs_written"], false);
     assert_eq!(report["payloads_verified"], false);
     let assembly = Assembly {
+        bundles,
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: plan_pin,
         parts: part_receipts,
@@ -540,7 +553,7 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
     collect_packet(&second, &second, &mut expected_files);
     assert_eq!(captured_files, expected_files);
     memory.insert(
-        "parts/opening/page01-lettering.svg".into(),
+        "parts/opening/editable.packet".into(),
         b"changed retained output".to_vec(),
     );
     assert!(

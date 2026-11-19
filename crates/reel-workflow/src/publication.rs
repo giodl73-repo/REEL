@@ -197,7 +197,13 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         return bad(ErrorKind::Conflict, "edition-output-contract");
     }
     let page_order: Vec<_> = pages.iter().map(|p| p.id.clone()).collect();
-    let types = output_types(&page_order);
+    let mut types = output_types(&page_order);
+    if request.editable_packet {
+        types.insert(
+            "editable.packet".into(),
+            "application/vnd.reel.editable-packet.v1",
+        );
+    }
     let outputs = &packet.task.outputs;
     if types.len() != outputs.len()
         || types.iter().any(|(name, media)| {

@@ -3140,6 +3140,7 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
         serde_json::to_vec_pretty(&page).unwrap(),
     );
     let request = Request {
+        editable_packet: false,
         part_id: None,
         schema: "reel.comic-build.v1".into(),
         publication_id: "synthetic-comic".into(),

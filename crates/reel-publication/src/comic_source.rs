@@ -26,6 +26,8 @@ pub struct Limits {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub editable_packet: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub part_id: Option<String>,
     pub publication_id: String,
@@ -36,6 +38,9 @@ pub struct Request {
     pub font_license: Pin,
     pub pages: Vec<Pin>,
     pub limits: Limits,
+}
+fn is_false(value: &bool) -> bool {
+    !value
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
