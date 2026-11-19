@@ -24,7 +24,7 @@ the selected native parent proof and final deterministic assembler own replay.
 All 52 shared workflow tests and strict shared Clippy pass. Three added tests
 check exact request generation and assembly binding, changed-byte/wrong-origin
 refusal, and a stable recipe across unknown future part hashes. Native compilation
-and strict Clippy pass; the expanded native fixture still needs end-to-end
+and strict Clippy pass, as do all 37 default native tests. The expanded native fixture still needs end-to-end
 qualification. It admits a separate explicitly enrolled control actor, retains
 the control output, binds it into final assembly and exercises the existing
 issue history/export/edit path. No actor is allocated implicitly.
@@ -35,3 +35,13 @@ from creative, translation, font, print and release decisions. Existing 16-actor
 128-path and byte limits remain admission constraints. This producer does not
 provide automatic graph expansion, general scheduling, slot retirement, candidate
 selection or larger issue qualification. Those remain in the completion ledger.
+
+The running qualification is in
+`F:/src/tig-dev-temp/reel-workflow-native-issue-control-20261118-v1`.
+Its clean source commit is `249defa679e1ad556267d4c296cf95bc3b69d72a`;
+all 1,807 archived files match, with manifest SHA256
+`41c0e589303e698f6ab936fa3865714512ba70a1d5d2cbb50e7a524179fcfb9d`.
+The frozen native executable hash is
+`53fa0459009ce972cff68e6e0d4fce063bddcc8c6a29c70ecd48df2ceab24e2b`.
+These are source/tool pins under test, not a claim of completed end-to-end
+qualification. The earlier complete-issue qualification remains separately pinned.
