@@ -45,6 +45,16 @@ and both strict Clippy feature modes pass. This closes a workspace component
 boundary, not native large-input/return custody, v2 film dispatch, consumer
 profile adoption/rollback or full S5 production.
 
+The [versioned snapshot budgets](handoff/2026-11-19-snapshot-budgets.md) now
+bind explicit input/object/projection byte allowances into task identity and
+carry them through admission, response protection, retention and closing. V1
+keeps its separate snapshot 64 MiB/projection 1 GiB limits; comic content keeps
+its own 64 MiB bound. Synthetic metadata fixtures cover a declared 3.6 GB object,
+full-closure headroom and budget-change receipt refusal. This is not qualification
+of large native payload custody, a 600-resource lifecycle or v2 film dispatch.
+All 78 standard native tests, 247 SDK source pins and strict Clippy with/without
+film pass; existing large/native effect fixtures were not rerun for this port.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial

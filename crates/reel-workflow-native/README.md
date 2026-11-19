@@ -79,8 +79,25 @@ and 256 read opens. Smaller caller/provider allowances apply. Typed SDK snapshot
 errors are normalized; generic provider I/O remains conservative without parsing
 error strings. Public diagnostics omit private paths and submitted text.
 
-The comic binding separately enforces its 64 MiB input closure. This is not a
-universal film limit; film, native projection and provider budgets are distinct.
+The legacy v1 snapshot reader also caps summed task inputs at 64 MiB. The comic
+binding independently enforces its own 64 MiB input closure; that content limit
+does not define film scale. Film, native projection and provider budgets remain
+distinct.
+
+Explicit `reel.workflow-native-snapshot.v2` (or composite snapshot v2) requires a
+`budget` with schema `reel.workflow-snapshot-budget.v1`, `input_bytes`,
+`input_object_bytes` and `projection_bytes`. Object allowance must be positive
+and no greater than input allowance; input allowance is at most 64 GiB.
+Projection allowance must cover input allowance and is at most 128 GiB. It
+covers the entire protected closure, including metadata, other declared streams,
+runtimes, returned objects and retained history, rather than just consumed media.
+Every declared annex payload must fit the object allowance. Exact budget bytes
+enter the portable v2 declaration and task key. Reopening, response protection,
+retention and closing use that original budget. V1 serialization and limits stay
+unchanged. Composite upstream contracts retain their separate 64 MiB bound.
+These are metadata/admission budgets, not evidence of large native byte access,
+available capacity, a 600-resource lifecycle or v2 film execution. See the
+[snapshot budget qualification](../../docs/handoff/2026-11-19-snapshot-budgets.md).
 
 `check-snapshot` binds actual committed metadata without reading payloads.
 `check-publication-native` additionally checks the comic closure using guarded
@@ -142,7 +159,7 @@ native state, not JSON flags. No deadline or cancellation releases claims.
 Admission has additional bounds: each canonical control fits one 64 KiB native
 metadata node; native canonical JSON structural limits apply; declared resources
 plus conservative envelope overhead fit the original 128 changed-path phase;
-logical resources fit 1 GiB. The actor table has 16 TOTAL actors. Oversized work
+logical resources fit 1 GiB for v1 or the explicit v2 projection budget. The actor table has 16 TOTAL actors. Oversized work
 is refused, not split or silently assigned another slot. Existing task-level and
 reader bounds still apply. Inputs/runtime pins can be protected before bytes
 exist; this is not availability, retention, custody, creative approval or task
@@ -316,7 +333,8 @@ admission takes source/retained actor fences in stable order. The update preserv
 all retained paths and its prior root, adds every current job reference/root and
 pins immutable registration evidence. Existing history is never replaced or
 deleted. It is bounded to 512 distinct resource objects, 1 GiB summed logical
-bytes, one 64 KiB evidence node, 128 changed paths and the existing tree limits.
+bytes for v1 or the explicit v2 projection budget, one 64 KiB evidence node,
+128 changed paths and the existing tree limits.
 It refuses oversized work rather than splitting phases or allocating a new actor.
 
 Logical retained identity is index/task/attempt; immutable evidence binds the

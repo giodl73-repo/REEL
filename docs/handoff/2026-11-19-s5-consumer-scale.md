@@ -37,6 +37,7 @@ output size and lifecycle transaction changes distinct during admission.
 | --- | --- | --- |
 | 128 task inputs/source bindings; 128 plan tasks | `reel-workflow/src/lib.rs` | A flat 600-input task cannot be admitted. |
 | Comic input closure 64 MiB, output 128 MiB | `reel-workflow/src/publication.rs` | Comic-specific limits; do not describe 64 MiB as a universal film input limit. |
+| Legacy native snapshot inputs 64 MiB; managed logical projection/retention/close 1 GiB | `reel-workflow-native/src/lib.rs`, `admission` | These are independent adapter limits. Explicit v2 budgets now support larger declared byte envelopes; native consumer-scale qualification remains open. |
 | Film output 128 MiB and workspace 512 MiB | `reel-workflow/src/film_render.rs` | Multi-GB masters cannot use the present movie task contract. |
 | Film process timeout 3,600 seconds and aggregate raw RGB 16 GiB | `reel-workflow/src/film_render.rs` | Five-hour render windows and full-episode frame demand need an explicit bounded composition contract. Runtime budget and film duration remain distinct. |
 | Contained-process input hash bound 512 MiB per file | `reel-workflow-native/src/film_process.rs` | Streaming hash implementation still explicitly refuses the reported individual masters. |
@@ -86,6 +87,12 @@ gate and remaining admission/return/history limits remain in force. The
 [workspace profile port](2026-11-19-streamed-workspace-profile.md) independently
 qualifies a 32 GiB reservation and cross-process recovery of an owned 3.6 GB file.
 This does not admit the E7 native closure or adopt S5.
+
+The [snapshot budget port](2026-11-19-snapshot-budgets.md) now binds explicit
+input/object/projection budgets to exact task identity, including retention and
+close checks. Synthetic metadata tests cover a declared 3.6 GB object and stale
+budget refusal. No multi-GB native payload or 600-resource lifecycle is qualified
+by those tests; the actor/object/path limits and full film gate remain in force.
 
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
