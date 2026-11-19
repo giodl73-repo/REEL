@@ -132,14 +132,100 @@ fn proxy_dispatch_requires_declared_evidence_and_native_inputs_before_network_ef
 #[test]
 #[ignore = "Existing declared native pool and synthetic local HTTP only: protected call, retained evidence, original-call fencing and uncertainty preservation"]
 fn protected_proxy_call_retains_request_response_and_config_and_never_reissues_uncertainty() {
-    run_case(false);
+    run_case(false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and synthetic local HTTP only: uncertain response cannot become another call; preserves roots"]
 fn protected_proxy_uncertain_response_preserves_original_call_and_claims() {
-    run_case(true);
+    run_case(true, false);
 }
-fn run_case(uncertain: bool) {
+#[test]
+#[ignore = "Existing declared native pool and synthetic timed speech HTTP only; preserves original roots"]
+fn protected_timed_speech_retains_original_alignment_and_replays_without_synthesis() {
+    run_case(false, true);
+}
+#[test]
+#[ignore = "Existing declared native pool and truncated timed speech HTTP only; preserves original claims"]
+fn protected_timed_speech_uncertainty_keeps_service_identifiers_without_reissue() {
+    run_case(true, true);
+}
+fn speech_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
+    let text = "¡Sí!".as_bytes().to_vec();
+    let decision = b"Synthetic fixture only; no real speaker or release authority".to_vec();
+    let subject = Artifact {
+        logical_id: "speech/decision".into(),
+        sha256: digest(&decision),
+        bytes: decision.len() as u64,
+        media_type: "text/plain".into(),
+    };
+    let admission=serde_json::to_vec(&json!({"schema":"reel.elevenlabs-admission.v1","voice_id":"fixture","model_id":"eleven_v4","language":"es","text_sha256":digest(&text),"account_subject":"fixture-account","model_access_admitted":true,"voice_use_admitted":true,"zero_retention_admitted":false,"approval_subject":subject})).unwrap();
+    let models=serde_json::to_vec(&json!([{"model_id":"eleven_v4","can_do_text_to_speech":true,"maximum_text_length_per_request":10000,"languages":[{"language_id":"es"}]}])).unwrap();
+    let root = fixture.temp.path();
+    let template: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("records/input.tig")).unwrap()).unwrap();
+    fixture.profile.records.clear();
+    fixture.profile.bindings.clear();
+    fixture.profile.input_streams.clear();
+    fixture.packet.task.inputs.clear();
+    let mut raw_inputs = Vec::new();
+    for (name, bytes, media) in [
+        ("text", text, "text/plain"),
+        ("models", models, "application/json"),
+        ("admission", admission, "application/json"),
+        ("decision", decision, "text/plain"),
+    ] {
+        let id = format!("speech/{name}");
+        let object = Object::from_bytes(&bytes);
+        let record = format!("records/speech-{name}.tig");
+        let leaf = format!("payloads/speech-{name}.bin");
+        let mut value = template.clone();
+        value["id"] = json!(id);
+        value["selected"] = json!(object);
+        value["streams"] = json!([]);
+        write(root, &record, value);
+        fs::write(
+            root.join(&leaf),
+            Key::from_object(&object).unlocked_pointer(),
+        )
+        .unwrap();
+        fixture.profile.records.push(record);
+        fixture.profile.bindings.insert(
+            id.clone(),
+            Binding {
+                selected: LogicalPath::parse(&leaf).unwrap(),
+                streams: BTreeMap::new(),
+            },
+        );
+        fixture.profile.input_streams.insert(id.clone(), None);
+        fixture.packet.task.inputs.push(Artifact {
+            logical_id: id,
+            sha256: digest(&bytes),
+            bytes: bytes.len() as u64,
+            media_type: media.into(),
+        });
+        raw_inputs.push((format!("{name}.bin"), bytes));
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "synthetic speech input snapshot"]);
+    fixture.profile.commit = git(root, &["rev-parse", "HEAD"]);
+    fixture.packet.task.operation = Operation::SpeechCandidate;
+    fixture.packet.task.outputs.clear();
+    for (name, media) in reel_workflow_http::elevenlabs::OUTPUTS
+        .into_iter()
+        .chain([("http.json", "application/json")])
+    {
+        fixture.packet.task.outputs.insert(
+            name.into(),
+            OutputContract {
+                media_type: media.into(),
+                max_bytes: 32768,
+                required: true,
+            },
+        );
+    }
+    raw_inputs
+}
+fn run_case(uncertain: bool, speech: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -153,6 +239,11 @@ fn run_case(uncertain: bool) {
         path: native.pool.git.clone(),
         sha256: digest(&bytes),
         bytes: bytes.len() as u64,
+    };
+    let raw_inputs = if speech {
+        speech_inputs(&mut fixture)
+    } else {
+        vec![]
     };
     for (name, limit) in [
         ("provider-request.json", 4 * 1024 * 1024),
@@ -200,6 +291,28 @@ fn run_case(uncertain: bool) {
         .unwrap()
         .accept()
         .unwrap();
+    if speech {
+        let input_root = root.join("synthetic-inputs");
+        fs::create_dir(&input_root).unwrap();
+        for (name, bytes) in &raw_inputs {
+            fs::write(input_root.join(name), bytes).unwrap();
+            tig_git::annex::workflow::publication::publish(
+                &tig_git::annex::workflow::publication::Profile {
+                    schema: "tig.annex-file-publication.experimental-1".into(),
+                    pool: case.source.source.pool.clone(),
+                    store: case.profile.scope.store.clone(),
+                    source_root: input_root.clone(),
+                    source: LogicalPath::parse(name).unwrap(),
+                    source_owned: true,
+                    expected: Some(Object::from_bytes(bytes)),
+                    include_private_location: false,
+                    maximum_bytes: 1024 * 1024,
+                    minimum_free_bytes: 100 * 1024 * 1024,
+                },
+            )
+            .unwrap();
+        }
+    }
     let executable = std::env::var_os("REEL_NATIVE_HANDOFF_TOOL")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native")));
@@ -243,7 +356,15 @@ fn run_case(uncertain: bool) {
         )]),
     };
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let endpoint = format!("http://{}/generate", listener.local_addr().unwrap());
+    let endpoint = format!(
+        "http://{}{}",
+        listener.local_addr().unwrap(),
+        if speech {
+            "/v1/text-to-speech/fixture/with-timestamps?output_format=pcm_8000&enable_logging=true"
+        } else {
+            "/generate"
+        }
+    );
     let observer = listener.try_clone().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
@@ -274,14 +395,24 @@ fn run_case(uncertain: bool) {
         let mut body = vec![0u8; length];
         stream.read_exact(&mut body).unwrap();
         let request: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(request["schema"], "reel.workflow-proxy-request.v1");
-        let input = STANDARD
-            .decode(request["inputs"][0]["base64"].as_str().unwrap())
-            .unwrap();
-        assert_eq!(Object::from_bytes(&input), expected);
-        let raw=serde_json::to_vec(&json!({"schema":"reel.workflow-proxy-response.v1","operation_id":request["operation_id"],"provider":"synthetic-proxy","model":"fixture-model","outputs":{"note":{"media_type":"text/plain","base64":STANDARD.encode(b"synthetic provider result")}}})).unwrap();
+        let raw = if speech {
+            assert!(header.starts_with("POST /v1/text-to-speech/fixture/with-timestamps?output_format=pcm_8000&enable_logging=true HTTP/1.1"));
+            assert_eq!(request["text"], "¡Sí!");
+            assert_eq!(request["model_id"], "eleven_v4");
+            assert_eq!(request["language_code"], "es");
+            assert_eq!(request["apply_text_normalization"], "off");
+            assert!(request.get("inputs").is_none());
+            serde_json::to_vec(&json!({"audio_base64":STANDARD.encode(vec![0u8;16000]),"alignment":{"characters":["¡","S","í","!"],"character_start_times_seconds":[0.0,0.1,0.2,0.3],"character_end_times_seconds":[0.1,0.2,0.3,0.5]},"normalized_alignment":{"separate":true}})).unwrap()
+        } else {
+            assert_eq!(request["schema"], "reel.workflow-proxy-request.v1");
+            let input = STANDARD
+                .decode(request["inputs"][0]["base64"].as_str().unwrap())
+                .unwrap();
+            assert_eq!(Object::from_bytes(&input), expected);
+            serde_json::to_vec(&json!({"schema":"reel.workflow-proxy-response.v1","operation_id":request["operation_id"],"provider":"synthetic-proxy","model":"fixture-model","outputs":{"note":{"media_type":"text/plain","base64":STANDARD.encode(b"synthetic provider result")}}})).unwrap()
+        };
         let length = raw.len() + if uncertain { 10 } else { 0 };
-        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nConnection: close\r\n\r\n").unwrap();
+        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nrequest-id: fixture-request\r\nhistory-item-id: fixture-history\r\nConnection: close\r\n\r\n").unwrap();
         stream.write_all(&raw).unwrap();
     });
     let config = dispatch::Config {
@@ -289,11 +420,27 @@ fn run_case(uncertain: bool) {
         input_staging: stage(root.join("inputs")),
         worker_staging: None,
         provider: Some(provider::Config {
-            service: None,
+            service: if speech {
+                Some(provider::Service::ElevenlabsTimed {spec:serde_json::from_value(json!({"schema":"reel.elevenlabs-timed.v1","voice_id":"fixture","language":"es","cue_id":"cue-1","text_input":"speech/text","models_input":"speech/models","admission_input":"speech/admission","decision_input":"speech/decision","sample_rate":8000,"enable_logging":true,"seed":17,"voice_settings":{"stability":0.5,"similarity_boost":0.5,"style":0.0,"speed":1.0,"use_speaker_boost":false},"segments":["¡Sí!"]})).unwrap()})
+            } else {
+                None
+            },
             schema: "reel.workflow-provider-proxy.v1".into(),
-            provider: "synthetic-proxy".into(),
-            model: "fixture-model".into(),
-            send_inputs: vec!["input/source".into()],
+            provider: if speech {
+                "elevenlabs"
+            } else {
+                "synthetic-proxy"
+            }
+            .into(),
+            model: if speech { "eleven_v4" } else { "fixture-model" }.into(),
+            send_inputs: vec![
+                if speech {
+                    "speech/text"
+                } else {
+                    "input/source"
+                }
+                .into(),
+            ],
             http: reel_workflow_http::Config {
                 schema: "reel.workflow-http.v1".into(),
                 endpoint,
@@ -354,6 +501,12 @@ fn run_case(uncertain: bool) {
     let ticket_bytes = fs::read(&ticket_path).unwrap();
     let ticket: provider::Ticket = serde_json::from_slice(&ticket_bytes).unwrap();
     let workspace = ticket.directory();
+    if speech {
+        let head: serde_json::Value =
+            serde_json::from_slice(&fs::read(workspace.join("http-head.json")).unwrap()).unwrap();
+        assert_eq!(head["request_id"], "fixture-request");
+        assert_eq!(head["history_item_id"], "fixture-history");
+    }
     let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
     let second = invoke();
     assert_eq!(first.status.success(), second.status.success());
@@ -419,6 +572,22 @@ fn run_case(uncertain: bool) {
             assert!(result.artifacts.contains_key(name));
         }
         assert_eq!(result.provenance.mode, Mode::Direct);
+        if speech {
+            assert_eq!(result.artifacts.len(), 9);
+            for name in reel_workflow_http::elevenlabs::OUTPUTS
+                .iter()
+                .map(|(n, _)| *n)
+                .chain(["http.json"])
+            {
+                assert!(result.artifacts.contains_key(name));
+            }
+            let take: serde_json::Value =
+                serde_json::from_slice(&fs::read(workspace.join("packet/take.json")).unwrap())
+                    .unwrap();
+            assert_eq!(take["frames"], 8000);
+            assert_eq!(take["selected"], false);
+            assert_eq!(take["approved"], false);
+        }
         assert_eq!(
             reel_workflow::handoff::Journal::open(&journal)
                 .unwrap()
