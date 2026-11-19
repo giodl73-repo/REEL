@@ -140,7 +140,7 @@ impl Prepared {
         self.verify_ack(receipt, &ack, &mut index, &mut nodes)?;
         Ok(Some(ack))
     }
-    fn retained_scope(&self, index: &Index, target: &Target) -> Result<Vec<Digest>> {
+    pub(super) fn retained_scope(&self, index: &Index, target: &Target) -> Result<Vec<Digest>> {
         let enrollment = index.enrollment_profile();
         let source = enrollment
             .actors
@@ -162,7 +162,7 @@ impl Prepared {
         }
         Ok(source.stores.clone())
     }
-    fn response_candidate(
+    pub(super) fn response_candidate(
         &self,
         receipt: &Receipt,
         result: &reel_workflow::ReturnedResult,
@@ -311,7 +311,7 @@ impl Prepared {
         self.verify_ack(receipt, acknowledgement, &mut index, &mut nodes)?;
         Ok(())
     }
-    fn verify_ack(
+    pub(super) fn verify_ack(
         &self,
         receipt: &Receipt,
         ack: &Acknowledgement,
@@ -437,12 +437,10 @@ impl ClaimsGuard {
                 .map_err(|_| error(ErrorKind::NeedsRecovery, "retention-evidence-write"))?;
             let mut changes = BTreeMap::new();
             for object in objects {
-                let path = LogicalPath::parse(&format!(
-                    "workflow/objects/{}/{}",
-                    object.sha256.as_str(),
-                    object.bytes
-                ))
-                .map_err(|_| error(ErrorKind::Invalid, "retention-object-path"))?;
+                // Canonical qualified closer layout for new references. Preserve
+                // every existing path; legacy history is never rewritten here.
+                let path = LogicalPath::parse(&format!("objects/{}", object.sha256.as_str()))
+                    .map_err(|_| error(ErrorKind::Invalid, "retention-object-path"))?;
                 if let Some(old) = next.get(&path) {
                     if *old != object {
                         return Err(error(ErrorKind::Conflict, "retention-object-path-conflict"));

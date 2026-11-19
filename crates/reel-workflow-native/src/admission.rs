@@ -1,5 +1,6 @@
 //! Bounded positive input claims over an EXISTING effects-enabled index.
 //! No initialization, payload availability, publication, retention or selection.
+mod closing;
 mod response;
 mod retention;
 use crate::{

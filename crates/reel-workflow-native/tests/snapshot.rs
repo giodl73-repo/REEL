@@ -12,8 +12,13 @@ use std::{
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 #[cfg(windows)]
+#[path = "support/close_native.rs"]
+mod close_native;
+#[cfg(windows)]
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
+#[cfg(windows)]
+use close_native::exercise_native_close;
 #[cfg(windows)]
 #[path = "support/issue_native.rs"]
 mod issue_native;
@@ -1761,6 +1766,16 @@ fn native_handoff_pins_the_actual_runtime_target_and_control_namespaces() {
 #[test]
 #[ignore = "Existing synthetic native pool only: journal/native Prepare/lost completion recovery, no project assets or cleanup"]
 fn native_handoff_completes_only_after_retained_proof_and_recovers_lost_completion() {
+    native_handoff_lifecycle(false);
+}
+#[cfg(windows)]
+#[test]
+#[ignore = "Existing declared native pool only: retained close, exact recovery, slot reuse and historical result proof; preserves roots"]
+fn retained_job_closes_recovers_and_reuses_slot_without_old_operation_clearing_replacement() {
+    native_handoff_lifecycle(true);
+}
+#[cfg(windows)]
+fn native_handoff_lifecycle(close_slot: bool) {
     use reel_workflow::handoff::{Journal, State};
     use reel_workflow_native::{NativeProfile, admission::Prepared, response};
     use tig_store::{
@@ -1775,6 +1790,7 @@ fn native_handoff_completes_only_after_retained_proof_and_recovers_lost_completi
         serde_json::from_value(value["source"].clone()).unwrap();
     let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
     let mut fixture = Fixture::with_object(object.clone());
+    fixture.temp.disable_cleanup(close_slot);
     let git_raw = fs::read(&native.pool.git).unwrap();
     fixture.profile.git = Tool {
         path: native.pool.git.clone(),
@@ -1782,6 +1798,22 @@ fn native_handoff_completes_only_after_retained_proof_and_recovers_lost_completi
         bytes: git_raw.len() as u64,
     };
     let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    case.temp.disable_cleanup(close_slot);
+    if close_slot {
+        eprintln!(
+            "Native close fixture: {}; source: {}",
+            case.temp.path().display(),
+            fixture.temp.path().display()
+        );
+        if let Some(directory) = std::env::var_os("REEL_CLOSE_EVIDENCE_DIRECTORY") {
+            fs::write(
+                PathBuf::from(directory).join("original-operation-roots.json"),
+                serde_json::to_vec(&json!({"root":case.temp.path(),"source":fixture.temp.path()}))
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+    }
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
         snapshot: fixture.profile.clone(),
@@ -1828,6 +1860,37 @@ fn native_handoff_completes_only_after_retained_proof_and_recovers_lost_completi
         "{}",
         String::from_utf8_lossy(&created.stdout)
     );
+    if close_slot {
+        let target = case.temp.path().join("waiting-close-target.json");
+        fs::write(
+            &target,
+            serde_json::to_vec(&profile.binding.target).unwrap(),
+        )
+        .unwrap();
+        let ticket = case.temp.path().join("waiting-close-ticket.json");
+        let before = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+        let refused = Command::new(&executable)
+            .args([
+                "prepare-close".as_ref(),
+                journal.as_os_str(),
+                profile_file.as_os_str(),
+                target.as_os_str(),
+                ticket.as_os_str(),
+                "--apply".as_ref(),
+            ])
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&refused.stdout).unwrap()["error"]["kind"],
+            "denied"
+        );
+        assert!(!ticket.exists());
+        assert_eq!(
+            before,
+            fs::read(case.profile.index_root.join("claims.json")).unwrap()
+        );
+    }
     let (run_plan, run_bindings, batch_file) = exercise_waiting_graph(
         &case,
         &fixture.packet,
@@ -2088,6 +2151,19 @@ fn native_handoff_completes_only_after_retained_proof_and_recovers_lost_completi
     assert!(!resume(&journal, Path::new("-")).status.success());
     assert_eq!(Journal::open(&journal).unwrap().state(), State::Retained);
     fs::write(&ack_path, &ack_bytes).unwrap();
+    if close_slot {
+        exercise_native_close(
+            &case,
+            &fixture,
+            &profile,
+            &journal,
+            &profile_file,
+            &executable,
+            &result,
+            &receipt,
+            &ack_path,
+        );
+    }
     if let Some(directory) = std::env::var_os("REEL_HANDOFF_EVIDENCE_DIRECTORY") {
         use std::io::Write;
         let directory = PathBuf::from(directory);

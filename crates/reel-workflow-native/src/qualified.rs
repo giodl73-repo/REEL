@@ -36,7 +36,7 @@ pub(crate) mod prepublication {
     }
 }
 // Preserve the full qualified module, including its close/recovery code and
-// original tests. Closing is deliberately not exposed by this admission adapter.
+// original tests. The closing adapter calls this protocol without changing it.
 #[allow(dead_code)]
 #[rustfmt::skip]
 #[path = "../../../vendor/reel-workflow-lifecycle/src/tig_job_runner/slots.rs"]

@@ -63,6 +63,38 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, journal, profile, target, output, apply]
+            if command == "prepare-close" && apply == "--apply" =>
+        {
+            let (ticket, preview) = reel_workflow_native::closing::prepare(
+                Path::new(journal),
+                read_control(Path::new(profile))?,
+                read_control(Path::new(target))?,
+            )?;
+            let pin = ticket.export(Path::new(output))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-close-preview","ticket_sha256":pin,"preview":preview,"slot_changed":false,
+                "payloads_deleted":false,"scratch_retired":false,"selected":false}),
+            )
+        }
+        [command, ticket, pin, output, apply]
+            if (command == "close-job"
+                || command == "recover-close"
+                || command == "stage-close")
+                && apply == "--apply" =>
+        {
+            let (ticket, _held) =
+                reel_workflow_native::closing::read_pinned(Path::new(ticket), pin)?;
+            let outcome = if command == "stage-close" {
+                ticket.stage_to(Path::new(output))?
+            } else {
+                ticket.execute_to(Path::new(output), command == "recover-close")?
+            };
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-original-job-close","slot_idle_observed":outcome.slot_idle,"original_clear_complete":outcome.original_clear_complete,
+                "payloads_deleted":false,"scratch_retired":false,"retained_history_released":false,"selected":false}),
+            )
+        }
         [command, recipe, plan, bindings, limit, output, apply]
             if command == "schedule-recipe" && apply == "--apply" =>
         {
@@ -720,6 +752,10 @@ fn main() -> ExitCode {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
+            "reel-workflow-native prepare-close JOURNAL PROFILE TARGET NEW_TICKET --apply\n",
+            "reel-workflow-native close-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
+            "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",
+            "reel-workflow-native recover-close TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native schedule-recipe RECIPE PLAN RUN_BINDINGS LIMIT NEW_PRIVATE_SCHEDULE --apply\n",
             "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
             "reel-workflow-native prepare-expanded PLAN RUN_BINDINGS TEMPLATE SOURCE ADMISSION ATTEMPT NEW_FROZEN --apply\n",
