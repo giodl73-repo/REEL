@@ -31,6 +31,7 @@ mod output_layout;
 mod producer;
 mod qualified;
 pub mod resolution;
+pub mod resolution_job;
 pub mod response;
 pub mod retention;
 mod review;

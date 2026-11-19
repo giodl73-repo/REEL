@@ -29,6 +29,7 @@ pub(crate) struct Generated {
     bound: Option<reel_workflow::issue::BoundIssue>,
     pub(crate) outputs: reel_workflow::ArtifactSet,
     pub(crate) files: BTreeMap<String, Vec<u8>>,
+    resolution: Option<crate::resolution::Proposal>,
 }
 fn source(packet: &Packet, inputs: &Inputs, path: &str, max: u64) -> anyhow::Result<Vec<u8>> {
     let tool = packet
@@ -51,6 +52,22 @@ fn source(packet: &Packet, inputs: &Inputs, path: &str, max: u64) -> anyhow::Res
     Ok(raw.clone())
 }
 pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generated> {
+    if packet
+        .task
+        .tool
+        .as_ref()
+        .is_some_and(|t| t.capability == reel_workflow::ToolCapability::RepairResolution)
+    {
+        let mut native = native;
+        let generated = crate::resolution_job::generate(packet, &mut native)?;
+        return Ok(Generated {
+            _inputs: native,
+            bound: None,
+            outputs: generated.outputs,
+            files: generated.files,
+            resolution: Some(generated.checked),
+        });
+    }
     let origins = if packet
         .task
         .tool
@@ -90,6 +107,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             bound: None,
             outputs: generated.outputs,
             files: generated.files,
+            resolution: None,
         });
     }
     if packet
@@ -104,6 +122,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             bound: None,
             outputs: g.outputs,
             files: g.files,
+            resolution: None,
         });
     }
     if packet
@@ -118,6 +137,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             bound: None,
             outputs: generated.outputs,
             files: generated.files,
+            resolution: None,
         });
     }
     let bound = reel_workflow::issue::bind(packet, &mut inputs)?;
@@ -137,6 +157,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         bound: Some(bound),
         outputs: receipt.outputs,
         files,
+        resolution: None,
     })
 }
 fn receipt_pin(result: &ReturnedResult) -> Result<&Artifact> {
@@ -221,6 +242,11 @@ pub(crate) struct Proof {
     _generated: Generated,
     _outputs: Vec<reader::VerifiedRead>,
     pub(crate) files: Option<BTreeMap<String, Vec<u8>>>,
+}
+impl Proof {
+    pub(crate) fn resolution(&self) -> Option<&crate::resolution::Proposal> {
+        self._generated.resolution.as_ref()
+    }
 }
 pub(crate) fn native_proof(
     packet: &Packet,

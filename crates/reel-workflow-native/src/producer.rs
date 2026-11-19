@@ -16,6 +16,7 @@ fn capability(packet: &Packet) -> Result<ToolCapability> {
 }
 pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> Result<u64> {
     match capability(packet)? {
+        ToolCapability::RepairResolution => Ok(2 * reel_workflow::MAX_CONTROL_BYTES as u64),
         ToolCapability::ComicReviewControl => Ok(4 * reel_workflow::MAX_CONTROL_BYTES as u64),
         ToolCapability::FilmRender => {
             let bound = reel_workflow::film_render::bind(packet, inputs)?;
@@ -142,6 +143,7 @@ pub(crate) fn generate(
             crate::comic::generate(packet, inputs).map(|g| Generated::Comic(Box::new(g)))
         }
         ToolCapability::ComicIssueAssembly
+        | ToolCapability::RepairResolution
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl
         | ToolCapability::FilmSceneControl => {
@@ -176,6 +178,7 @@ pub(crate) fn check_returned(
             crate::comic::check_returned(packet, inputs, result, root, paths)
         }
         ToolCapability::ComicIssueAssembly
+        | ToolCapability::RepairResolution
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl
         | ToolCapability::FilmSceneControl => {
@@ -253,6 +256,7 @@ fn native(
         }
         .map(|p| p.map(|p| Proof::Comic(Box::new(p)))),
         ToolCapability::ComicIssueAssembly
+        | ToolCapability::RepairResolution
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl
         | ToolCapability::FilmSceneControl => {

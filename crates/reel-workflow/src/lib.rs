@@ -97,6 +97,7 @@ pub enum Operation {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolCapability {
+    RepairResolution,
     FilmRender,
     FilmSceneControl,
     ComicRender,

@@ -70,6 +70,73 @@ fn new_receipt(
         })
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
+    if let [
+        command,
+        before,
+        plan,
+        repair,
+        revision,
+        rebuilds,
+        after,
+        decision,
+        output,
+        apply,
+    ] = args
+        && command == "export-resolution-request"
+        && apply == "--apply"
+    {
+        use std::io::Write;
+        let request = reel_workflow_native::resolution_job::Request::capture(
+            read_control(Path::new(before))?,
+            read_control(Path::new(plan))?,
+            read_control(Path::new(repair))?,
+            read_control(Path::new(revision))?,
+            read_control(Path::new(rebuilds))?,
+            read_control(Path::new(after))?,
+            read_control(Path::new(decision))?,
+        )?;
+        let count = request.resources()?.len();
+        let raw = serde_json::to_vec(&request).map_err(|_| reel_workflow::Error {
+            kind: reel_workflow::ErrorKind::Invalid,
+            code: "resolution-request-json".into(),
+        })?;
+        if raw.len() > reel_workflow::MAX_CONTROL_BYTES {
+            return Err(reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Budget,
+                code: "resolution-request-bytes".into(),
+            });
+        }
+        let parent = Path::new(output).parent().ok_or(reel_workflow::Error {
+            kind: reel_workflow::ErrorKind::Invalid,
+            code: "resolution-request-parent".into(),
+        })?;
+        let _directory = reel_assets::jobs::open_workspace_directory(parent).map_err(|_| {
+            reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Denied,
+                code: "resolution-request-directory".into(),
+            }
+        })?;
+        let _profiles = reel_workflow_native::resolution::check_destination(
+            parent,
+            &request.baseline,
+            &request.corrected,
+            &request.rebuilds,
+        )?;
+        let mut file = new_receipt(
+            Path::new(output),
+            &request.baseline.source,
+            &request.baseline.admission,
+        )?;
+        file.write_all(&raw)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::NeedsRecovery,
+                code: "resolution-request-write-preserve".into(),
+            })?;
+        return Ok(
+            serde_json::json!({"ok":true,"scope":"private-resolution-job-request","resource_objects":count,"admitted":false,"native_retained":false,"task_completed":false}),
+        );
+    }
     match args {
         [
             command,
@@ -1225,6 +1292,7 @@ fn main() -> ExitCode {
             "reel-workflow-native export-issue-draft PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK ROUTES ISSUE_TEXT NEW_DRAFT --apply\n",
             "reel-workflow-native export-repair-plan PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK PLAN REPAIR REVISION NEW_CANDIDATE --apply\n",
             "reel-workflow-native export-resolution BASELINE_RETAINED_REVIEW PLAN REPAIR REVISION REBUILD_BINDINGS CORRECTED_RETAINED_REVIEWS DECISION NEW_PROPOSAL --apply\n",
+            "reel-workflow-native export-resolution-request BASELINE_RETAINED_REVIEW PLAN REPAIR REVISION REBUILD_BINDINGS CORRECTED_RETAINED_REVIEWS DECISION NEW_REQUEST --apply\n",
             "reel-workflow-native export-review-brief PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT NEW_BRIEF --apply\n",
             "reel-workflow-native pack-review-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT REPORT NEW_RESULT --apply\n",
             "reel-workflow-native export-review-copy PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK NEW_COPY [NEW_COMIC_MANIFEST] --apply\n",

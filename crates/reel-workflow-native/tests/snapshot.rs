@@ -61,6 +61,9 @@ mod repair_plan_native;
 #[path = "support/resolution.rs"]
 mod resolution_native;
 #[cfg(windows)]
+#[path = "support/resolution_owned.rs"]
+mod resolution_owned_native;
+#[cfg(windows)]
 #[path = "support/review_brief.rs"]
 mod review_brief_native;
 #[cfg(windows)]

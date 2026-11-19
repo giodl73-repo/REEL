@@ -100,6 +100,13 @@ pub(crate) fn pin_for_read(
     })
 }
 impl RetainedGuard {
+    /// Live retained semantic proof, not a deserialized proposal or approval.
+    pub fn resolution_proposal(&self) -> Option<&crate::resolution::Proposal> {
+        match self._comic.as_ref() {
+            Some(crate::producer::Proof::Issue(proof)) => proof.resolution(),
+            _ => None,
+        }
+    }
     pub fn review_report(&self) -> Option<&reel_workflow::review::CheckedReport> {
         match self._comic.as_ref() {
             Some(crate::producer::Proof::Review(proof)) => Some(&proof.checked),
