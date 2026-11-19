@@ -411,6 +411,214 @@ fn result(packet: &Packet, receipt: &Receipt) -> ReturnedResult {
         },
     }
 }
+fn review_control_fixture() -> (Packet, Packet, ReturnedResult, upstream::Bindings, Memory) {
+    let (mut plan, mut memory, receipt) = build();
+    let parent = packet(&plan);
+    let mut returned = result(&parent, &receipt);
+    returned.worker_receipt = Some(memory.put(
+        "worker/comic-receipt",
+        "application/json",
+        serde_json::to_vec(&receipt).unwrap(),
+    ));
+    for (name, pin) in &returned.artifacts {
+        memory.bytes.insert(
+            pin.logical_id.clone(),
+            format!("synthetic output {name}").into_bytes(),
+        );
+    }
+    let bindings = upstream::Bindings {
+        schema: "reel.workflow-upstream-inputs.v1".into(),
+        inputs: returned
+            .artifacts
+            .iter()
+            .map(|(name, a)| {
+                (
+                    a.logical_id.clone(),
+                    upstream::Reference {
+                        task_id: parent.task.id.clone(),
+                        artifact: upstream::Selector::Output { name: name.clone() },
+                    },
+                )
+            })
+            .chain(std::iter::once((
+                returned.worker_receipt.as_ref().unwrap().logical_id.clone(),
+                upstream::Reference {
+                    task_id: parent.task.id.clone(),
+                    artifact: upstream::Selector::WorkerReceipt,
+                },
+            )))
+            .collect(),
+    };
+    let raw = bindings.canonical_bytes().unwrap();
+    let producer = parent.task.tool.as_ref().unwrap();
+    plan.tasks.push(Task {
+        id: "review-controls".into(),
+        native_inputs: None,
+        upstream_inputs: Some(Artifact {
+            logical_id: "control/upstream-review".into(),
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+            media_type: "application/json".into(),
+        }),
+        operation: Operation::DeterministicTool,
+        tool: Some(ToolContract {
+            schema: "reel.workflow-tool.v1".into(),
+            capability: ToolCapability::ComicReviewControl,
+            executable: producer.executable.clone(),
+            auxiliary_executables: BTreeMap::new(),
+            publication: producer.publication.clone(),
+            edition_id: producer.edition_id.clone(),
+            request: returned.worker_receipt.clone().unwrap(),
+            source_bindings: review_control::source_bindings(&parent, &returned).unwrap(),
+            part: None,
+        }),
+        language: parent.task.language.clone(),
+        prompt: String::new(),
+        inputs: review_control::inputs(&parent, &returned).unwrap(),
+        depends_on: vec![parent.task.id.clone()],
+        outputs: review_control::OUTPUTS
+            .iter()
+            .map(|n| {
+                (
+                    (*n).into(),
+                    OutputContract {
+                        media_type: "application/json".into(),
+                        max_bytes: MAX_CONTROL_BYTES as u64,
+                        required: true,
+                    },
+                )
+            })
+            .collect(),
+    });
+    let child = make_packet(
+        &plan,
+        "review-controls",
+        BTreeMap::from([(
+            parent.task.id.clone(),
+            DependencyResult {
+                result_sha256: canonical_digest(&returned).unwrap(),
+                artifacts: returned.artifacts.clone(),
+            },
+        )]),
+    )
+    .unwrap();
+    (child, parent, returned, bindings, memory)
+}
+#[test]
+fn derived_review_controls_bind_exact_parent_and_emit_a_ready_structured_request() {
+    let (child, parent, result, bindings, mut memory) = review_control_fixture();
+    let parents = BTreeMap::from([(
+        parent.task.id.clone(),
+        upstream::Parent {
+            packet: &parent,
+            result: &result,
+        },
+    )]);
+    let generated = review_control::generate(&child, &bindings, &parents, &mut memory).unwrap();
+    assert_eq!(generated.outputs.len(), 3);
+    let copy: review::Copy = decode(&generated.files["review-copy.json"]).unwrap();
+    let request: review::Request = decode(&generated.files["review-request.json"]).unwrap();
+    assert_eq!(copy.review, generated.outputs["review-sources.json"]);
+    assert_eq!(copy.units.len(), 3);
+    assert_eq!(
+        request.copy_input,
+        generated.outputs["review-copy.json"].logical_id
+    );
+    assert_eq!(request.production_commit, parent.source_commit);
+    assert_eq!(
+        generated.outputs["review-request.json"].logical_id,
+        review::REQUEST_ID
+    );
+    let mut task = Task {
+        id: "review".into(),
+        native_inputs: None,
+        upstream_inputs: None,
+        operation: Operation::ReviewReport,
+        tool: None,
+        language: Some(copy.language.clone()),
+        prompt: "Synthetic review.".into(),
+        inputs: vec![copy.publication.clone()],
+        depends_on: vec![],
+        outputs: BTreeMap::from([(
+            "report".into(),
+            OutputContract {
+                media_type: "application/json".into(),
+                max_bytes: MAX_CONTROL_BYTES as u64,
+                required: true,
+            },
+        )]),
+    };
+    task.inputs.extend(generated.outputs.values().cloned());
+    for (name, pin) in &generated.outputs {
+        memory
+            .bytes
+            .insert(pin.logical_id.clone(), generated.files[name].clone());
+    }
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: child.project.clone(),
+        source_commit: child.source_commit.clone(),
+        tasks: vec![task],
+    };
+    let review = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    review::bind(&review, &mut memory).unwrap();
+    let receipt: serde_json::Value = decode(&generated.files["receipt.json"]).unwrap();
+    assert_eq!(receipt["producer_task_key"], parent.task_key);
+    assert_eq!(receipt["human_approval"], false);
+}
+#[test]
+fn derived_review_controls_refuse_unbound_receipts_changed_sources_and_tampered_bytes() {
+    let (child, parent, result, mut bindings, mut memory) = review_control_fixture();
+    let parents = BTreeMap::from([(
+        parent.task.id.clone(),
+        upstream::Parent {
+            packet: &parent,
+            result: &result,
+        },
+    )]);
+    memory.bytes.insert(
+        parent.task.inputs[0].logical_id.clone(),
+        b"changed".to_vec(),
+    );
+    assert_eq!(
+        review_control::generate(&child, &bindings, &parents, &mut memory)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Integrity
+    );
+    bindings
+        .inputs
+        .get_mut(&result.worker_receipt.as_ref().unwrap().logical_id)
+        .unwrap()
+        .artifact = upstream::Selector::Output {
+        name: "page01-reading.png".into(),
+    };
+    assert_eq!(
+        review_control::generate(&child, &bindings, &parents, &mut memory)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Integrity
+    );
+    let mut different = result;
+    different.attempt_id = "attempt-2".into();
+    let parents = BTreeMap::from([(
+        parent.task.id.clone(),
+        upstream::Parent {
+            packet: &parent,
+            result: &different,
+        },
+    )]);
+    let (child, _, _, bindings, mut memory) = review_control_fixture();
+    assert_eq!(
+        review_control::generate(&child, &bindings, &parents, &mut memory)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Stale
+    );
+}
 
 #[test]
 fn comic_review_export_preserves_page_panel_balloon_and_exact_reading_pins() {

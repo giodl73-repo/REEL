@@ -51,10 +51,47 @@ fn source(packet: &Packet, inputs: &Inputs, path: &str, max: u64) -> anyhow::Res
     Ok(raw.clone())
 }
 pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generated> {
+    let origins = if packet
+        .task
+        .tool
+        .as_ref()
+        .is_some_and(|t| t.capability == reel_workflow::ToolCapability::ComicReviewControl)
+    {
+        Some(native.review_origins()?.clone())
+    } else {
+        None
+    };
     let mut inputs = Inputs {
         native,
         bytes: BTreeMap::new(),
     };
+    if let Some(origins) = origins {
+        let parents = origins
+            .parents
+            .iter()
+            .map(|(id, p)| {
+                (
+                    id.clone(),
+                    reel_workflow::upstream::Parent {
+                        packet: &p.packet,
+                        result: &p.result,
+                    },
+                )
+            })
+            .collect();
+        let generated = reel_workflow::review_control::generate(
+            packet,
+            &origins.bindings,
+            &parents,
+            &mut inputs,
+        )?;
+        return Ok(Generated {
+            _inputs: inputs.native,
+            bound: None,
+            outputs: generated.outputs,
+            files: generated.files,
+        });
+    }
     if packet
         .task
         .tool

@@ -97,6 +97,7 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
             ToolCapability::ComicRender
                 | ToolCapability::ComicIssueAssembly
                 | ToolCapability::ComicIssueControl
+                | ToolCapability::ComicReviewControl
                 | ToolCapability::FilmSceneControl
         ) || (cfg!(all(windows, feature = "film"))
             && tool.capability == ToolCapability::FilmRender))

@@ -406,6 +406,7 @@ impl SnapshotInputs {
 /// Native provider handles remain held for this object's lifetime. This bridges
 /// exact record-to-leaf identity and byte access, not durable actor protection.
 pub struct NativeInputs {
+    origins: Option<upstream::Frozen>,
     #[cfg(all(windows, feature = "film"))]
     repository: PathBuf,
     snapshot: SnapshotInputs,
@@ -418,6 +419,17 @@ pub struct NativeInputs {
     _permit: Option<admission::InputPermit>,
 }
 impl NativeInputs {
+    pub(crate) fn review_origins(&self) -> Result<&upstream::Frozen> {
+        if self._claims.is_none() && self._permit.is_none() {
+            return Err(error(
+                ErrorKind::Denied,
+                "review-control-live-authority-required",
+            ));
+        }
+        self.origins
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Missing, "review-control-frozen-producer"))
+    }
     #[cfg(all(windows, feature = "film"))]
     pub(crate) fn movie_authority(&self) -> Result<(&admission::Profile, &str)> {
         if let Some(claims) = &self._claims {
@@ -490,6 +502,7 @@ impl NativeInputs {
         }
         let guard = hold_tool(&profile.annex)?;
         Ok(Self {
+            origins: profile.snapshot.upstream.clone(),
             #[cfg(all(windows, feature = "film"))]
             repository: profile.snapshot.repository.clone(),
             snapshot,

@@ -15,6 +15,7 @@ pub mod issue_control;
 pub mod publication;
 pub mod recipe;
 pub mod review;
+pub mod review_control;
 pub mod upstream;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
@@ -97,6 +98,7 @@ pub enum ToolCapability {
     ComicRender,
     ComicIssueAssembly,
     ComicIssueControl,
+    ComicReviewControl,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]

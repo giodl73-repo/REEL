@@ -37,6 +37,7 @@ impl Config {
                 ToolCapability::ComicRender
                     | ToolCapability::ComicIssueAssembly
                     | ToolCapability::ComicIssueControl
+                    | ToolCapability::ComicReviewControl
                     | ToolCapability::FilmSceneControl
             ) || (cfg!(all(windows, feature = "film")) && c == ToolCapability::FilmRender))
         }) {
