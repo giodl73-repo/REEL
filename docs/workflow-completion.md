@@ -13,7 +13,7 @@ checked again before closing the objective.
 | Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets/runtime pins and exact task/result/dependency keys; deterministic comic and bounded complete-issue dispatch including retained upstream inputs; composite intelligence handoff/retention | Real provider transports, bounded subprocess/general worker dispatch and complete production graph qualification. |
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
-| Speech recording, including requested ElevenLabs integration | Existing speech task contract; recorded project cues remain source assets; [official v4 model/timed API contract checked](handoff/2026-11-18-elevenlabs-api-contract.md); checked original-character-to-word conversion feeds selected-take timing with explicit language-local boundaries | Implement configurable transport, actual model/account admission and retained recording/timing evidence. Existing season-5 recordings must be reusable without regeneration. |
+| Speech recording, including requested ElevenLabs integration | [Built-in timed adapter](handoff/2026-11-19-elevenlabs-adapter.md), frozen source/catalogue/scope checks, candidate WAV/original alignment/language-local timing; bounded native complete-response staging/retention/replay passes after one HTTP call | Actual account/model/voice entitlement and real-service qualification; selected-take film integration and reuse of existing season-5 cues without regeneration. |
 | Film production | Existing root REEL compilers/producers and assembly contracts | Connect film producers to the new workflow and qualify full film/review derivatives, not merely opaque file retention. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Existing `reel-assembly` semantic graph and language bindings | Connect measured selected-take word/phrase evidence to workflow builds, then qualify differing trigger words, durations and complete editions. |
@@ -67,8 +67,12 @@ adapters remain broader work. The [built-in timed ElevenLabs adapter](handoff/20
 now composes requests from exact source/catalogue/scope inputs, produces candidate
 WAV/original alignment/language-local timing, and preserves response identifiers
 before body capture. Thirteen HTTP component/CLI tests and strict Clippy pass.
-Its complete native fixture, actual account/model/voice entitlement and real
-service qualification remain open; frozen declarations do not authenticate consent.
+Its native complete-response fixture now retains all nine outputs after one
+timed HTTP call and replays without synthesis. Its truncated-response fixture
+preserves service identifiers, partial bytes and unchanged claims while refusing
+a repeated POST, including after local call-file loss. Actual account/model/voice
+entitlement and real-service qualification remain open; frozen declarations do
+not authenticate consent.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

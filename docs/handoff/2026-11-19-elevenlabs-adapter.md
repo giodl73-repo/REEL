@@ -3,9 +3,8 @@
 `reel-workflow-http::elevenlabs` composes explicit `eleven_v4` or
 `eleven_v4_turbo` requests and checks timed responses. Native provider config
 accepts `"service":{"kind":"elevenlabs-timed","spec":...}`. Omitting service
-preserves the existing proxy contract and workspace identity. This is component
-verification; complete built-in native lifecycle and real-account qualification
-remain open.
+preserves the existing proxy contract and workspace identity. The bounded native
+complete-response fixture now passes; real-account qualification remains open.
 
 ## Frozen inputs and request
 
@@ -60,12 +59,32 @@ reusable assets; synthesis is only an explicit configured task.
 ## Evidence and producer checks
 
 Thirteen HTTP component/CLI tests, 48 default native tests and strict Clippy
-for both isolated crates pass. Twenty native effect fixtures remain opt-in and
-were not rerun for this component checkpoint. Tests cover ES/EN
+for both isolated crates pass. Other native effect fixtures remain opt-in.
+Component tests cover ES/EN
 timing, exact original alignment preservation, admission/endpoint refusals,
 invalid PCM/clock rejection and identifiers retained before body truncation.
-No real credentials, voices or project media were used. The previously qualified
-generic native proxy fixture does not qualify this built-in adapter end to end.
+No real credentials, voices or project media were used. The built-in native
+complete-response fixture now verifies exact committed inputs, protected
+admission/staging, one timed HTTP call, all nine retained outputs, original
+alignment/normalized separation and replay without another synthesis request.
+It passed in 154.30 seconds against the explicitly declared existing test pool.
+The truncated-response fixture passed in 63.21 seconds: original service request
+and history IDs survive, the job stays Waiting, claims stay unchanged and replay
+refuses a new POST even after original local call files are temporarily moved.
+The originals are restored; no job/claim/scratch cleanup follows uncertainty.
+
+Evidence packet:
+`F:/src/tig-dev-temp/reel-workflow-native-speech-20261119-v1/qualified-tools.json`.
+Source `896be16e62d2484790e2186a29178d026b7ab74a`; all 1,841 archived files
+match. Runtime SHA256:
+`4d8cbe7c0dcac2f181022be5e7bc5c56daba79fa598523c0a2100daefd20787e`.
+Fixture SHA256:
+`2d19afd3ae9250fa30e1df0ac254c680cdce2afaeb4971f78983d09c183ab36c`.
+Complete controller `F:/src/tig-dev-temp/.tmpgXAgtl`, source `.tmpAHnrFb`, is
+Retained. Uncertain controller `F:/src/tig-dev-temp/.tmp7UGCVr`, source
+`.tmpJfTzG4`, remains Waiting. Preserve both roots, original work identities,
+service evidence, global call marker, claims and scratch. A successful synthetic
+fixture does not establish real account/model/voice entitlement.
 
 Producer-applied sound-design/editing checks require selected-take timing before
 edit decisions. Rights/provenance checks require frozen scope evidence, explicit

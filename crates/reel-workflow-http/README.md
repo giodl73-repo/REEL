@@ -56,7 +56,8 @@ artifact, a retained task or an approval. The
 [timed ElevenLabs adapter](../../docs/handoff/2026-11-19-elevenlabs-adapter.md)
 adds frozen source/model/scope checks and candidate WAV/alignment/timing outputs.
 `send_observed` offers a pre-body header callback for request/history identifiers.
-Real-account qualification and the built-in adapter's full native fixture remain
+The built-in adapter passes bounded native retention/replay and uncertainty
+fixtures against the existing synthetic pool. Real-account qualification remains
 open. No real account, private media or voice was used in the loopback tests.
 
 ```text
