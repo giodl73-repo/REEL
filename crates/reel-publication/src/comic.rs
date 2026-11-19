@@ -330,6 +330,7 @@ fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>)
     let request: Request = serde_json::from_slice(raw)?;
     ensure!(
         request.schema == "reel.comic-build.v1"
+            && request.part_id.as_ref().is_none_or(|id| valid_id(id))
             && valid_id(&request.publication_id)
             && valid_id(&request.edition_id)
             && valid_id(&request.language)
@@ -412,10 +413,14 @@ fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>)
             (
                 name.clone(),
                 Artifact {
-                    logical_id: format!(
-                        "{}/{}/{}",
-                        request.publication_id, request.edition_id, name
-                    ),
+                    logical_id: if let Some(part) = &request.part_id {
+                        format!(
+                            "{}/{}/parts/{part}/{name}",
+                            request.publication_id, request.edition_id
+                        )
+                    } else {
+                        format!("{}/{}/{name}", request.publication_id, request.edition_id)
+                    },
                     sha256: obj.sha256,
                     bytes: obj.bytes,
                     media_type: media.into(),
@@ -435,6 +440,7 @@ fn prepare_with(raw: &[u8], read_input: &mut dyn FnMut(&Pin) -> Result<Vec<u8>>)
     }
     let receipt = Receipt {
         schema: "reel.comic-build-receipt.v1".into(),
+        part_id: request.part_id,
         publication_id: request.publication_id,
         edition_id: request.edition_id,
         language: request.language,

@@ -169,6 +169,7 @@ fn request(
     pages: Vec<Pin>,
 ) -> PathBuf {
     let build = Request {
+        part_id: None,
         schema: "reel.comic-build.v1".into(),
         publication_id: "synthetic-lamp".into(),
         edition_id: edition.into(),
@@ -351,7 +352,18 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
             page_pins,
         );
         let output = packets.path().join(id);
+        let mut scoped: Request = serde_json::from_slice(&fs::read(&request).unwrap()).unwrap();
+        scoped.part_id = Some(id.into());
+        fs::write(&request, serde_json::to_vec_pretty(&scoped).unwrap()).unwrap();
         render(&request, &output).unwrap();
+        let scoped_receipt: Receipt =
+            serde_json::from_slice(&fs::read(output.join("receipt.json")).unwrap()).unwrap();
+        assert_eq!(scoped_receipt.part_id.as_deref(), Some(id));
+        assert!(
+            scoped_receipt.outputs["reading.pdf"]
+                .logical_id
+                .contains(&format!("/parts/{id}/"))
+        );
         fs::remove_file(request).unwrap(); // exclusively owned fixture request, reused name
         let receipt = object(&fs::read(output.join("receipt.json")).unwrap());
         part_receipts.insert(

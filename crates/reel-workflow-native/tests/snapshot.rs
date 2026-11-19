@@ -11,6 +11,9 @@ use std::{
 };
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
+#[cfg(windows)]
+#[path = "support/issue_native.rs"]
+mod issue_native;
 
 fn git_path() -> PathBuf {
     if let Some(path) = std::env::var_os("REEL_TEST_GIT") {
@@ -3137,6 +3140,7 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
         serde_json::to_vec_pretty(&page).unwrap(),
     );
     let request = Request {
+        part_id: None,
         schema: "reel.comic-build.v1".into(),
         publication_id: "synthetic-comic".into(),
         edition_id: "es".into(),

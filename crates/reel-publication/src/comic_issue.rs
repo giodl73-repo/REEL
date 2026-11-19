@@ -1,40 +1,17 @@
 //! Explicit comic parts and private ordered reading assembly. This is not a
 //! native job planner: actor, source-closure and retention admission remain separate.
-use crate::{Artifact, ArtifactSet, comic, comic_source::*};
+use crate::{Artifact, comic, comic_source::*};
 use anyhow::{Context, Result, ensure};
-use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
 };
 
-pub use crate::comic_issue_source::{Part, Plan};
+pub use crate::comic_issue_source::{Assembly, AssemblyReceipt, Part, Plan};
 /// Bounded, read-only metadata decoding. Call `Plan::check` to validate it.
 pub fn read_plan(path: &Path) -> Result<Plan> {
     let raw = comic::read(&std::path::absolute(path)?, crate::MAX_CONTROL_BYTES as u64)?;
     Ok(serde_json::from_slice(&raw)?)
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Assembly {
-    pub schema: String,
-    pub plan: Pin,
-    /// Part ID -> exact packet receipt. Paths are private, request-relative.
-    pub parts: BTreeMap<String, Pin>,
-    pub limits: Limits,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct AssemblyReceipt {
-    pub schema: String,
-    pub request: Object,
-    pub plan: Object,
-    pub parts: BTreeMap<String, Object>,
-    pub page_order: Vec<String>,
-    pub outputs: ArtifactSet,
-    pub human_approval: bool,
-    pub retained_owner_acknowledged: bool,
-    pub print_ready: bool,
 }
 fn read_with(
     input: &mut impl FnMut(&str, u64) -> Result<Vec<u8>>,
@@ -193,7 +170,8 @@ pub fn capture_with(
         );
         let build: Request = serde_json::from_slice(&packet.files["sources/request.json"])?;
         ensure!(
-            build.publication_id == plan.publication.id
+            build.part_id.as_ref().is_none_or(|id| id == &part.id)
+                && build.publication_id == plan.publication.id
                 && build.edition_id == plan.edition_id
                 && build.language == edition.language
                 && packet.receipt.page_order == part.pages,

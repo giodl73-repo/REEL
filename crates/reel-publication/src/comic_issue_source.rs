@@ -1,7 +1,33 @@
 //! Portable issue partitions. No renderer, filesystem access or job admission.
-use crate::{ComicPage, Content, Error, ErrorKind, Publication, Result, fail, valid_id};
+use crate::comic_source::{Limits, Object, Pin};
+use crate::{
+    ArtifactSet, ComicPage, Content, Error, ErrorKind, Publication, Result, fail, valid_id,
+};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Assembly {
+    pub schema: String,
+    pub plan: Pin,
+    /// Part ID -> exact packet receipt. Paths are private, request-relative.
+    pub parts: BTreeMap<String, Pin>,
+    pub limits: Limits,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssemblyReceipt {
+    pub schema: String,
+    pub request: Object,
+    pub plan: Object,
+    pub parts: BTreeMap<String, Object>,
+    pub page_order: Vec<String>,
+    pub outputs: ArtifactSet,
+    pub human_approval: bool,
+    pub retained_owner_acknowledged: bool,
+    pub print_ready: bool,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -18,6 +18,7 @@ pub struct BoundComic {
     task_key: String,
     task_id: String,
     publication_id: String,
+    part_id: Option<String>,
     edition_id: String,
     language: String,
     page_order: Vec<String>,
@@ -134,6 +135,9 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         kind: ErrorKind::Missing,
         code: "deterministic-tool".into(),
     })?;
+    if tool.capability != ToolCapability::ComicRender {
+        return bad(ErrorKind::Unsupported, "comic-render-capability-required");
+    }
     let publication: Publication = decode(&verified(
         reader,
         &tool.publication,
@@ -150,6 +154,10 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
             code: "selected-edition".into(),
         })?;
     if request.schema != "reel.comic-build.v1"
+        || request
+            .part_id
+            .as_ref()
+            .is_some_and(|id| tool.part.as_ref().is_none_or(|p| &p.part_id != id))
         || request.publication_id != publication.id
         || request.edition_id != edition.id
         || request.language != edition.language
@@ -297,6 +305,7 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         task_key: packet.task_key.clone(),
         task_id: packet.task.id.clone(),
         publication_id: publication.id,
+        part_id: request.part_id,
         edition_id: edition.id.clone(),
         language: edition.language.clone(),
         page_order,
@@ -349,6 +358,7 @@ pub fn check_comic_receipt(
     }
     if receipt.schema != "reel.comic-build-receipt.v1"
         || receipt.publication_id != bound.publication_id
+        || receipt.part_id != bound.part_id
         || receipt.edition_id != bound.edition_id
         || receipt.language != bound.language
         || receipt.page_order != bound.page_order
@@ -363,7 +373,15 @@ pub fn check_comic_receipt(
     }
     reel_publication::check_outputs(&bound.outputs, &result.artifacts)?;
     for (name, asset) in &result.artifacts {
-        if asset.logical_id != format!("{}/{}/{}", bound.publication_id, bound.edition_id, name) {
+        let expected = if let Some(part) = &bound.part_id {
+            format!(
+                "{}/{}/parts/{part}/{name}",
+                bound.publication_id, bound.edition_id
+            )
+        } else {
+            format!("{}/{}/{name}", bound.publication_id, bound.edition_id)
+        };
+        if asset.logical_id != expected {
             return bad(ErrorKind::Conflict, "comic-output-logical-binding");
         }
     }

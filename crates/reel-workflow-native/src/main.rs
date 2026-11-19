@@ -333,6 +333,17 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "task_completed":false,"selected":false}),
             )
         }
+        [command, request, output] if command == "comic-issue-assemble" => {
+            reel_publication::comic_issue::assemble(Path::new(request), Path::new(output))
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Integrity,
+                    code: "comic-issue-assembly-refused-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-comic-issue-worker","outputs_written":true,
+                "retained_owner_acknowledged":false,"task_completed":false,"selected":false,"print_ready":false}),
+            )
+        }
         [command, packet, profile, journal, apply]
             if command == "create-handoff" && apply == "--apply" =>
         {

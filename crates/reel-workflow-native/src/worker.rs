@@ -33,7 +33,10 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
         .as_ref()
         .ok_or_else(|| error(ErrorKind::Unsupported, "worker-deterministic-tool-required"))?;
     if packet.task.operation != reel_workflow::Operation::DeterministicTool
-        || tool.capability != ToolCapability::ComicRender
+        || !matches!(
+            tool.capability,
+            ToolCapability::ComicRender | ToolCapability::ComicIssueAssembly
+        )
         || tool.executable.sha256 != selected.profile.runtime.sha256
         || tool.executable.bytes != selected.profile.runtime.bytes
     {
@@ -130,13 +133,8 @@ pub fn prepare(
         &selected.profile.source,
         claims,
     )?;
-    reel_workflow::publication::bind_comic(&selected.task.ticket.packet, &mut inputs)?;
-    let request_asset = &context(&selected)?.request;
-    let raw = inputs.read(request_asset, request_asset.bytes)?;
-    let request: reel_publication::comic_source::Request = reel_workflow::decode(&raw)?;
-    let required = request
-        .limits
-        .output_bytes
+    let output_bytes = crate::producer::output_budget(&selected.task.ticket.packet, &mut inputs)?;
+    let required = output_bytes
         .checked_mul(2)
         .and_then(|n| n.checked_add(10 * reel_workflow::MAX_CONTROL_BYTES as u64))
         .ok_or_else(|| error(ErrorKind::Budget, "worker-reservation-overflow"))?;
@@ -349,9 +347,9 @@ fn execute(
         )?
         .reopen(&ticket.admission)?;
         let native = NativeInputs::from_claims(&ticket.packet, &selected.profile.source, claims)?;
-        let generated = crate::comic::generate(&ticket.packet, native)?;
+        let generated = crate::producer::generate(&ticket.packet, native)?;
         let receipt_raw = generated
-            .files
+            .files()
             .get("receipt.json")
             .ok_or_else(|| error(ErrorKind::Missing, "worker-produced-receipt"))?;
         let result = ReturnedResult {
@@ -359,7 +357,7 @@ fn execute(
             task_id: ticket.task_id.clone(),
             task_key: ticket.packet.task_key.clone(),
             attempt_id: ticket.admission.attempt_id.clone(),
-            artifacts: generated.receipt.outputs.clone(),
+            artifacts: generated.outputs().clone(),
             provenance: Provenance {
                 mode: Mode::Tool,
                 provider: None,
@@ -389,7 +387,7 @@ fn execute(
         let mut controls = base.controls.clone();
         controls.extend(
             generated
-                .files
+                .files()
                 .iter()
                 .map(|(name, raw)| (format!("packet/{name}"), raw.clone())),
         );

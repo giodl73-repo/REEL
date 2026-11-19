@@ -136,7 +136,7 @@ fn verify(
         }
         let native = crate::NativeInputs::open_admitted(packet, source, profile, receipt)?;
         let (extra_files, extra_directories) =
-            crate::comic::check_returned(packet, native, result, &root, &returns.files)?;
+            crate::producer::check_returned(packet, native, result, &root, &returns.files)?;
         files.extend(extra_files);
         directories.extend(extra_directories);
     }

@@ -26,6 +26,8 @@ pub struct Limits {
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part_id: Option<String>,
     pub publication_id: String,
     pub edition_id: String,
     pub language: String,
@@ -84,6 +86,8 @@ pub struct PageSource {
 #[serde(deny_unknown_fields)]
 pub struct Receipt {
     pub schema: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part_id: Option<String>,
     pub publication_id: String,
     pub edition_id: String,
     pub language: String,

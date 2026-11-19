@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod graph;
 pub mod handoff;
+pub mod issue;
 pub mod publication;
 pub mod upstream;
 
@@ -85,6 +86,7 @@ pub enum Operation {
 #[serde(rename_all = "kebab-case")]
 pub enum ToolCapability {
     ComicRender,
+    ComicIssueAssembly,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -239,7 +241,8 @@ fn task(value: &Task) -> Result<()> {
             artifact(&tool.request)?;
             if let Some(part) = &tool.part {
                 artifact(&part.plan)?;
-                if part.schema != "reel.workflow-comic-part.v1"
+                if tool.capability != ToolCapability::ComicRender
+                    || part.schema != "reel.workflow-comic-part.v1"
                     || !token(&part.part_id)
                     || part.plan.media_type != "application/json"
                     || part.plan.bytes > MAX_CONTROL_BYTES as u64

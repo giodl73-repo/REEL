@@ -15,6 +15,8 @@ pub mod admission;
 mod comic;
 pub mod graph;
 pub mod handoff;
+mod issue;
+mod producer;
 mod qualified;
 pub mod response;
 pub mod retention;

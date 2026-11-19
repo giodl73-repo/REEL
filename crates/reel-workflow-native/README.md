@@ -713,6 +713,10 @@ retained coverage, so it does not require the original job actor to remain activ
 Permits bind the exact input selection and source declaration; they cannot be
 deserialized. Shared fence ownership allows nested replay without acquiring an
 already held actor lock, and source byte gates still drop before index effects.
-Full issue assembly, guarded
-slot closure and scratch/capacity retirement remain separate work. Input admission
+The [complete-issue adapter](../../docs/handoff/2026-11-18-native-comic-issue.md)
+adds explicit `comic-issue-assembly` dispatch and full editable packet replay;
+its native end-to-end qualification is recorded separately. Newly authored part
+requests can set `part_id` for distinct part-scoped output identities. Automatic
+derived-control production, larger issue scheduling, guarded slot closure and
+scratch/capacity retirement remain separate work. Input admission
 or technical completion does not select an asset or grant creative/release approval.

@@ -8,6 +8,8 @@ use reel_publication::{
 };
 use reel_workflow::{publication::*, *};
 use std::collections::BTreeMap;
+#[path = "support/issue_contract.rs"]
+mod issue_contract;
 
 #[derive(Clone, Default)]
 struct Memory {
@@ -95,6 +97,7 @@ fn build() -> (Plan, Memory, Receipt) {
         serde_json::to_vec(&source).unwrap(),
     );
     let request = Request {
+        part_id: None,
         schema: "reel.comic-build.v1".into(),
         publication_id: "issue-demo".into(),
         edition_id: "es".into(),
@@ -209,6 +212,7 @@ fn build() -> (Plan, Memory, Receipt) {
         outputs: contracts,
     };
     let receipt = Receipt {
+        part_id: None,
         schema: "reel.comic-build-receipt.v1".into(),
         publication_id: "issue-demo".into(),
         edition_id: "es".into(),

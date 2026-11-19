@@ -190,6 +190,14 @@ own frozen per-page output contracts. Workflow tasks use an explicit pinned
 `tool.part` selector against the full master/plan rather than presenting a subset
 definition as the original master.
 
+For newly authored part builds, set the optional request `part_id` to the exact
+selected part ID. The receipt preserves it and output logical IDs become
+`PUBLICATION/EDITION/parts/PART/OUTPUT`. This lets a downstream issue declare
+different parts' PDFs and transcripts without logical-ID collisions. Existing
+unscoped requests/receipts remain readable with their original identities.
+`comic_issue_source::{Assembly, AssemblyReceipt}` are available without the
+renderer feature, alongside `Plan` and `Part`.
+
 `reel.comic-issue-assembly.v1` has `plan` (a relative path/hash/length pin),
 `parts` (part ID to exact relative packet `receipt.json` pin), and `limits`
 with `input_bytes` and `output_bytes`, each at most 128 MiB. Packet locations

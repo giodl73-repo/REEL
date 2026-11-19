@@ -89,7 +89,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         files,
     })
 }
-fn inventory(
+pub(crate) fn inventory(
     root: &Path,
     at: &Path,
     depth: usize,

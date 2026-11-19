@@ -61,7 +61,7 @@ pub struct RetainedGuard {
     pub(crate) _prepared: Prepared,
     _annex: File,
     _outputs: Vec<reader::VerifiedRead>,
-    _comic: Option<crate::comic::Proof>,
+    _comic: Option<crate::producer::Proof>,
 }
 pub(crate) struct ReadPin {
     _git: File,
@@ -88,7 +88,7 @@ pub(crate) fn pin_for_read(
         session,
     )?;
     drop(outputs(parent.source, parent.result)?);
-    drop(crate::comic::check_native(
+    drop(crate::producer::check_native(
         parent.packet,
         parent.source,
         parent.result,
@@ -103,7 +103,7 @@ impl RetainedGuard {
     pub(crate) fn comic_files(&self) -> Result<&std::collections::BTreeMap<String, Vec<u8>>> {
         self._comic
             .as_ref()
-            .and_then(|proof| proof.files.as_ref())
+            .and_then(|proof| proof.files())
             .ok_or_else(|| error(ErrorKind::Unsupported, "retention-comic-capture-required"))
     }
 }
@@ -199,7 +199,7 @@ pub fn retain(
     // ordered source/retained fences protect this transition instead.
     drop(outputs(source, result).map_err(|e| phase(e, "retention-output-preflight"))?);
     drop(
-        crate::comic::check_native(packet, source, result, guard.input_permit())
+        crate::producer::check_native(packet, source, result, guard.input_permit())
             .map_err(|e| phase(e, "retention-comic-preflight"))?,
     );
     let acknowledgement = guard
@@ -207,7 +207,7 @@ pub fn retain(
         .map_err(|e| phase(e, "retention-apply"))?;
     guard.verify_retention(receipt, &acknowledgement)?;
     let _outputs = outputs(source, result).map_err(|e| phase(e, "retention-output-readback"))?;
-    let _comic = crate::comic::check_native(packet, source, result, guard.input_permit())
+    let _comic = crate::producer::check_native(packet, source, result, guard.input_permit())
         .map_err(|e| phase(e, "retention-comic-readback"))?;
     Ok(acknowledgement)
 }
@@ -273,14 +273,14 @@ fn verify_inner(
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
     let outputs = outputs(source, result)?;
     let comic = if capture {
-        crate::comic::capture_native(
+        crate::producer::capture_native(
             packet,
             source,
             result,
             prepared.input_permit(fences.clone()),
         )?
     } else {
-        crate::comic::check_native(
+        crate::producer::check_native(
             packet,
             source,
             result,
