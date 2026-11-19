@@ -84,3 +84,21 @@ Applied comics-editor, editor and rights/provenance checklists: full neighboring
 context, stable producer identities, language-local timing and evidence, old
 history preservation and separate technical/creative authority. No independent
 review or actual approval is claimed by this feature.
+
+## Component and regression evidence
+
+Source `36af09c9411bcfb8e30c0b51503ab0e1ea49306a` has all 1,913 tracked
+files verified against its archived source snapshot. All 98 workflow tests,
+61 standard native tests and 247 unchanged SDK source pins pass, with strict
+workflow/native Clippy (native film and default features). Formatting and
+`git diff --check` pass. Four new parameterized resolution tests cover the
+contract cases above; the native exporter is compiled and included in standard
+regression checking, but has no integrated positive qualification yet.
+
+External evidence: `F:/src/tig-dev-temp/reel-resolution-20261119-v1/qualified-tools.json`,
+SHA256 `f5502892a10517ba6ad720d6cc02518529a625e14b538c943cbf4999503e99cd`.
+It pins the source/archive, current frozen native CLI/test executables and check
+logs. No new feature execution admitted jobs, called providers, rendered media,
+published native outputs, selected assets or closed issues in this qualification.
+The next integrated fixture and remaining closure boundaries are listed above;
+passing component tests do not substitute for them.
