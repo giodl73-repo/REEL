@@ -64,3 +64,24 @@ still requires neighboring/page/full-issue or full-film contextual review;
 preserving English task definitions does not approve Spanish wording. No
 creative, translation, voice/font, print or release decision follows from
 materializing a technically valid plan. Historical inputs and plans stay intact.
+
+## Qualification
+
+Source `d85bea5e74039f89f942518608d805b1c4cae975` passed 89 workflow
+tests, 58 standard native tests, strict workflow Clippy and strict native Clippy
+with and without film support. The native suite verified all 247 vendored SDK
+source pins. All 1,892 archived source files matched their recorded hashes.
+Tests cover film/comic review contracts, language-local edits, shared-runtime
+invalidation, producer-reference replacement, complete native-declaration
+coverage, stale declaration refusal and exclusive CLI export.
+
+The actual retained-report fixture passed in 53.61 test seconds (54.33 wall
+seconds). It reopened the existing synthetic comic-review finding, exported a
+checked candidate plan with the exact replacement descriptor, refused a stale
+report before output creation and left claims unchanged. This used a synthetic
+consumer plan; it did not produce a corrected comic or verify/admit a new source
+snapshot. Its preserved root is `F:/src/tig-dev-temp/.tmp9K9I0I`.
+
+Frozen tools, source and raw check/fixture logs are pinned by
+`F:/src/tig-dev-temp/reel-repair-plan-20261119-v1/qualified-tools.json`,
+SHA256 `0ee9fa70441bf4b3cd78fa6d906c561d3fa820ff28281b3e89121dc2007de8b2`.
