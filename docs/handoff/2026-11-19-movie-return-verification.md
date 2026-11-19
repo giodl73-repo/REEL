@@ -35,7 +35,26 @@ verification capacity, and relocates outputs under opaque `.bin` names. It check
 positive verification, write refusal while guards live, pre-child hash-corruption
 refusal and a repinned alternative film whose plan/map/hashes are made consistent
 with the original task. The primary comparison must refuse the wrong picture.
-Actual qualification evidence will be recorded after execution.
+Qualification passed in 128.15 seconds at source
+`facf093685cf4d81164ad129a2356d1e699798bd`. Exact executable/source/evidence pins
+are in `F:/src/tig-dev-temp/reel-movie-verification-20261119-v1/qualified-tools.json`;
+all 1,865 archived source files match. The preserved fixture root is `.tmpDNvDnU`.
+The original admission/media at `.tmpUu8trF` remains unchanged; verification uses
+separately admitted owned capacity and does not accept another native job.
+
+All relocated `.bin` returns passed full checks and primary comparison, with
+write-open refusal while `Checked` lives. Corrupted bytes refused before a child
+launch. The deliberately different film passed the existing container/media
+checks with refreshed hashes, original plan/map and candidate receipt, then
+returned `Integrity: film-verification-primary-reference`. Its exact request and
+outcome are retained in the evidence directory alongside the positive pair.
+Original claims stayed byte-identical. No output was retained, selected or task
+completed, and no scratch was retired.
+
+All 57 default native tests with `film`, the 247 SDK source-pin checks, strict
+all-target Clippy with/without `film`, formatting and `git diff --check` pass.
+Native retained-result verification, interrupted verification replay and full
+movie lifecycle dispatch remain required; this fixture does not qualify them.
 
 Producer-applied editor and rights/provenance review: current source pins and
 primary clocks determine the comparison; supplied producer assertions cannot
