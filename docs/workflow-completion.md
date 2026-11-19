@@ -9,8 +9,8 @@ checked again before closing the objective.
 
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
-| Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic worker, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Connect issue assembly, broader execution/admission scheduling and project configuration; preserve existing producers. |
-| Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets/runtime pins and exact task/result/dependency keys; in-process deterministic comic dispatch including retained upstream art; pinned dependency inputs and composite intelligence handoff/retention | Real provider transports, bounded subprocess/general worker dispatch and complete issue assembly wiring; complete production graph qualification. |
+| Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic/issue workers, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Broader execution/admission scheduling, automatic derived controls and project configuration; preserve existing producers. |
+| Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets/runtime pins and exact task/result/dependency keys; deterministic comic and bounded complete-issue dispatch including retained upstream inputs; composite intelligence handoff/retention | Real provider transports, bounded subprocess/general worker dispatch and complete production graph qualification. |
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | Existing speech task contract; recorded project cues remain source assets; [official v4 model/timed API contract checked](handoff/2026-11-18-elevenlabs-api-contract.md); checked original-character-to-word conversion feeds selected-take timing with explicit language-local boundaries | Implement configurable transport, actual model/account admission and retained recording/timing evidence. Existing season-5 recordings must be reusable without regeneration. |
@@ -29,8 +29,8 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
-Current ordering: complete existing native regressions; extend automatic derived
-controls and larger issue scheduling beyond the bounded retained issue fixture;
+Current ordering: extend automatic derived controls and larger issue scheduling
+beyond the bounded retained issue fixture and its passing native regressions;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
 explicit selection/retirement and project adoption qualification. Independent

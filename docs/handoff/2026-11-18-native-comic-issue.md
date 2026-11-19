@@ -101,5 +101,13 @@ verifies all 1,803 source files with zero mismatches. Its manifest SHA256 is
 
 This establishes that bounded native issue path, not arbitrary issue sizes,
 automatic derived controls, production slot closure, project adoption or release.
-The ten existing native regression cases are still running separately. Earlier
-failed loose attempts remain protected and incomplete.
+All ten existing native regression cases also passed (1,251.51 seconds), including
+composite art replay/restoration, guarded handoff recovery and shared-target batch
+staging. Together with 70 shared tests, 37 default native tests, the original
+close-refusal preservation case and the complete issue case, this qualifies 119
+distinct checks at this pinned scope. Strict shared/native Clippy passed.
+`...-v4/qualified-tools.json` binds the source manifest, frozen tools, evidence
+files and explicit qualification limits. A separate later commit's 54 assembly
+tests cover the character-timing converter; they are not part of this native
+executable's source pin. Earlier failed loose attempts remain protected and
+incomplete.

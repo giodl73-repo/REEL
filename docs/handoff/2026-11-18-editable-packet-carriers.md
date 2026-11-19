@@ -48,5 +48,6 @@ expected close-budget error leaves the index unchanged, original input claims
 reopenable, scratch preserved and the journal in `ImportPending`. Neither loose
 attempt is reported as completed. Packed task completion, source-actor coverage
 loss, bare-history reopening, editable export, issue reassembly and a fresh
-lettering edit now pass in the bounded native issue fixture. The final ten native
-regression cases remain in progress.
+lettering edit now pass in the bounded native issue fixture. All ten existing
+native regression cases also pass. The final bounded tool/source/evidence record
+is `...-v4/qualified-tools.json`; the earlier loose attempts remain incomplete.
