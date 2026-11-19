@@ -60,8 +60,23 @@ executable, preserving the lifecycle runtime pin and keeping all effect handles
 on that thread. The thread-create/panic errors preserve original work and return
 structured NeedsRecovery results. This fixes the default Windows main-stack
 constraint without changing qualified SDK source or production semantics.
-Requalification is pending for automatic comic completion/editable history and
-automatic handoff waves under the updated executable.
+Requalification passed under the updated executable: the full automatic comic
+completion/editable-history fixture in 403.89 seconds and automatic handoff waves
+in 377.26 seconds. All 47 default native tests and strict native Clippy pass.
+
+Qualified source pin: `18d3022`; all 1,827 archived files match. Runtime SHA256:
+`bdea01148a0776d56151c74692ffe5edaa2a8c5bf38113e831773668fb9578f0`.
+Fixture SHA256:
+`f4b257db2a348f6e9c80c734ad5c63dd131168ed042c63afb859d06d187cd655`.
+Evidence: `F:/src/tig-dev-temp/reel-workflow-native-dispatch-20261119-v2/qualified-tools.json`.
+The preserved comic controller is `F:/src/tig-dev-temp/.tmpgipRl8`, with source
+`F:/src/tig-dev-temp/.tmpAl8fF4`. Its native result is Retained. Bare-history reopen,
+owned editable export, rebuild and a fresh lettering edit pass; clean art remains
+unchanged while the reading derivative changes. The preserved runner controller
+is `F:/src/tig-dev-temp/.tmpRK5iXj`, with source `F:/src/tig-dev-temp/.tmpbIRXLM`.
+Its retained parent and two Waiting jobs, original tickets and scratch remain.
+These are bounded synthetic single-pool cases, not a complete comic issue runner,
+provider call, project cutover or scratch retirement qualification.
 
 Initial evidence, including the preserved failure and exact pins:
 `F:/src/tig-dev-temp/reel-workflow-native-dispatch-20261119-v1`.

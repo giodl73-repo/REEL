@@ -53,7 +53,13 @@ automatic admission of its dependent while preserving the other Waiting job.
 [Protected dispatch](handoff/2026-11-19-protected-dispatch.md) now connects
 optional recipe execution to owned input staging, protected manual batches and
 the existing retained comic worker. Its automatic handoff fixture passes across
-two waves; deterministic comic/history qualification remains in progress.
+two waves; deterministic comic staging/render/retention, replay and editable
+historical restoration now pass under the bounded-stack runtime.
+The isolated [HTTP provider/proxy transport](../crates/reel-workflow-http/README.md)
+performs bounded real POSTs with durable intent, received-prefix preservation and
+no automatic retries. Eight loopback/CLI tests and strict Clippy pass; it still
+needs native protected-job wiring, provider-specific request/response adapters,
+account/model/voice admission and actual service qualification.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
