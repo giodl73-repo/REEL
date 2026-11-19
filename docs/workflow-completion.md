@@ -34,6 +34,17 @@ Clippy pass. Full v2 workflow dispatch remains gated pending projection/admissio
 capacity/return/history budgets, composition and real-size process/recovery
 qualification. Large hashing alone establishes none of those gates.
 
+The [v2 workspace profile](handoff/2026-11-19-streamed-workspace-profile.md)
+now supports explicit bounded larger capacity with the normalized profile hash
+bound into its owned intent; v1 keeps its original bytes/512 MiB ceiling.
+A 115.07-second release fixture reserves 32 GiB, preserves a 3.6 GB in-place file,
+interrupts at a flushed control part and recovers in another process under the
+same ticket/reservation. Changed policy/reservation values refuse; no media copy
+part is created inside the workspace. All 75 standard native tests, 247 SDK pins
+and both strict Clippy feature modes pass. This closes a workspace component
+boundary, not native large-input/return custody, v2 film dispatch, consumer
+profile adoption/rollback or full S5 production.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial

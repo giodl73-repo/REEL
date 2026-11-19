@@ -73,11 +73,14 @@ must match the pinned tools. This SDK supports one store. Native bytes require
 qualified Windows scope; metadata checks also run on Linux. Only declared
 inputs may be read. Callers must retain `NativeInputs` throughout their operation.
 
-Bounds: 128 task inputs, 64 MiB declared input bytes, 256 scope paths, 512 metadata
+Bounds: 128 task inputs, 256 scope paths, 512 metadata
 documents / 16 MiB metadata, 1 MiB controls, 256 MiB per executable (stream-hashed)
 and 256 read opens. Smaller caller/provider allowances apply. Typed SDK snapshot
 errors are normalized; generic provider I/O remains conservative without parsing
 error strings. Public diagnostics omit private paths and submitted text.
+
+The comic binding separately enforces its 64 MiB input closure. This is not a
+universal film limit; film, native projection and provider budgets are distinct.
 
 `check-snapshot` binds actual committed metadata without reading payloads.
 `check-publication-native` additionally checks the comic closure using guarded
@@ -162,6 +165,13 @@ the workflow.
 native provider roots. It is scratch, not a new asset cache. The adapter reuses
 REEL's shared capacity ledger under the original admission coordination root;
 it never initializes a payload store or allocates another native actor.
+
+The explicit [v2 workspace profile](../../docs/handoff/2026-11-19-streamed-workspace-profile.md)
+allows up to 128 GiB with a matching authored capacity policy and a profile-bound
+owned intent. Its 32 GiB reservation/3.6 GB in-place-file fixture recovers in a
+separate process under the original ticket. V1 profiles are never upgraded on
+resume. Larger workspace capacity does not lift native input/return admission,
+comic/media contracts or the remaining v2 film workflow gates.
 
 Preparation reopens actual original claims, guards directory namespaces, reserves
 capacity, creates a fresh operation-named workspace and immutable intent, then
@@ -535,7 +545,7 @@ Every export call rechecks native proof, including an already completed export.
 Missing native bytes or history cannot fall back to the copied packet or its
 completion marker. Scratch must remain outside native pool/index/metadata/control
 roots and the source Git repository. Existing staging limits still apply: 256
-files, portable names/depth, 512 MiB maximum reservation with copy/evidence budget,
+files, portable names/depth, a versioned reservation/copy/evidence budget,
 four immutable part attempts and 2,048 workspace entries. Comic renderer limits
 remain smaller where applicable; oversized exports refuse instead of silently
 splitting work. The complete export packet and all controls remain private.

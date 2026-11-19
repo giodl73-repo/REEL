@@ -33,7 +33,33 @@ changed reservation/policy values, preserve the large file without a copy part,
 complete materialization and hold mutation guards. Both source and destination
 scratch/capacity remain preserved. This is a filesystem/capacity component test;
 it creates no native job, publishes no asset and grants no film/task completion.
-Actual source/tool/result pins follow execution.
+Actual source/tool/result pins are recorded below.
+
+## Qualification result
+
+The fixture passed in 115.07 seconds, including a 63.22-second child recovery
+process. It reused the original 32 GiB reservation/ticket in preserved root
+`.tmpKKxLxc`, refused changed reservation bytes and policy, verified the complete
+3,600,000,001-byte producer-owned file and completed materialization without
+creating a copy part for that file. Mutation was refused while file guards were
+live. The original ticket stayed byte-identical. The source's earlier 4 GiB
+reservation and this workspace's 32 GiB reservation/scratch remain preserved.
+No native job, render, asset publication, retirement or project adoption occurred.
+
+Source: `4b89f6bb72c4df163e1119bdb80e59b662b6e0d4`; all 1,936 tracked files
+are archived and individually hash/length verified. Frozen release test tool:
+SHA256 `efcfb3f64e87aaa3e152942f0e7fdb2d58e621de2801d572b38e48285fa0ea15`,
+15,368,192 bytes, with film support. All 75 standard native tests, 247 SDK pins
+and strict all-target Clippy with/without film pass.
+
+Private evidence certificate:
+`F:/src/tig-dev-temp/reel-streamed-workspace-20261119-v1/qualified-tools.json`,
+SHA256 `e12550a48c00b03e135430e0a1d7dee9a99992b402d7b90dc3ad1f63f6ff7cc0`.
+It binds the frozen source/tool, parent/child logs, terminal timing/outcome,
+original recovery ticket/pin, immutable owned intent and completion marker.
+Session 1537 terminated successfully; do not create a fresh qualification to
+resume or inspect this original workspace. Its original recovery entry point
+requires the preserved root and externally pinned original ticket.
 
 The v2 native film workflow remains gated. Large snapshot/projection admission,
 candidate/retained return budgets, composition, process execution/interruption

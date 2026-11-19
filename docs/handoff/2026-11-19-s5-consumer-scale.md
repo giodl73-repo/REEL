@@ -82,7 +82,10 @@ producer/recovery APIs. A reserved 3,600,000,001-byte synthetic-file hash check
 passes alongside actual v1 request/history compatibility. This qualifies the
 hash primitive beyond the legacy 512 MiB bound, not the 600-resource native
 closure, complete v2 rendering or owned production adoption. The native workflow
-gate and remaining admission/capacity/return/history limits remain in force.
+gate and remaining admission/return/history limits remain in force. The
+[workspace profile port](2026-11-19-streamed-workspace-profile.md) independently
+qualifies a 32 GiB reservation and cross-process recovery of an owned 3.6 GB file.
+This does not admit the E7 native closure or adopt S5.
 
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
