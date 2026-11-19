@@ -656,9 +656,58 @@ registration, external upload or selection. Named input bytes are bounded to
 controls remain within the existing 1 MiB control limit.
 
 This is live borrowed custody. It is **not durable child admission**, waiting
-protection, task completion or permission to release parent history. The current
-Git-only admission path explicitly refuses tasks with upstream bindings until
-the composite source archive and child-owned claims are connected. No ready
-export or worker command silently bypasses that boundary. Comic assembly must
+protection, task completion or permission to release parent history. Git-only
+source profiles refuse upstream-bound tasks; the explicit composite path below
+creates child-owned protection. No worker command silently bypasses source
+admission. Comic assembly must
 still use its master/part plan for reading order; input-map ordering is not page
 ordering.
+
+## Composite child sources and durable admission
+
+```text
+reel-workflow-native preview-admission PACKET SOURCE ADMISSION ATTEMPT
+reel-workflow-native accept-upstream PACKET SOURCE ADMISSION ATTEMPT PARENTS NEW_RECEIPT --apply
+reel-workflow-native recover-admission PACKET SOURCE ADMISSION ATTEMPT NEW_RECEIPT --apply
+```
+
+`reel.workflow-native-composite-snapshot.v1` adds a frozen upstream origin set to
+the snapshot profile. Its separately pinned `reel.workflow-native-composite-bindings.v1`
+declaration includes the Git scopes and portable parent packets/results/bindings.
+The source archive stores exact Git metadata, binding and parent evidence objects,
+and every declared input object. Git-only and upstream inputs are disjoint by
+logical identity. Both mixed sources and upstream-only sources require an exact
+declared Git commit; the latter use empty record/definition/binding scopes.
+
+Frozen metadata alone cannot grant first acceptance or unguarded composite byte
+reads. `upstream::Admission` verifies live retained parents, exact origin metadata
+and the shared store/controller/metadata/coordinator binding. Parent owner fences
+and actual tool pins remain live until the child accepts its own bounded closure.
+An explicitly enrolled separate job actor is required. Existing actor and atomic
+claim/close limits apply; this path allocates no actor and splits no transition.
+CLI parent controls use `reel.workflow-native-parents.v1` with explicit packet,
+result, handoff profile and retained acknowledgement per parent.
+Git input byte availability remains a subsequent protected-read/staging check;
+admission protects declared resources and does not certify all mixed payloads
+as materialized or renderable.
+
+After acceptance, `NativeInputs::open_admitted` or `from_claims` verifies original
+child work, activation and coverage. Staging exports use that guard. Child input
+reads and stage resumption use the frozen archive plus the child's claims, without
+reopening parent profiles or requiring parent coverage to remain unchanged.
+Only explicitly declared bytes and origin evidence become child resources;
+undeclared parent source payloads are not inherited. Parent history release and
+payload deletion remain separately authorized operations.
+
+If receipt recording is lost after completed acceptance, `recover-admission`
+reconstructs and verifies the original completed work/activation under a live
+child fence and writes a new exclusive private receipt. It never creates an
+acceptance, changes attempt identity or substitutes latest inputs. Pending,
+uncertain, idle or reused states refuse for explicit original-work recovery;
+they do not release claims. Partial receipt files remain preserved.
+
+The existing manual result/retention path can carry composite intelligence tasks.
+Composite comic workers deliberately return `Unsupported` until tool replay and
+retained input verification use child-owned access. Full issue assembly, guarded
+slot closure and scratch/capacity retirement remain separate work. Input admission
+or technical completion does not select an asset or grant creative/release approval.

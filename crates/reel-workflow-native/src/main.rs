@@ -63,6 +63,67 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            packet,
+            source,
+            profile,
+            attempt,
+            parents,
+            output,
+            apply,
+        ] if command == "accept-upstream" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let parents: reel_workflow_native::upstream::Parents =
+                read_control(Path::new(parents))?;
+            let admission = reel_workflow_native::upstream::Admission::prepare(
+                &packet,
+                &source,
+                &profile,
+                attempt,
+                parents.borrowed()?,
+            )?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            let receipt = admission.accept()?;
+            let _claims = reel_workflow_native::admission::Prepared::open(
+                &packet, &source, &profile, attempt,
+            )?
+            .reopen(&receipt)?;
+            file.write_all(&receipt.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "composite-write-receipt-recover-original".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-composite-input-admission","durable_input_claims_verified":true,"parent_retention_verified":true,"task_completed":false,"selected":false,"input_claims_released":false}),
+            )
+        }
+        [command, packet, source, profile, attempt, output, apply]
+            if command == "recover-admission" && apply == "--apply" =>
+        {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let prepared = reel_workflow_native::admission::Prepared::open(
+                &packet, &source, &profile, attempt,
+            )?;
+            let receipt = prepared.recover()?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&receipt.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "admission-recovered-receipt-write".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-original-admission-recovery","durable_input_claims_verified":true,"new_admission":false,"task_completed":false,"selected":false,"input_claims_released":false}),
+            )
+        }
         [command, plan, bindings, ticket, pin, apply]
             if command == "materialize-worker" && apply == "--apply" =>
         {
@@ -574,6 +635,8 @@ fn main() -> ExitCode {
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
             "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply\n",
+            "reel-workflow-native accept-upstream PACKET SOURCE ADMISSION ATTEMPT PARENTS NEW_RECEIPT --apply\n",
+            "reel-workflow-native recover-admission PACKET SOURCE ADMISSION ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native run-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply\n",
             "reel-workflow-native materialize-worker PLAN RUN_BINDINGS WORKER_TICKET TICKET_SHA256 --apply\n",
             "reel-workflow-native export-ready PLAN RUN_BINDINGS TASK_IDS_JSON NEW_PRIVATE_BATCH --apply\n",

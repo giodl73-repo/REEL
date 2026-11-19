@@ -53,14 +53,21 @@ pub struct SnapshotProfile {
     pub bindings: BTreeMap<String, Binding>,
     /// None selects the record's selected payload; Some selects an exact slot.
     pub input_streams: BTreeMap<String, Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<upstream::Frozen>,
 }
 impl SnapshotProfile {
     /// Portable authored declaration; machine repository/tool locators are not
     /// authored identity. Pin these exact canonical bytes in task.native_inputs.
     pub fn declaration_bytes(&self) -> Result<Vec<u8>> {
-        let value = serde_json::json!({"schema":"reel.workflow-native-bindings.v1",
+        let mut value = serde_json::json!({"schema":"reel.workflow-native-bindings.v1",
             "commit":self.commit,"records":self.records,"definitions":self.definitions,
             "bindings":self.bindings,"input_streams":self.input_streams});
+        if let Some(upstream) = &self.upstream {
+            value["schema"] = "reel.workflow-native-composite-bindings.v1".into();
+            value["upstream"] = serde_json::to_value(upstream)
+                .map_err(|_| error(ErrorKind::Invalid, "composite-declaration-json"))?;
+        }
         let bytes = tig_core::identity::canonical_json(&value)
             .map_err(|_| error(ErrorKind::Invalid, "native-binding-canonical-json"))?;
         if bytes.len() > reel_workflow::MAX_CONTROL_BYTES {
@@ -186,15 +193,17 @@ pub struct SnapshotInputs {
 impl SnapshotInputs {
     pub fn open(packet: &Packet, profile: &SnapshotProfile) -> Result<Self> {
         reel_workflow::check_packet(packet)?;
-        if packet.task.upstream_inputs.is_some() {
-            return Err(error(
-                ErrorKind::Unsupported,
-                "native-upstream-child-admission-not-connected",
-            ));
-        }
-        if profile.schema != "reel.workflow-native-snapshot.v1"
-            || profile.commit != packet.source_commit
-        {
+        let origins = match (&packet.task.upstream_inputs, &profile.upstream) {
+            (None, None) => BTreeMap::new(),
+            (Some(_), Some(frozen)) => frozen.bound(packet)?,
+            _ => return Err(error(ErrorKind::Conflict, "composite-origin-declaration")),
+        };
+        let schema = if profile.upstream.is_some() {
+            "reel.workflow-native-composite-snapshot.v1"
+        } else {
+            "reel.workflow-native-snapshot.v1"
+        };
+        if profile.schema != schema || profile.commit != packet.source_commit {
             return Err(error(ErrorKind::Stale, "native-task-commit"));
         }
         let commit = GitId::parse(&profile.commit).map_err(git_error)?;
@@ -216,9 +225,10 @@ impl SnapshotInputs {
             .task
             .inputs
             .iter()
+            .filter(|a| !origins.contains_key(&a.logical_id))
             .map(|a| a.logical_id.clone())
             .collect();
-        if ids.is_empty()
+        if (ids.is_empty() && profile.upstream.is_none())
             || profile.bindings.keys().cloned().collect::<BTreeSet<_>>() != ids
             || profile
                 .input_streams
@@ -246,10 +256,6 @@ impl SnapshotInputs {
                     .chain(b.streams.values().map(|p| p.as_str().to_owned()))
             })
             .collect();
-        let catalogue = Catalogue {
-            scope: scope(paths.into_iter().collect())?,
-            bindings: profile.bindings.clone(),
-        };
         let guard = hold_tool(&profile.git)?;
         let repository = Repository::new(
             profile.git.path.clone(),
@@ -258,6 +264,42 @@ impl SnapshotInputs {
         )
         .map_err(git_error)?;
         let snapshot = repository.commit(commit).map_err(git_error)?;
+        if ids.is_empty() {
+            if !profile.records.is_empty() || !profile.definitions.is_empty() {
+                return Err(error(ErrorKind::Conflict, "composite-empty-git-scope"));
+            }
+            let mut metadata = tig_core::tree::MemoryNodes::default();
+            let raw = serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-empty-git-inputs.v1","commit":profile.commit})).map_err(|_|error(ErrorKind::Invalid,"composite-empty-git-json"))?;
+            use tig_core::tree::NodeStore;
+            let git_archive = metadata
+                .put(&raw)
+                .map_err(|_| error(ErrorKind::Integrity, "composite-empty-git-archive"))?;
+            let (archive, objects, declared_objects) = profile
+                .upstream
+                .as_ref()
+                .ok_or_else(|| error(ErrorKind::Missing, "composite-origins"))?
+                .archive(
+                    packet,
+                    &git_archive,
+                    &mut metadata,
+                    BTreeMap::new(),
+                    BTreeSet::new(),
+                )?;
+            return Ok(Self {
+                packet: packet.clone(),
+                objects,
+                checkpoint: archive.sha256.as_str().into(),
+                git: profile.git.clone(),
+                _git_guard: guard,
+                archive,
+                metadata,
+                declared_objects,
+            });
+        }
+        let catalogue = Catalogue {
+            scope: scope(paths.into_iter().collect())?,
+            bindings: profile.bindings.clone(),
+        };
         let bound = repository
             .native_annex(
                 &snapshot,
@@ -273,6 +315,9 @@ impl SnapshotInputs {
             .map_err(git_error)?;
         let mut objects = BTreeMap::new();
         for asset in &packet.task.inputs {
+            if origins.contains_key(&asset.logical_id) {
+                continue;
+            }
             let resolved = bound
                 .assets
                 .resolve_id(&asset.logical_id)
@@ -292,20 +337,31 @@ impl SnapshotInputs {
             .assets
             .archive_metadata(&mut metadata, tig_core::tree::TreeLimits::default())
             .map_err(git_error)?;
+        let declared_objects = bound
+            .payloads
+            .bindings()
+            .iter()
+            .map(|b| b.object.clone())
+            .collect();
+        let (archive, objects, declared_objects) = if let Some(frozen) = &profile.upstream {
+            frozen.archive(packet, &archive, &mut metadata, objects, declared_objects)?
+        } else {
+            (archive, objects, declared_objects)
+        };
+        let checkpoint = if profile.upstream.is_some() {
+            archive.sha256.as_str().into()
+        } else {
+            bound.assets.checkpoint().as_str().into()
+        };
         Ok(Self {
             packet: packet.clone(),
             objects,
-            checkpoint: bound.assets.checkpoint().as_str().into(),
+            checkpoint,
             git: profile.git.clone(),
             _git_guard: guard,
             archive,
             metadata,
-            declared_objects: bound
-                .payloads
-                .bindings()
-                .iter()
-                .map(|b| b.object.clone())
-                .collect(),
+            declared_objects,
         })
     }
     pub fn input_count(&self) -> usize {
@@ -325,9 +381,41 @@ pub struct NativeInputs {
     _annex_guard: File,
     captured: BTreeMap<Object, Vec<u8>>,
     reads: usize,
+    _claims: Option<Box<admission::ClaimsGuard>>,
 }
 impl NativeInputs {
     pub fn open(packet: &Packet, profile: &NativeProfile) -> Result<Self> {
+        if packet.task.upstream_inputs.is_some() {
+            return Err(error(
+                ErrorKind::Denied,
+                "composite-inputs-require-child-claims",
+            ));
+        }
+        Self::open_inner(packet, profile, None)
+    }
+    pub fn from_claims(
+        packet: &Packet,
+        profile: &NativeProfile,
+        claims: admission::ClaimsGuard,
+    ) -> Result<Self> {
+        claims.check_source(packet, profile)?;
+        Self::open_inner(packet, profile, Some(Box::new(claims)))
+    }
+    pub fn open_admitted(
+        packet: &Packet,
+        source: &NativeProfile,
+        profile: &admission::Profile,
+        receipt: &admission::Receipt,
+    ) -> Result<Self> {
+        let claims = admission::Prepared::open(packet, source, profile, &receipt.attempt_id)?
+            .reopen(receipt)?;
+        Self::from_claims(packet, source, claims)
+    }
+    fn open_inner(
+        packet: &Packet,
+        profile: &NativeProfile,
+        claims: Option<Box<admission::ClaimsGuard>>,
+    ) -> Result<Self> {
         if !cfg!(windows) {
             return Err(error(
                 ErrorKind::Unsupported,
@@ -348,6 +436,7 @@ impl NativeInputs {
             _annex_guard: guard,
             captured: BTreeMap::new(),
             reads: 0,
+            _claims: claims,
         })
     }
     pub fn snapshot(&self) -> &SnapshotInputs {

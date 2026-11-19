@@ -27,6 +27,12 @@ impl Ticket {
 }
 fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> {
     let packet = &selected.task.ticket.packet;
+    if packet.task.upstream_inputs.is_some() {
+        return Err(error(
+            ErrorKind::Unsupported,
+            "worker-composite-tool-replay-not-connected",
+        ));
+    }
     let tool = packet
         .task
         .tool

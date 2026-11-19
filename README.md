@@ -35,8 +35,9 @@ The [completion ledger](docs/workflow-completion.md) tracks
 remaining workflow requirements beyond this bounded integration.
 An [explicit retained-input read seam](docs/handoff/2026-11-18-retained-dependency-inputs.md)
 binds child input identities to exact parent results and verifies native retained
-custody before byte reads. Durable child admission and issue assembly wiring
-remain separate work.
+custody before byte reads. [Composite child admission](docs/handoff/2026-11-18-composite-child-inputs.md)
+adds child-owned input protection, bare-history readback and resumable staging.
+Composite tool replay and issue assembly wiring remain separate work.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

@@ -100,6 +100,7 @@ impl Fixture {
         let git = git_path();
         let raw = fs::read(&git).unwrap();
         let profile = SnapshotProfile {
+            upstream: None,
             schema: "reel.workflow-native-snapshot.v1".into(),
             git: Tool {
                 path: git,
@@ -2348,7 +2349,7 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
             .err()
             .unwrap()
             .kind,
-        ErrorKind::Unsupported
+        ErrorKind::Conflict
     );
     let parents = retained
         .iter()
@@ -2386,6 +2387,360 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
         ErrorKind::Budget
     );
     drop(reader);
+    let mut children = Vec::new();
+    let parent_controls = case.temp.path().join("native-parents.json");
+    let controls: BTreeMap<_, _> = retained
+        .iter()
+        .map(|(packet, profile, result, ack)| {
+            (
+                packet.task.id.clone(),
+                json!({"packet":packet,"profile":profile,"result":result,"acknowledgement":ack}),
+            )
+        })
+        .collect();
+    fs::write(
+        &parent_controls,
+        serde_json::to_vec(&json!({"schema":"reel.workflow-native-parents.v1","parents":controls}))
+            .unwrap(),
+    )
+    .unwrap();
+    for mixed in [false, true] {
+        let parents: BTreeMap<_, _> = retained
+            .iter()
+            .map(|(packet, profile, result, ack)| {
+                (
+                    packet.task.id.clone(),
+                    reel_workflow_native::upstream::Parent {
+                        packet,
+                        result,
+                        source: &profile.source,
+                        admission: &profile.admission,
+                        receipt: &profile.binding.admission,
+                        acknowledgement: ack,
+                    },
+                )
+            })
+            .collect();
+        let frozen = reel_workflow_native::upstream::Frozen::capture(&input_bindings, &parents);
+        let mut source: NativeProfile =
+            serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap();
+        source.snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
+        source.snapshot.upstream = Some(frozen);
+        if !mixed {
+            source.snapshot.records.clear();
+            source.snapshot.definitions.clear();
+            source.snapshot.bindings.clear();
+            source.snapshot.input_streams.clear();
+        }
+        let mut task = child.task.clone();
+        task.id = if mixed {
+            "consumer-mixed"
+        } else {
+            "consumer-only"
+        }
+        .into();
+        if mixed {
+            task.inputs.extend(fixture.packet.task.inputs.clone());
+        }
+        let declaration = source.snapshot.declaration_bytes().unwrap();
+        task.native_inputs = Some(Artifact {
+            logical_id: "workflow/composite-source".into(),
+            sha256: digest(&declaration),
+            bytes: declaration.len() as u64,
+            media_type: "application/json".into(),
+        });
+        let mut configured = plan.clone();
+        configured.tasks.push(task.clone());
+        let packet = make_packet(&configured, &task.id, child.dependencies.clone()).unwrap();
+        let mut admission = case.profile.clone();
+        admission.scope.actor =
+            tig_store::Key::parse(if mixed { "slot4" } else { "slot3" }).unwrap();
+        admission.scope.operation = tig_store::Key::parse(if mixed {
+            "workflow-child-mixed"
+        } else {
+            "workflow-child-only"
+        })
+        .unwrap();
+        assert_eq!(
+            Prepared::open(&packet, &source, &admission, "child-1")
+                .unwrap()
+                .accept()
+                .unwrap_err()
+                .kind,
+            ErrorKind::Denied
+        );
+        assert_eq!(
+            reel_workflow_native::NativeInputs::open(&packet, &source)
+                .err()
+                .unwrap()
+                .kind,
+            ErrorKind::Denied
+        );
+        assert_eq!(
+            Prepared::open(&packet, &source, &admission, "child-1")
+                .unwrap()
+                .recover()
+                .unwrap_err()
+                .kind,
+            ErrorKind::Missing
+        );
+        let receipt = if mixed {
+            let packet_path = case.temp.path().join("accept-child-packet.json");
+            let source_path = case.temp.path().join("accept-child-source.json");
+            let profile_path = case.temp.path().join("accept-child-profile.json");
+            let receipt_path = case.temp.path().join("accept-child-receipt.json");
+            fs::write(&packet_path, serde_json::to_vec(&packet).unwrap()).unwrap();
+            fs::write(&source_path, serde_json::to_vec(&source).unwrap()).unwrap();
+            fs::write(&profile_path, serde_json::to_vec(&admission).unwrap()).unwrap();
+            let accepted = Command::new(&executable)
+                .arg("accept-upstream")
+                .arg(&packet_path)
+                .arg(&source_path)
+                .arg(&profile_path)
+                .arg("child-1")
+                .arg(&parent_controls)
+                .arg(&receipt_path)
+                .arg("--apply")
+                .output()
+                .unwrap();
+            assert!(
+                accepted.status.success(),
+                "{}",
+                String::from_utf8_lossy(&accepted.stdout)
+            );
+            serde_json::from_slice(&fs::read(receipt_path).unwrap()).unwrap()
+        } else {
+            let admitted = reel_workflow_native::upstream::Admission::prepare(
+                &packet, &source, &admission, "child-1", parents,
+            )
+            .unwrap();
+            assert!(admitted.preview().unwrap().declared_objects < 128);
+            admitted.accept().unwrap()
+        };
+        Prepared::open(&packet, &source, &admission, "child-1")
+            .unwrap()
+            .reopen(&receipt)
+            .unwrap();
+        if !mixed {
+            let mut profile: reel_workflow_native::handoff::Profile =
+                serde_json::from_slice(&serde_json::to_vec(&retained[0].1).unwrap()).unwrap();
+            profile.source = serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap();
+            profile.admission = admission.clone();
+            profile.binding.admission = receipt.clone();
+            let packet_path = case.temp.path().join("child-handoff-packet.json");
+            let profile_path = case.temp.path().join("child-handoff-profile.json");
+            let journal = case.temp.path().join("child-handoff");
+            let result_path = case.temp.path().join("child-handoff-result.json");
+            let returns_path = case.temp.path().join("child-handoff-returns.json");
+            let (mut result, returns) =
+                response_fixture(&packet, &case.temp.path().join("child-handoff-outputs"));
+            result.attempt_id = receipt.attempt_id.clone();
+            for (path, raw) in [
+                (&packet_path, serde_json::to_vec(&packet).unwrap()),
+                (&profile_path, serde_json::to_vec(&profile).unwrap()),
+                (&result_path, serde_json::to_vec(&result).unwrap()),
+                (&returns_path, serde_json::to_vec(&returns).unwrap()),
+            ] {
+                fs::write(path, raw).unwrap();
+            }
+            let created = Command::new(&executable)
+                .arg("create-handoff")
+                .arg(&packet_path)
+                .arg(&profile_path)
+                .arg(&journal)
+                .arg("--apply")
+                .output()
+                .unwrap();
+            assert!(
+                created.status.success(),
+                "{}",
+                String::from_utf8_lossy(&created.stdout)
+            );
+            let completed = Command::new(&executable)
+                .arg("import-handoff")
+                .arg(&journal)
+                .arg(&profile_path)
+                .arg(&result_path)
+                .arg(&returns_path)
+                .arg("--apply")
+                .output()
+                .unwrap();
+            assert!(
+                completed.status.success(),
+                "{}",
+                String::from_utf8_lossy(&completed.stdout)
+            );
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&completed.stdout).unwrap()["task_completed"],
+                true
+            );
+            fs::write(
+                case.temp.path().join("child-handoff-completion.json"),
+                completed.stdout,
+            )
+            .unwrap();
+        }
+        children.push((packet, source, admission, receipt));
+    }
+    // Test-only loss of parent coverage. This deliberately bypasses production
+    // close semantics; no payload is deleted and child assignments stay intact.
+    {
+        use tig_core::tree::{Tree, TreeLimits};
+        use tig_store::{
+            metadata::MetadataStore,
+            source_claims::{
+                Selection,
+                protection::{self, Index, work},
+            },
+        };
+        let last = &children.last().unwrap().3;
+        let mut index = Index::open(&case.profile.index_root, &last.index_checkpoint).unwrap();
+        let mut nodes =
+            MetadataStore::open(&case.profile.metadata_root, &last.metadata_checkpoint).unwrap();
+        for actor in ["retained", "slot", "slot2"] {
+            let actor = tig_store::Key::parse(actor).unwrap();
+            let current = index.actor(&mut nodes, &actor).unwrap();
+            let entries = Tree::from_root(current.selection.root)
+                .entries(&mut nodes, TreeLimits::default())
+                .unwrap()
+                .0;
+            let update = protection::Update {
+                operation: tig_store::Key::parse(&format!(
+                    "fixture-drop-parent-{}",
+                    actor.as_str()
+                ))
+                .unwrap(),
+                actor: actor.clone(),
+                owner: case.profile.scope.owner.clone(),
+                expected_revision: current.revision,
+                selection: Selection {
+                    root: Tree::empty(&mut nodes).unwrap().root().clone(),
+                    context: current.selection.context,
+                },
+                changes: entries.keys().map(|path| (path.clone(), None)).collect(),
+                ready: true,
+            };
+            let work = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+            work::execute(&mut index, &work, &mut nodes).unwrap();
+        }
+    }
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic response")),
+        vec![
+            tig_store::Key::parse("slot3").unwrap(),
+            tig_store::Key::parse("slot4").unwrap()
+        ]
+    );
+    let bare = case.temp.path().join("child-history.git");
+    git(
+        fixture.temp.path(),
+        &[
+            "clone",
+            "--bare",
+            "--no-hardlinks",
+            fixture.temp.path().to_str().unwrap(),
+            bare.to_str().unwrap(),
+        ],
+    );
+    let relocated = case.temp.path().join("original-source-unavailable");
+    assert!(
+        relocated.parent().unwrap().canonicalize().unwrap()
+            == case.temp.path().canonicalize().unwrap()
+    );
+    fs::rename(fixture.temp.path(), &relocated).unwrap();
+    drop(retained);
+    for (index, (packet, mut source, admission, receipt)) in children.into_iter().enumerate() {
+        source.snapshot.repository = bare.clone();
+        let source: NativeProfile =
+            serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap();
+        let mut owned = reel_workflow_native::NativeInputs::open_admitted(
+            &packet, &source, &admission, &receipt,
+        )
+        .unwrap();
+        for asset in &packet.task.inputs {
+            let bytes = owned.read(asset, asset.bytes).unwrap();
+            assert_eq!(digest(&bytes), asset.sha256);
+        }
+        drop(owned);
+        let parent = case.temp.path().join(format!("child-scratch-{index}"));
+        fs::create_dir(&parent).unwrap();
+        let ticket = staging::prepare(
+            &packet,
+            &source,
+            &admission,
+            &receipt,
+            &staging::Profile {
+                schema: "reel.workflow-staging.v1".into(),
+                parent,
+                maximum_bytes: 8 * 1024 * 1024,
+                capacity_policy: reel_assets::admission::Policy {
+                    minimum_free_bytes: 65536,
+                    minimum_free_basis_points: 0,
+                    max_object_bytes: 512 * 1024 * 1024,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+        let raw = ticket.canonical_bytes().unwrap();
+        staging::export(&packet, &source, &admission, &raw, &digest(&raw)).unwrap();
+        staging::export(&packet, &source, &admission, &raw, &digest(&raw)).unwrap();
+        fs::write(
+            case.temp.path().join(format!("child-packet-{index}.json")),
+            serde_json::to_vec(&packet).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            case.temp.path().join(format!("child-source-{index}.json")),
+            serde_json::to_vec(&source).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            case.temp
+                .path()
+                .join(format!("child-admission-{index}.json")),
+            serde_json::to_vec(&admission).unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            case.temp.path().join(format!("child-receipt-{index}.json")),
+            receipt.canonical_bytes().unwrap(),
+        )
+        .unwrap();
+        fs::write(
+            case.temp.path().join(format!("child-ticket-{index}.json")),
+            raw,
+        )
+        .unwrap();
+        let recovered_path = case
+            .temp
+            .path()
+            .join(format!("child-recovered-{index}.json"));
+        let recovered = Command::new(&executable)
+            .arg("recover-admission")
+            .arg(case.temp.path().join(format!("child-packet-{index}.json")))
+            .arg(case.temp.path().join(format!("child-source-{index}.json")))
+            .arg(
+                case.temp
+                    .path()
+                    .join(format!("child-admission-{index}.json")),
+            )
+            .arg("child-1")
+            .arg(&recovered_path)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(
+            recovered.status.success(),
+            "{}",
+            String::from_utf8_lossy(&recovered.stdout)
+        );
+        let recovered: reel_workflow_native::admission::Receipt =
+            serde_json::from_slice(&fs::read(recovered_path).unwrap()).unwrap();
+        assert_eq!(recovered.work, receipt.work);
+        assert_eq!(recovered.activation, receipt.activation);
+        assert_eq!(recovered.source_archive, receipt.source_archive);
+    }
     if let Some(directory) = std::env::var_os("REEL_GRAPH_BATCH_EVIDENCE_DIRECTORY") {
         use std::io::Write;
         let directory = PathBuf::from(directory);
@@ -2407,6 +2762,130 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
         let _ = case.temp.keep();
         let _ = fixture.temp.keep();
     }
+}
+
+#[cfg(windows)]
+#[test]
+fn frozen_composite_metadata_cannot_grant_acceptance_recovery_or_byte_access() {
+    use reel_workflow::{
+        DependencyResult,
+        upstream::{Bindings, Reference, Selector},
+    };
+    use reel_workflow_native::{
+        NativeProfile,
+        admission::Prepared,
+        upstream::{Evidence, Frozen},
+    };
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let (result, _returns) =
+        response_fixture(&fixture.packet, &case.temp.path().join("unretained-result"));
+    let asset = result.artifacts["note"].clone();
+    let bindings = Bindings {
+        schema: "reel.workflow-upstream-inputs.v1".into(),
+        inputs: BTreeMap::from([(
+            asset.logical_id.clone(),
+            Reference {
+                task_id: fixture.packet.task.id.clone(),
+                artifact: Selector::Output {
+                    name: "note".into(),
+                },
+            },
+        )]),
+    };
+    let raw = bindings.canonical_bytes().unwrap();
+    let frozen = Frozen {
+        schema: "reel.workflow-frozen-origins.v1".into(),
+        bindings,
+        parents: BTreeMap::from([(
+            fixture.packet.task.id.clone(),
+            Evidence {
+                packet: fixture.packet.clone(),
+                result: result.clone(),
+            },
+        )]),
+    };
+    let mut source: NativeProfile =
+        serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap();
+    source.snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
+    source.snapshot.upstream = Some(frozen);
+    source.snapshot.bindings.clear();
+    source.snapshot.input_streams.clear();
+    source.snapshot.records.clear();
+    source.snapshot.definitions.clear();
+    let mut task = fixture.packet.task.clone();
+    task.id = "unadmitted-child".into();
+    task.inputs = vec![asset];
+    task.depends_on = vec![fixture.packet.task.id.clone()];
+    task.upstream_inputs = Some(Artifact {
+        logical_id: "workflow/upstream".into(),
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+        media_type: "application/json".into(),
+    });
+    let raw = source.snapshot.declaration_bytes().unwrap();
+    task.native_inputs = Some(Artifact {
+        logical_id: "workflow/source".into(),
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+        media_type: "application/json".into(),
+    });
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: fixture.packet.project.clone(),
+        source_commit: fixture.packet.source_commit.clone(),
+        tasks: vec![fixture.packet.task.clone(), task],
+    };
+    let child = make_packet(
+        &plan,
+        "unadmitted-child",
+        BTreeMap::from([(
+            fixture.packet.task.id.clone(),
+            DependencyResult {
+                result_sha256: canonical_digest(&result).unwrap(),
+                artifacts: result.artifacts.clone(),
+            },
+        )]),
+    )
+    .unwrap();
+    assert_eq!(
+        SnapshotInputs::open(&child, &source.snapshot)
+            .unwrap()
+            .input_count(),
+        1
+    );
+    let prepared = Prepared::open(&child, &source, &case.profile, "attempt-child").unwrap();
+    assert!(prepared.preview().unwrap().declared_objects < 128);
+    assert_eq!(prepared.accept().unwrap_err().kind, ErrorKind::Denied);
+    assert_eq!(prepared.recover().unwrap_err().kind, ErrorKind::Missing);
+    assert_eq!(
+        reel_workflow_native::NativeInputs::open(&child, &source)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Denied
+    );
+    assert!(
+        case.protected(&Object::from_bytes(b"synthetic response"))
+            .is_empty()
+    );
+    source
+        .snapshot
+        .upstream
+        .as_mut()
+        .unwrap()
+        .parents
+        .get_mut(&fixture.packet.task.id)
+        .unwrap()
+        .result
+        .attempt_id = "changed-attempt".into();
+    assert_eq!(
+        SnapshotInputs::open(&child, &source.snapshot)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Stale
+    );
 }
 
 #[cfg(windows)]
@@ -3155,11 +3634,17 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
             reel_workflow::graph::Status::NeedsRecovery
         );
         let completed = invoke("run-worker", &pin);
-        assert!(
-            completed.status.success(),
-            "{}",
-            String::from_utf8_lossy(&completed.stdout)
-        );
+        if !completed.status.success() {
+            eprintln!("Worker recovery fixture: {}", case.temp.path().display());
+            let status = completed.status;
+            let stdout = String::from_utf8_lossy(&completed.stdout).into_owned();
+            let stderr = String::from_utf8_lossy(&completed.stderr).into_owned();
+            let _ = case.temp.keep();
+            let _ = fixture.temp.keep();
+            let _ = raw_source.keep();
+            let _ = output_owner.keep();
+            panic!("worker status {status}; stdout: {stdout}; stderr: {stderr}");
+        }
         assert!(invoke("run-worker", &pin).status.success());
         let name = result
             .artifacts
@@ -3739,6 +4224,8 @@ impl AdmissionCase {
                 actors: ["main", "retained", "slot"]
                     .into_iter()
                     .chain(second_slot.then_some("slot2"))
+                    .chain(second_slot.then_some("slot3"))
+                    .chain(second_slot.then_some("slot4"))
                     .map(|id| Actor {
                         id: key(id),
                         owner: key("owner"),
@@ -3777,21 +4264,23 @@ impl AdmissionCase {
         ]
         .into();
         if second_slot {
-            let raw = tig_core::identity::canonical_json(&json!([
-                "reel.job-actor-idle.experimental-1",
-                index.identity(),
-                "slot2",
-                "owner",
-                source_stores
-            ]))
-            .unwrap();
-            initial.insert(
-                "slot2".into(),
-                Selection {
-                    root: Tree::empty(&mut nodes).unwrap().root().clone(),
-                    context: Digest::blob(&raw),
-                },
-            );
+            for slot in ["slot2", "slot3", "slot4"] {
+                let raw = tig_core::identity::canonical_json(&json!([
+                    "reel.job-actor-idle.experimental-1",
+                    index.identity(),
+                    slot,
+                    "owner",
+                    source_stores
+                ]))
+                .unwrap();
+                initial.insert(
+                    slot.into(),
+                    Selection {
+                        root: Tree::empty(&mut nodes).unwrap().root().clone(),
+                        context: Digest::blob(&raw),
+                    },
+                );
+            }
         }
         index.bootstrap(initial, &mut nodes).unwrap();
         let mut journal = SourceJournal::create_coordinated(

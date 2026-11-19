@@ -767,7 +767,7 @@ pub fn export(
     if ticket.schema != "reel.workflow-staging-ticket.v1" {
         return Err(error(ErrorKind::Invalid, "staging-ticket-schema"));
     }
-    let _claims =
+    let claims =
         admission::Prepared::open(packet, source, admission, &ticket.admission.attempt_id)?
             .reopen(&ticket.admission)?;
     check_parent(&ticket.profile.parent, source, admission)?;
@@ -789,7 +789,7 @@ pub fn export(
         &plan,
         &completion(&plan, expected_sha256)?,
     )?;
-    let mut reader = NativeInputs::open(packet, source)?;
+    let mut reader = NativeInputs::from_claims(packet, source, claims)?;
     let mut buffers = Buffers(BTreeMap::new());
     for asset in &packet.task.inputs {
         let raw = reader.read(asset, asset.bytes)?;

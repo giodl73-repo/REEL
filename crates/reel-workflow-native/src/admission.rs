@@ -89,6 +89,22 @@ pub struct ClaimsGuard {
     _fences: Vec<reel_assets::admission::MetadataLock>,
     _prepared: Prepared,
 }
+impl ClaimsGuard {
+    pub(crate) fn check_source(&self, packet: &Packet, source: &NativeProfile) -> Result<()> {
+        let current = Prepared::open(
+            packet,
+            source,
+            &self._prepared.profile,
+            &self._prepared.attempt,
+        )?;
+        if current.source_binding != self._prepared.source_binding
+            || current.input != self._prepared.input
+        {
+            return Err(error(ErrorKind::Conflict, "claims-exact-source-required"));
+        }
+        Ok(())
+    }
+}
 /// Passive original-generation recovery fence. May coexist with a native
 /// Prepare; it grants no mutation capability and is not a settled ClaimsGuard.
 pub(crate) struct RecoveryGuard {
@@ -419,6 +435,18 @@ impl Prepared {
     /// Explicitly apply original qualified slot work. On uncertainty retry this
     /// exact profile/task/attempt/operation; never choose a replacement identity.
     pub fn accept(&self) -> Result<Receipt> {
+        if self.snapshot.packet.task.upstream_inputs.is_some() {
+            return Err(error(
+                ErrorKind::Denied,
+                "composite-first-admission-requires-live-parents",
+            ));
+        }
+        self.accept_inner()
+    }
+    pub(crate) fn accept_verified_upstream(&self) -> Result<Receipt> {
+        self.accept_inner()
+    }
+    fn accept_inner(&self) -> Result<Receipt> {
         self.preview()?;
         let (mut index, mut nodes) = self.stores(None)?;
         for (_, bytes) in self.memory.objects() {
@@ -487,6 +515,53 @@ impl Prepared {
         self.check_receipt(receipt)?;
         self.reopen_checked(receipt, None)
     }
+    /// Recover only a completed original acceptance. No metadata work is staged
+    /// or retried, and an idle/reused/uncertain slot cannot manufacture a receipt.
+    pub fn recover(&self) -> Result<Receipt> {
+        let (mut index, mut nodes) = self.stores(None)?;
+        let _fences = self.actor_fences(&index, None)?;
+        let operation = self.acceptance_operation(&index)?;
+        let work = work::lookup(&mut index, &operation)
+            .map_err(|e| native_error(e.into()))?
+            .ok_or_else(|| error(ErrorKind::Missing, "admission-original-work-missing"))?;
+        let marker = slots::activation(
+            &index,
+            &self.profile.scope,
+            &self.input,
+            &self.source_binding,
+            &self.candidate,
+        )
+        .map_err(native_error)?;
+        let mut receipt = Receipt {
+            schema: "reel.workflow-native-admission-receipt.v1".into(),
+            task_key: self.snapshot.packet.task_key.clone(),
+            attempt_id: self.attempt.clone(),
+            scope: self.profile.scope.clone(),
+            input: self.input.clone(),
+            source_archive: self.snapshot.archive.clone(),
+            candidate: self.candidate.clone(),
+            activation: Object::from_bytes(&marker),
+            work,
+            index_checkpoint: index.checkpoint(),
+            metadata_checkpoint: self.profile.metadata_minimum.clone(),
+        };
+        self.verify_live(&receipt, &mut index, &mut nodes)?;
+        receipt.index_checkpoint = index.checkpoint();
+        receipt.metadata_checkpoint = nodes.finish().map_err(|e| native_error(e.into()))?;
+        Ok(receipt)
+    }
+    fn acceptance_operation(&self, index: &Index) -> Result<Key> {
+        Key::parse(&format!(
+            "slot-accept-{}",
+            Digest::blob(&encode(&(
+                index.identity(),
+                &self.profile.scope.actor,
+                &self.profile.scope.operation
+            ))?)
+            .as_str()
+        ))
+        .map_err(|_| error(ErrorKind::Invalid, "admission-operation-key"))
+    }
     fn check_receipt(&self, receipt: &Receipt) -> Result<()> {
         if receipt.schema != "reel.workflow-native-admission-receipt.v1"
             || receipt.task_key != self.snapshot.packet.task_key
@@ -548,16 +623,7 @@ impl Prepared {
             nodes,
         )
         .map_err(native_error)?;
-        let operation = Key::parse(&format!(
-            "slot-accept-{}",
-            Digest::blob(&encode(&(
-                index.identity(),
-                &self.profile.scope.actor,
-                &self.profile.scope.operation
-            ))?)
-            .as_str()
-        ))
-        .map_err(|_| error(ErrorKind::Invalid, "admission-operation-key"))?;
+        let operation = self.acceptance_operation(index)?;
         if work::lookup(index, &operation)
             .map_err(|e| native_error(e.into()))?
             .as_ref()

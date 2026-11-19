@@ -50,3 +50,7 @@ Existing comic restoration/fresh-edit and owned-worker recovery tests pass.
 This proves the bounded borrowed read seam, not complete issue assembly or
 durable child claims. Frozen runtime, private controls, logs and source manifest
 remain outside Git.
+
+Follow-up: [composite child input admission](2026-11-18-composite-child-inputs.md)
+adds an explicit source archive and child-owned protection path. The borrowed
+reader itself remains a live read seam, not a durable admission receipt.
