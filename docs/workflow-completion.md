@@ -18,7 +18,7 @@ checked again before closing the objective.
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md) burns compiled cel/shot IDs into review MP4s, with an exact selected font and retained source/frame/sample map; synthetic render, master parity, borrowed inputs/scattered outputs and tamper rejection pass | Translate workflow film controls into the renderer, qualify the complete native movie worker, then connect findings, fixes and affected-consumer invalidation. |
-| Packaging, review, issue filing and fixes | Existing packaging/review checks; `ReviewFinding` task type; project/root role checklists | Machine-readable findings, issue dedup/routing and authorized issue adapter, scoped repairs, contextual review, closure evidence and dependency invalidation. |
+| Packaging, review, issue filing and fixes | Existing packaging/review checks; [shared review/repair contracts](handoff/2026-11-19-review-repair-contracts.md) bind exact film/comic units, languages, returned report bytes/evidence, stable finding/issue proposal keys and proposed dependency rebuild scope | Root producer-map export/binding, native structured-review ingress, authorized issue delivery/reconciliation, scoped repair execution, corrected contextual review and evidenced closure. Local issue proposals are private and unsent. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
 | Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan; owned exact-runtime comic dispatch and composite art dependency replay; bounded two-part retained issue assembly/history/export/edit test passes | Automatic derived controls, complete issue scheduling and larger/project qualification. |
 | Larger complete comic issues | Explicit grouping preserves spreads; selected-part native admission binds the full master/plan; editable packet carriers reduce declared object counts; bounded native two-part issue preserves ordered reading and editable sources through retained assembly | Implement full part scheduling and automatic derived controls within actor/128-path bounds; qualify larger actual issues. Two-part native, three-page local assembly and 40-page metadata evidence do not establish arbitrary issue sizes. |
@@ -156,6 +156,14 @@ passes after reuse, also with unchanged claims. The actual fixture passed in
 and without `film` pass. No selection, scratch retirement or replacement-task
 execution occurs. Completed-render adoption, partial/missing-outcome and controller
 recovery and full project/edition qualification remain open.
+The [shared review/repair contracts](handoff/2026-11-19-review-repair-contracts.md)
+now support language/version-bound film and comic findings, exact task-returned
+copy/report/evidence pins, stable local issue proposals and repair impact over the
+task DAG. Spanish text and shared-art fixtures distinguish language-local from
+cross-edition rebuilds while retaining full contextual review requirements.
+This is metadata/candidate validation and local planning, not renderer-map
+authentication, native structured-review ingestion, tracker delivery, repair
+execution or closure. Those integrations remain required.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

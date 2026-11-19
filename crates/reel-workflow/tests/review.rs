@@ -1,0 +1,591 @@
+//! Review/repair protocol checks, without custody, viewing or creative approval.
+use reel_workflow::{review::*, *};
+use std::collections::BTreeMap;
+
+fn pin(id: &str, raw: &[u8]) -> Artifact {
+    Artifact {
+        logical_id: id.into(),
+        sha256: digest(raw),
+        bytes: raw.len() as u64,
+        media_type: "application/json".into(),
+    }
+}
+fn copy(comic: bool, language: &str) -> review::Copy {
+    review::Copy {
+        schema: "reel.workflow-review-copy.v1".into(),
+        project: "synthetic".into(),
+        source_commit: "a".repeat(40),
+        language: language.into(),
+        publication: pin("publication/source", b"source"),
+        review: pin("review/copy", b"review"),
+        format: if comic {
+            Format::Comic {
+                page_order: vec!["page-1".into(), "page-2".into()],
+            }
+        } else {
+            Format::Film { frames: 48 }
+        },
+        units: BTreeMap::from([(
+            "stable-unit".into(),
+            if comic {
+                Unit::Comic {
+                    page_id: "page-1".into(),
+                    panel_id: Some("panel-2".into()),
+                    balloon_id: Some("balloon-3".into()),
+                }
+            } else {
+                Unit::Film {
+                    cel_id: "existing-cel-id".into(),
+                    cue_id: Some("cue-1".into()),
+                    start_frame: 0,
+                    end_frame: 24,
+                }
+            },
+        )]),
+    }
+}
+fn report(copy: &review::Copy) -> Report {
+    Report {
+        schema: "reel.workflow-review-report.v1".into(),
+        copy_sha256: canonical_digest(copy).unwrap(),
+        findings: vec![Finding {
+            code: "wording".into(),
+            unit: "stable-unit".into(),
+            frames: None,
+            modality: Modality::Text,
+            route: Route::Project,
+            requested_change: "Preserve the approved Spanish accent in this line.".into(),
+            evidence: vec![pin("evidence/text", b"synthetic observation")],
+        }],
+    }
+}
+fn task(id: &str, language: &str, inputs: Vec<Artifact>, depends: &[&str]) -> Task {
+    Task {
+        id: id.into(),
+        native_inputs: None,
+        upstream_inputs: None,
+        operation: Operation::TextProposal,
+        tool: None,
+        language: Some(language.into()),
+        prompt: "Synthetic fixture".into(),
+        inputs,
+        depends_on: depends.iter().map(|s| (*s).into()).collect(),
+        outputs: BTreeMap::from([(
+            "candidate".into(),
+            OutputContract {
+                media_type: "application/json".into(),
+                max_bytes: 1024,
+                required: true,
+            },
+        )]),
+    }
+}
+fn plan() -> Plan {
+    Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: "synthetic".into(),
+        source_commit: "a".repeat(40),
+        tasks: vec![
+            task("art", "es", vec![pin("input/art", b"shared art")], &[]),
+            task(
+                "es-lettering",
+                "es",
+                vec![pin("input/es-text", b"Spanish text")],
+                &["art"],
+            ),
+            task(
+                "en-lettering",
+                "en",
+                vec![pin("input/en-text", b"English text")],
+                &["art"],
+            ),
+            task("es-reading", "es", vec![], &["es-lettering"]),
+            task("en-reading", "en", vec![], &["en-lettering"]),
+            task("issue", "es", vec![], &["es-reading", "en-reading"]),
+        ],
+    }
+}
+fn repair(checked: &CheckedReport, before: Artifact) -> Repair {
+    Repair {
+        schema: "reel.workflow-repair.v1".into(),
+        report_sha256: checked.report_sha256().into(),
+        finding_keys: checked.findings().keys().cloned().collect(),
+        edits: vec![Edit {
+            after: pin(&before.logical_id, b"corrected candidate"),
+            before,
+        }],
+    }
+}
+
+#[test]
+fn returned_review_binds_task_language_source_bytes_and_evidence() {
+    for comic in [false, true] {
+        let copy = copy(comic, "es");
+        let copy_bytes = serde_json::to_vec(&copy).unwrap();
+        let r = report(&copy);
+        let report_bytes = serde_json::to_vec(&r).unwrap();
+        let mut task = task(
+            "review",
+            "es",
+            vec![
+                pin("control/review-copy", &copy_bytes),
+                copy.publication.clone(),
+                copy.review.clone(),
+                r.findings[0].evidence[0].clone(),
+            ],
+            &[],
+        );
+        task.operation = Operation::ReviewFinding;
+        task.outputs = BTreeMap::from([(
+            "report".into(),
+            OutputContract {
+                media_type: "application/json".into(),
+                max_bytes: MAX_CONTROL_BYTES as u64,
+                required: true,
+            },
+        )]);
+        let mut plan = Plan {
+            schema: PLAN_SCHEMA.into(),
+            project: copy.project.clone(),
+            source_commit: copy.source_commit.clone(),
+            tasks: vec![task],
+        };
+        let packet = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+        let result = ReturnedResult {
+            schema: RESULT_SCHEMA.into(),
+            task_id: "review".into(),
+            task_key: packet.task_key.clone(),
+            attempt_id: "attempt-1".into(),
+            artifacts: BTreeMap::from([("report".into(), pin("candidate/report", &report_bytes))]),
+            provenance: Provenance {
+                mode: Mode::Handoff,
+                provider: None,
+                model: None,
+                executable: None,
+            },
+            worker_receipt: None,
+        };
+        let check =
+            |packet: &Packet, result: &ReturnedResult, copy_bytes: &[u8], report_bytes: &[u8]| {
+                check_returned_report(
+                    packet,
+                    result,
+                    "control/review-copy",
+                    copy_bytes,
+                    "report",
+                    report_bytes,
+                )
+            };
+        assert_eq!(
+            check(&packet, &result, &copy_bytes, &report_bytes)
+                .unwrap()
+                .findings()
+                .len(),
+            1
+        );
+        let local = tempfile::tempdir().unwrap();
+        for (name, bytes) in [
+            ("packet", serde_json::to_vec(&packet).unwrap()),
+            ("result", serde_json::to_vec(&result).unwrap()),
+            ("copy", copy_bytes.clone()),
+            ("report", report_bytes.clone()),
+        ] {
+            std::fs::write(local.path().join(name), bytes).unwrap();
+        }
+        let out = std::process::Command::new(env!("CARGO_BIN_EXE_reel-workflow"))
+            .current_dir(local.path())
+            .args([
+                "check-review-result",
+                "packet",
+                "result",
+                "control/review-copy",
+                "copy",
+                "report",
+                "report",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert!(!String::from_utf8_lossy(&out.stdout).contains("Spanish accent"));
+        assert_eq!(
+            check(&packet, &result, b"{}", &report_bytes)
+                .unwrap_err()
+                .kind,
+            ErrorKind::Integrity
+        );
+        assert_eq!(
+            check(&packet, &result, &copy_bytes, b"{}")
+                .unwrap_err()
+                .kind,
+            ErrorKind::Integrity
+        );
+        plan.tasks[0].language = Some("en".into());
+        let changed = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+        let changed_result = ReturnedResult {
+            task_key: changed.task_key.clone(),
+            ..result.clone()
+        };
+        assert_eq!(
+            check(&changed, &changed_result, &copy_bytes, &report_bytes)
+                .unwrap_err()
+                .code,
+            "review-task-edition"
+        );
+        plan.tasks[0].language = Some("es".into());
+        plan.tasks[0].inputs.pop();
+        let changed = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+        let changed_result = ReturnedResult {
+            task_key: changed.task_key.clone(),
+            ..result.clone()
+        };
+        assert_eq!(
+            check(&changed, &changed_result, &copy_bytes, &report_bytes)
+                .unwrap_err()
+                .code,
+            "review-task-evidence-pin"
+        );
+        plan.tasks[0].inputs.pop();
+        let changed = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+        let changed_result = ReturnedResult {
+            task_key: changed.task_key.clone(),
+            ..result
+        };
+        assert_eq!(
+            check(&changed, &changed_result, &copy_bytes, &report_bytes)
+                .unwrap_err()
+                .code,
+            "review-task-source-pins"
+        );
+    }
+}
+
+#[test]
+fn review_keys_are_stable_for_prose_but_scoped_to_exact_edition_and_language() {
+    for comic in [false, true] {
+        let copy = copy(comic, "es");
+        let report = report(&copy);
+        let checked = check_report(&copy, &report).unwrap();
+        let key = checked.findings().keys().next().unwrap();
+        let mut reworded = report.clone();
+        reworded.findings[0].requested_change = "Another description of the same defect.".into();
+        reworded.findings[0].evidence = vec![pin("evidence/new", b"new observation")];
+        let updated = check_report(&copy, &reworded).unwrap();
+        assert_eq!(Some(key), updated.findings().keys().next());
+        assert_ne!(checked.report_sha256(), updated.report_sha256());
+        for changed in [
+            review::Copy {
+                language: "en".into(),
+                ..copy.clone()
+            },
+            review::Copy {
+                review: pin("review/copy", b"new copy"),
+                ..copy.clone()
+            },
+        ] {
+            assert_eq!(
+                check_report(&changed, &report).unwrap_err().kind,
+                ErrorKind::Stale
+            );
+            let mut new_report = report.clone();
+            new_report.copy_sha256 = canonical_digest(&changed).unwrap();
+            assert_ne!(
+                Some(key),
+                check_report(&changed, &new_report)
+                    .unwrap()
+                    .findings()
+                    .keys()
+                    .next()
+            );
+        }
+    }
+}
+
+#[test]
+fn findings_refuse_missing_units_wrong_modalities_ranges_and_conflicting_duplicates() {
+    let film = copy(false, "es");
+    let mut r = report(&film);
+    r.findings[0].frames = Some(FrameRange { start: 23, end: 24 });
+    check_report(&film, &r).unwrap();
+    for range in [
+        FrameRange { start: 24, end: 25 },
+        FrameRange { start: 4, end: 4 },
+        FrameRange { start: 23, end: 48 },
+    ] {
+        let mut bad = r.clone();
+        bad.findings[0].frames = Some(range);
+        assert_eq!(
+            check_report(&film, &bad).unwrap_err().code,
+            "review-finding-frames"
+        );
+    }
+    let mut bad = r.clone();
+    bad.findings[0].unit = "unseen-cel".into();
+    assert_eq!(
+        check_report(&film, &bad).unwrap_err().kind,
+        ErrorKind::Missing
+    );
+    r.findings.push(r.findings[0].clone());
+    assert_eq!(check_report(&film, &r).unwrap().findings().len(), 1);
+    r.findings[1].route = Route::Tig;
+    assert_eq!(
+        check_report(&film, &r).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+    let comic = copy(true, "es");
+    let mut r = report(&comic);
+    r.findings[0].modality = Modality::Audio;
+    assert_eq!(
+        check_report(&comic, &r).unwrap_err().code,
+        "review-comic-modality"
+    );
+    r.findings[0].modality = Modality::Layout;
+    check_report(&comic, &r).unwrap();
+    r.findings[0].frames = Some(FrameRange { start: 0, end: 1 });
+    assert!(check_report(&comic, &r).is_err());
+}
+
+#[test]
+fn invalid_copy_geometry_and_unknown_fields_refuse() {
+    let mut film = copy(false, "es");
+    film.format = Format::Film { frames: 23 };
+    assert!(check_copy(&film).is_err());
+    let mut comic = copy(true, "es");
+    comic.format = Format::Comic {
+        page_order: vec!["page-1".into(), "page-1".into()],
+    };
+    assert_eq!(check_copy(&comic).unwrap_err().code, "review-page-order");
+    comic.format = Format::Comic {
+        page_order: vec!["missing-page".into()],
+    };
+    assert!(check_copy(&comic).is_err());
+    let mut value = serde_json::to_value(copy(true, "es")).unwrap();
+    value["approved"] = serde_json::json!(true);
+    assert!(serde_json::from_value::<review::Copy>(value).is_err());
+}
+
+#[test]
+fn language_local_repair_keeps_other_edition_but_shared_art_rebuilds_both() {
+    for comic in [false, true] {
+        let copy = copy(comic, "es");
+        let checked = check_report(&copy, &report(&copy)).unwrap();
+        let plan = plan();
+        let impact = repair_impact(
+            &plan,
+            &checked,
+            &repair(&checked, pin("input/es-text", b"Spanish text")),
+        )
+        .unwrap();
+        assert_eq!(impact.directly_affected, ["es-lettering"]);
+        assert_eq!(impact.rebuild, ["es-lettering", "es-reading", "issue"]);
+        assert_eq!(impact.unaffected, ["art", "en-lettering", "en-reading"]);
+        assert_eq!(impact.contextual_review, copy);
+        assert_eq!(impact.contextual_languages, ["es"]);
+        let impact = repair_impact(
+            &plan,
+            &checked,
+            &repair(&checked, pin("input/art", b"shared art")),
+        )
+        .unwrap();
+        assert_eq!(impact.directly_affected, ["art"]);
+        assert_eq!(impact.rebuild.len(), 6);
+        assert!(impact.unaffected.is_empty());
+        assert_eq!(impact.contextual_languages, ["en", "es"]);
+    }
+}
+
+#[test]
+fn repair_refuses_stale_baseline_unknown_finding_and_wrong_old_bytes() {
+    let copy = copy(true, "es");
+    let checked = check_report(&copy, &report(&copy)).unwrap();
+    let plan = plan();
+    let original = repair(&checked, pin("input/es-text", b"Spanish text"));
+    let mut bad_plan = plan.clone();
+    bad_plan.source_commit = "b".repeat(40);
+    assert_eq!(
+        repair_impact(&bad_plan, &checked, &original)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Stale
+    );
+    let mut bad = original.clone();
+    bad.report_sha256 = "b".repeat(64);
+    assert_eq!(
+        repair_impact(&plan, &checked, &bad).unwrap_err().kind,
+        ErrorKind::Stale
+    );
+    let mut bad = original.clone();
+    bad.finding_keys = vec!["b".repeat(64)];
+    assert_eq!(
+        repair_impact(&plan, &checked, &bad).unwrap_err().kind,
+        ErrorKind::Missing
+    );
+    let mut bad = original.clone();
+    bad.edits[0].before = pin("input/es-text", b"stale text");
+    assert_eq!(
+        repair_impact(&plan, &checked, &bad).unwrap_err().code,
+        "review-repair-input-pin"
+    );
+    let mut bad = original.clone();
+    bad.edits[0].after = bad.edits[0].before.clone();
+    assert!(repair_impact(&plan, &checked, &bad).is_err());
+    let mut bad = original;
+    bad.edits.push(bad.edits[0].clone());
+    assert_eq!(
+        repair_impact(&plan, &checked, &bad).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+}
+
+#[test]
+fn issue_proposals_route_and_deduplicate_without_delivering() {
+    let copy = copy(true, "es");
+    let mut r = report(&copy);
+    let routes = Routes {
+        project: "example/project".into(),
+        reel: "example/reel".into(),
+        tig: "example/tig".into(),
+    };
+    let mut keys = Vec::new();
+    for (route, repo) in [
+        (Route::Project, "example/project"),
+        (Route::Reel, "example/reel"),
+        (Route::Tig, "example/tig"),
+    ] {
+        r.findings[0].route = route;
+        let checked = check_report(&copy, &r).unwrap();
+        let proposals = issue_proposals(&checked, &routes).unwrap();
+        assert_eq!(proposals[0].repository, repo);
+        assert_eq!(
+            proposals[0].operation_key,
+            issue_proposals(&checked, &routes).unwrap()[0].operation_key
+        );
+        let uppercase = Routes {
+            project: routes.project.to_ascii_uppercase(),
+            reel: routes.reel.to_ascii_uppercase(),
+            tig: routes.tig.to_ascii_uppercase(),
+        };
+        assert_eq!(
+            proposals[0].operation_key,
+            issue_proposals(&checked, &uppercase).unwrap()[0].operation_key
+        );
+        keys.push(proposals[0].operation_key.clone());
+    }
+    assert_ne!(keys[0], keys[1]);
+    assert_ne!(keys[1], keys[2]);
+    let checked = check_report(&copy, &r).unwrap();
+    assert!(
+        issue_proposals(
+            &checked,
+            &Routes {
+                project: "https://example.invalid/a/b".into(),
+                ..routes
+            }
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn finding_and_expanded_issue_output_budgets_refuse() {
+    let mut copy = copy(false, "es");
+    let unit = copy.units["stable-unit"].clone();
+    for i in 0..1000 {
+        copy.units
+            .insert(format!("{i}-{}", "x".repeat(128)), unit.clone());
+    }
+    check_copy(&copy).unwrap();
+    let mut r = report(&copy);
+    let finding = r.findings[0].clone();
+    r.findings = (0..12)
+        .map(|i| Finding {
+            code: format!("defect-{i}"),
+            ..finding.clone()
+        })
+        .collect();
+    let checked = check_report(&copy, &r).unwrap();
+    let routes = Routes {
+        project: "example/project".into(),
+        reel: "example/reel".into(),
+        tig: "example/tig".into(),
+    };
+    assert_eq!(
+        issue_proposals(&checked, &routes).unwrap_err().kind,
+        ErrorKind::Budget
+    );
+    r.findings = vec![finding; 129];
+    assert_eq!(
+        check_report(&copy, &r).unwrap_err().code,
+        "review-finding-count"
+    );
+}
+
+#[test]
+fn cli_exports_new_private_controls_and_preserves_existing_files() {
+    let root = tempfile::tempdir().unwrap();
+    let copy = copy(true, "es");
+    let report = report(&copy);
+    let checked = check_report(&copy, &report).unwrap();
+    let plan = plan();
+    let repair = repair(&checked, pin("input/es-text", b"Spanish text"));
+    let values = [
+        ("copy", serde_json::to_value(&copy).unwrap()),
+        ("report", serde_json::to_value(report).unwrap()),
+        ("plan", serde_json::to_value(plan).unwrap()),
+        ("repair", serde_json::to_value(repair).unwrap()),
+        (
+            "routes",
+            serde_json::json!({"project":"example/project","reel":"example/reel","tig":"example/tig"}),
+        ),
+    ];
+    for (name, value) in values {
+        std::fs::write(root.path().join(name), serde_json::to_vec(&value).unwrap()).unwrap();
+    }
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_reel-workflow"))
+            .current_dir(root.path())
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    assert!(run(&["check-review", "copy", "report"]).status.success());
+    assert!(
+        run(&[
+            "export-review-issues",
+            "copy",
+            "report",
+            "routes",
+            "proposals"
+        ])
+        .status
+        .success()
+    );
+    let original = std::fs::read(root.path().join("proposals")).unwrap();
+    assert!(
+        !run(&[
+            "export-review-issues",
+            "copy",
+            "report",
+            "routes",
+            "proposals"
+        ])
+        .status
+        .success()
+    );
+    assert_eq!(
+        original,
+        std::fs::read(root.path().join("proposals")).unwrap()
+    );
+    let out = run(&["plan-repair", "plan", "copy", "report", "repair", "impact"]);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(result["edits_applied"], false);
+    assert_eq!(result["findings_closed"], false);
+}

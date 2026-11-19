@@ -23,6 +23,9 @@ fn control<T: serde::de::DeserializeOwned>(path: &str) -> reel_workflow::Result<
     reel_workflow::decode(&bytes)
 }
 fn publish_packet(path: &str, packet: &Packet) -> reel_workflow::Result<()> {
+    publish_control(path, packet)
+}
+fn publish_control(path: &str, packet: &impl serde::Serialize) -> reel_workflow::Result<()> {
     let bytes = serde_json::to_vec_pretty(packet)
         .map_err(|_| error(ErrorKind::Invalid, "packet-encoding"))?;
     if bytes.len() > MAX_CONTROL_BYTES {
@@ -171,6 +174,56 @@ fn publication_inputs(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            packet,
+            result,
+            copy_input,
+            copy_path,
+            report_output,
+            report_path,
+        ] if command == "check-review-result" => {
+            let mut reader = LocalInputs {
+                paths: BTreeMap::new(),
+                guards: Vec::new(),
+            };
+            let copy_bytes = reader.capture(copy_path, MAX_CONTROL_BYTES as u64)?;
+            let report_bytes = reader.capture(report_path, MAX_CONTROL_BYTES as u64)?;
+            let checked = reel_workflow::review::check_returned_report(
+                &control(packet)?,
+                &control(result)?,
+                copy_input,
+                &copy_bytes,
+                report_output,
+                &report_bytes,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"task-bound-review-candidate","findings":checked.findings().len(),"viewing_verified":false,"retention_acknowledged":false,"approved":false}),
+            )
+        }
+        [command, copy, report] if command == "check-review" => {
+            let checked = reel_workflow::review::check_report(&control(copy)?, &control(report)?)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-review-contract-only","findings":checked.findings().len(),"viewing_verified":false,"issues_filed":false,"approved":false}),
+            )
+        }
+        [command, copy, report, routes, output] if command == "export-review-issues" => {
+            let checked = reel_workflow::review::check_report(&control(copy)?, &control(report)?)?;
+            let proposals = reel_workflow::review::issue_proposals(&checked, &control(routes)?)?;
+            publish_control(output, &proposals)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-local-issue-proposals","proposals":proposals.len(),"issues_filed":false}),
+            )
+        }
+        [command, plan, copy, report, repair, output] if command == "plan-repair" => {
+            let checked = reel_workflow::review::check_report(&control(copy)?, &control(report)?)?;
+            let impact =
+                reel_workflow::review::repair_impact(&control(plan)?, &checked, &control(repair)?)?;
+            publish_control(output, &impact)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"proposed-repair-impact-only","rebuild_tasks":impact.rebuild.len(),"edits_applied":false,"findings_closed":false,"approved":false}),
+            )
+        }
         [command, path] if command == "check-handoff" || command == "cancel-handoff" => {
             let mut journal = reel_workflow::handoff::Journal::open(Path::new(path))?;
             if command == "cancel-handoff" {
@@ -241,6 +294,10 @@ fn main() -> std::process::ExitCode {
         println!(
             "reel-workflow: private task/result contract prototype\n\
 Usage: reel-workflow check-plan PLAN\n\
+       reel-workflow check-review COPY REPORT\n\
+       reel-workflow check-review-result PACKET RESULT COPY_INPUT COPY_PATH REPORT_OUTPUT REPORT_PATH\n\
+       reel-workflow export-review-issues COPY REPORT ROUTES NEW_PROPOSALS\n\
+       reel-workflow plan-repair PLAN COPY REPORT REPAIR NEW_IMPACT\n\
        reel-workflow export-task PLAN TASK NEW_PACKET [DEPENDENCY_DESCRIPTORS]\n\
        reel-workflow check-result PACKET RESULT PAYLOAD_BINDINGS\n\
        reel-workflow check-handoff DIRECTORY\n\

@@ -14,6 +14,7 @@ pub mod issue;
 pub mod issue_control;
 pub mod publication;
 pub mod recipe;
+pub mod review;
 pub mod upstream;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
