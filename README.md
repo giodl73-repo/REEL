@@ -39,7 +39,10 @@ custody before byte reads. [Composite child admission](docs/handoff/2026-11-18-c
 adds child-owned input protection, bare-history readback and resumable staging.
 [Composite comic replay](docs/handoff/2026-11-18-composite-comic-replay.md)
 connects this protection to production, returned-file checks and retained editable
-restoration. Complete issue assembly from retained parts remains separate work.
+restoration. The [complete-issue adapter](docs/handoff/2026-11-18-native-comic-issue.md)
+now qualifies a bounded synthetic two-part issue through retained assembly,
+bare-history reopening, editable export and a fresh lettering edit. Larger issue
+scheduling and production adoption remain open.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

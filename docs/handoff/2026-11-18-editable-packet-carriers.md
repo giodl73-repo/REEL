@@ -46,5 +46,7 @@ with 119 for the loose representation. All 37 default native tests and strict
 native Clippy passed. The original-operation refusal fixture also passed: the
 expected close-budget error leaves the index unchanged, original input claims
 reopenable, scratch preserved and the journal in `ImportPending`. Neither loose
-attempt is reported as completed. Packed task completion and history/export
-checks, plus the final ten native regression cases, remain in progress.
+attempt is reported as completed. Packed task completion, source-actor coverage
+loss, bare-history reopening, editable export, issue reassembly and a fresh
+lettering edit now pass in the bounded native issue fixture. The final ten native
+regression cases remain in progress.

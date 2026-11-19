@@ -246,9 +246,11 @@ spreads, missing/reordered pages, case-colliding part IDs, mixed languages,
 changed source hashes and tampered lettering. A 40-page metadata fixture accepts
 32+8 grouping and rejects a 33-page worker group; it does not render 40 pages.
 
-This is private local reading assembly. It does not yet schedule native part jobs,
-consume upstream retained task results, export an issue from native storage,
-release an actor, alter selections or dispatch workers. A 32-page part can still
+The separate [native issue adapter](handoff/2026-11-18-native-comic-issue.md)
+now consumes retained part results, dispatches a bounded issue assembler, verifies
+retained completion and exports editable issue sources from bare history. Its
+synthetic two-part qualification does not establish larger issue scheduling,
+actor release or selection application. A 32-page part can still
 exceed native source/close or byte limits and must refuse admission there. Full
 issue creative/translation review, surrounding-page fix review, font permissions,
 print proof and release authority remain project-owned.

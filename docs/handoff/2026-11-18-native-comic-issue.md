@@ -88,3 +88,18 @@ Initial failure and regression evidence is in
 `F:/src/tig-dev-temp/reel-workflow-native-issue-20261118-v1`.
 The admitted staging refusal and cross-version readback are in `...-v2`;
 original-operation recovery and corrected fresh-run evidence are in `...-v3`.
+
+The packed v4 end-to-end fixture passed in 1,576.50 seconds. It admitted 61
+resource objects, retained the assembled issue, removed original source-actor
+coverage through the synthetic fixture protocol, reopened against a bare Git
+repository, exported the full editable issue and reassembled identical reading
+PDF bytes. Restoring the opening part and changing lettering preserved clean art
+while changing reading pixels. Evidence is under `...-v4/issue`, with the test log
+at `...-v4/native-issue-test.txt`. The source archive pins commit `b8366bf` and
+verifies all 1,803 source files with zero mismatches. Its manifest SHA256 is
+`3e8481a9d7f738b5f2e22b8a93aeab4ed6f9c3d29737f3afc90621ed804ee6e9`.
+
+This establishes that bounded native issue path, not arbitrary issue sizes,
+automatic derived controls, production slot closure, project adoption or release.
+The ten existing native regression cases are still running separately. Earlier
+failed loose attempts remain protected and incomplete.
