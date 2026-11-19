@@ -40,7 +40,25 @@ The synthetic qualification uses the original admitted movie, ingests the exact
 candidate through managed response interfaces, retains it, verifies it repeatedly,
 then verifies using bare Git history while return paths are absent and original
 worker media is held unreadable. Original native history and scratch are preserved.
-Actual evidence will be recorded after execution.
+Qualification passed in 308.77 seconds at source
+`1c620fa9c336b02207241c8e98393d9bda17ef31`. Exact source/tool/evidence pins are
+in `F:/src/tig-dev-temp/reel-native-movie-retention-20261119-v1/qualified-tools.json`;
+all 1,868 archived source files match. Preserved fixture root: `.tmpL6i5NE`.
+
+The fixture ingested all twelve outputs and the worker receipt under the original
+movie admission/attempt, then acknowledged actual retained ownership. Native
+proof passed before/after retention and on repeated reads. A bare Git clone with
+independent object files supplied historical records while the return directory
+was absent and original worker media could not be read. Those media reads came
+from guarded native objects. Historical verification left claims byte-identical;
+only the same two owned return/native verification contexts were used.
+
+All 57 default native tests, the 247 SDK source-pin checks, strict Clippy with and
+without `film`, formatting and `git diff --check` pass. This proves bounded native
+movie ingestion, retained coverage and historical media verification. The source
+job remains active; durable task-journal completion, post-close/slot-reuse history,
+automatic owned movie dispatch and interrupted controller/producer recovery remain
+unqualified. No selected records changed and no scratch or capacity was retired.
 
 Producer-applied editor and rights/provenance review: independent source clocks
 and primary comparison reject counterfeit media; private evidence remains private.
