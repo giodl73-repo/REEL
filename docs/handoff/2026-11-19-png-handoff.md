@@ -70,3 +70,26 @@ reference/source identity, private return files, format readiness and unknown
 manual provenance stay distinct from image quality, creative approval, likeness
 rights, selection or public release. A valid PNG does not prove the prompt was
 followed or the artwork is approved.
+
+## Qualification
+
+Source `832eac868a44747b54b32e3b6d5297551ab8f90d` has all 1,905 tracked
+files verified against an archived source snapshot. All 23 HTTP tests, 61 standard
+native tests, the 247 unchanged SDK source pins and strict HTTP/native Clippy
+(film and default features) pass. The ignored native fixture passes in 105.99
+test seconds / 106.73 wall seconds using the frozen CLI and test executable.
+
+External evidence: `F:/src/tig-dev-temp/reel-png-handoff-20261119-v1/qualified-tools.json`,
+SHA256 `6b7a664d7731c5eaf12573670398b66a8c00b73893bce69c6f318f34ba20f8a3`.
+It pins source/archive, tools, logs and original operation controls. The preserved
+operation root is `F:/src/tig-dev-temp/.tmpEfV6hT`; its source fixture is
+`F:/src/tig-dev-temp/.tmprvxpqq`. Its original task/attempt reaches Retained after
+both malformed-return refusals. One returned PNG deliberately reuses the exact
+source image bytes. Replay and prior direct-API historical reads leave claims
+unchanged.
+
+Scope is Windows/NTFS and the existing synthetic native single-pool fixture.
+No provider call, real artwork, selection, job close or scratch retirement was
+performed. The source job remains protected; do not retarget its lifecycle to a
+new executable or restart it under another operation identity. Format readiness
+and private unknown provenance do not establish visual continuity or rights.
