@@ -20,6 +20,7 @@ use std::{
 };
 use tig_core::Object;
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
+const MAX_STREAMED_BYTES: u64 = 128 * 1024 * 1024 * 1024;
 pub(crate) const MAX_FILES: usize = 256;
 const MAX_ENTRIES: usize = 2048;
 const ATTEMPTS: usize = 4;
@@ -355,9 +356,13 @@ fn check_entries(files: &BTreeMap<String, Entry>) -> Result<()> {
     Ok(())
 }
 fn configuration(profile: &Profile, coordination: &Path) -> Result<reel_assets::Config> {
-    if profile.schema != "reel.workflow-staging.v1"
-        || profile.maximum_bytes == 0
-        || profile.maximum_bytes > MAX_BYTES
+    let ceiling = match profile.schema.as_str() {
+        "reel.workflow-staging.v1" => MAX_BYTES,
+        "reel.workflow-staging.v2" => MAX_STREAMED_BYTES,
+        _ => return Err(error(ErrorKind::Budget, "staging-profile-bounds")),
+    };
+    if profile.maximum_bytes == 0
+        || profile.maximum_bytes > ceiling
         || profile.maximum_bytes > profile.capacity_policy.max_object_bytes
     {
         return Err(error(ErrorKind::Budget, "staging-profile-bounds"));
@@ -409,7 +414,17 @@ fn checked_budget(profile: &Profile, plan: &Plan) -> Result<()> {
     }
     Ok(())
 }
-fn create_owner(plan: &Plan, parent: &WorkspaceDirectory) -> Result<Owner> {
+fn owned_intent(profile: &Profile, plan: &Plan) -> Result<Vec<u8>> {
+    if profile.schema == "reel.workflow-staging.v2" {
+        json(
+            &serde_json::json!({"schema":"reel.workflow-owned-intent.v2",
+            "profile":Object::from_bytes(&json(profile)?),"manifest":plan.manifest}),
+        )
+    } else {
+        json(&plan.manifest)
+    }
+}
+fn create_owner(plan: &Plan, parent: &WorkspaceDirectory, profile: &Profile) -> Result<Owner> {
     let name = format!("handoff-{}", plan.manifest.operation);
     let path = parent.path().join(&name);
     fs::create_dir(&path).map_err(|e| {
@@ -423,7 +438,7 @@ fn create_owner(plan: &Plan, parent: &WorkspaceDirectory) -> Result<Owner> {
         }
     })?;
     let workspace = open_workspace_directory(&path).map_err(scoped_error)?;
-    let raw = json(&plan.manifest)?;
+    let raw = owned_intent(profile, plan)?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -490,7 +505,7 @@ fn prepare_owned(
         profile.maximum_bytes,
     )
     .map_err(scoped_error)?;
-    let result = create_owner(plan, &parent).map(|owner| {
+    let result = create_owner(plan, &parent, &profile).map(|owner| {
         (
             profile,
             Reservation {
@@ -542,7 +557,7 @@ fn open_owner(profile: &Profile, owner: &Owner, plan: &Plan) -> Result<View> {
         &root.path().join("intent.json"),
         reel_workflow::MAX_CONTROL_BYTES as u64,
     )?;
-    if Object::from_bytes(&raw) != owner.manifest || raw != json(&plan.manifest)? {
+    if Object::from_bytes(&raw) != owner.manifest || raw != owned_intent(profile, plan)? {
         return Err(error(ErrorKind::Integrity, "staging-intent-binding"));
     }
     Ok(View {
@@ -1117,6 +1132,9 @@ pub fn export_file(
     export(packet, source, admission, &raw, expected_sha256)
 }
 
+#[cfg(all(test, windows))]
+#[path = "staging_profile_tests.rs"]
+mod profile_tests;
 #[cfg(all(test, windows))]
 #[path = "staging_tests.rs"]
 mod tests;

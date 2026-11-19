@@ -165,7 +165,7 @@ fn streamed_case() -> (tempfile::TempDir, Profile, Plan, Owner) {
         .unwrap()
         .object = Object::from_bytes(&vec![37; 2 * 65536 + 31]);
     let parent = open_workspace_directory(&profile.parent).unwrap();
-    let owner = create_owner(&plan, &parent).unwrap();
+    let owner = create_owner(&plan, &parent, &profile).unwrap();
     (temp, profile, plan, owner)
 }
 #[test]
@@ -291,7 +291,7 @@ fn in_place_producer_file_survives_interruption_without_a_buffer_or_copy_part() 
     );
     assert!(!plan.controls.contains_key(path));
     let parent = open_workspace_directory(&profile.parent).unwrap();
-    let owner = create_owner(&plan, &parent).unwrap();
+    let owner = create_owner(&plan, &parent, &profile).unwrap();
     let root = profile.parent.join(&owner.name);
     fs::create_dir(root.join("media")).unwrap();
     fs::write(root.join(path), &media).unwrap();
@@ -340,7 +340,7 @@ fn missing_or_corrupt_in_place_file_preserves_bytes_and_never_completes() {
             },
         );
         let parent = open_workspace_directory(&profile.parent).unwrap();
-        let owner = create_owner(&plan, &parent).unwrap();
+        let owner = create_owner(&plan, &parent, &profile).unwrap();
         let root = profile.parent.join(&owner.name);
         fs::create_dir(root.join("media")).unwrap();
         if corrupt {
@@ -416,7 +416,7 @@ fn case() -> (tempfile::TempDir, Profile, Plan, Owner, Buffers) {
         controls,
     };
     let parent = open_workspace_directory(temp.path()).unwrap();
-    let owner = create_owner(&plan, &parent).unwrap();
+    let owner = create_owner(&plan, &parent, &profile).unwrap();
     (
         temp,
         profile,
