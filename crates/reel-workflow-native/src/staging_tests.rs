@@ -2,21 +2,24 @@
 use super::*;
 
 #[test]
-#[ignore = "Existing accepted synthetic replacement job only; owned staging capacity/ticket preserved; no new native admission or publication"]
+#[cfg(feature = "film")]
+#[ignore = "Existing retained synthetic movie job only; owned staging capacity/ticket preserved; no new native admission, rendering or publication"]
 fn native_streamed_export_reopens_original_admission_and_preserves_ticket_claims_and_bytes() {
     let original = PathBuf::from(
-        std::env::var_os("REEL_STREAMED_STAGE_ORIGINAL").expect("Set original replacement job"),
+        std::env::var_os("REEL_STREAMED_STAGE_ORIGINAL").expect("Set original movie job"),
     );
     let evidence = PathBuf::from(
         std::env::var_os("REEL_STREAMED_STAGE_EVIDENCE").expect("Set evidence directory"),
     );
-    let packet: Packet = crate::read_control(&original.join("replacement-packet.json")).unwrap();
-    let source: NativeProfile =
-        crate::read_control(&original.join("replacement-source.json")).unwrap();
+    let packet: Packet = crate::read_control(&original.join("packet.json")).unwrap();
+    let source: NativeProfile = crate::read_control(&original.join("source.json")).unwrap();
     let admission: admission::Profile =
-        crate::read_control(&original.join("replacement-profile.json")).unwrap();
-    let receipt: Receipt = crate::read_control(&original.join("replacement-receipt.json")).unwrap();
-    assert!(packet.task.tool.is_none());
+        crate::read_control(&original.join("admission.json")).unwrap();
+    let receipt: Receipt = crate::read_control(&original.join("receipt.json")).unwrap();
+    assert_eq!(
+        packet.task.tool.as_ref().unwrap().capability,
+        reel_workflow::ToolCapability::FilmRender
+    );
     let claims_path = admission.index_root.join("claims.json");
     let before = fs::read(&claims_path).unwrap();
     let mut temp = tempfile::tempdir().unwrap();

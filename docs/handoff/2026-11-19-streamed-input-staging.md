@@ -26,12 +26,21 @@ existing APIs; this does not claim every producer is free of media buffers.
 Three generated-stream component tests add short-read/interruption and 64 KiB
 buffer assertions, partial-I/O preservation/resume, completed-source rechecking,
 and truncation/trailing/corruption refusal. All ten staging component tests pass.
-An opt-in native fixture is prepared against the existing accepted synthetic
-replacement job from movie slot-history qualification. It must reopen that
+An opt-in native fixture is prepared against the existing retained synthetic
+movie job from completed-render recovery qualification. It must reopen that
 original admission, prepare/preserve one owned staging ticket, export/replay,
 check retained stream gates and an empty capture map, and preserve ticket/claims.
 It admits no new native job and publishes/selects no asset. Its original scratch
 and capacity are preserved; the actual source/tool/result pins follow execution.
+
+The first run at source `3146ade` used the separate slot-replacement job, whose
+admission had qualified slot reuse without qualifying input availability. Native
+export returned `NeedsRecovery/native-input-io` after 7.56 seconds and refused
+completion. Preserved root `.tmpti9z7R` contains its original ticket, partial
+controls and reserved capacity. No input was acquired/published to make it pass.
+The positive fixture now targets the existing movie's previously verified native
+input closure instead. This is a different existing job, not a fresh admission
+or an effect retry for the refused replacement input.
 
 This removes input-export whole-set buffering. It does not raise the 512 MiB
 staging reservation, task/actor/path limits, film output/workspace/time limits,
