@@ -19,7 +19,7 @@ use std::{
 };
 use tig_core::Object;
 const MAX_BYTES: u64 = 512 * 1024 * 1024;
-const MAX_FILES: usize = 256;
+pub(crate) const MAX_FILES: usize = 256;
 const MAX_ENTRIES: usize = 2048;
 const ATTEMPTS: usize = 4;
 #[path = "comic_export.rs"]

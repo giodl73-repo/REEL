@@ -348,14 +348,29 @@ fn completed(
         reel_workflow::MAX_CONTROL_BYTES as u64,
     )?;
     let returns: crate::response::Returns = reel_workflow::decode(&raw)?;
-    let expected: BTreeMap<_, _> = result
-        .artifacts
-        .keys()
-        .map(|name| (name.clone(), name.clone()))
-        .collect();
-    if returns.root != view.root.path().join("packet") || returns.files != expected {
+    if returns.schema != "reel.workflow-returns.v1"
+        || returns.root != view.root.path().join("packet")
+    {
         return Err(error(ErrorKind::Integrity, "worker-owned-return-binding"));
     }
+    let files = plan
+        .manifest
+        .files
+        .iter()
+        .filter_map(|(path, entry)| {
+            path.strip_prefix("packet/")
+                .map(|relative| (relative.to_owned(), entry.object.clone()))
+        })
+        .collect();
+    crate::output_layout::check(
+        &result.artifacts,
+        result
+            .worker_receipt
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Missing, "worker-produced-receipt"))?,
+        &returns.files,
+        &files,
+    )?;
     view.files.extend([result_guard, returns_guard]);
     Ok((result, returns))
 }
@@ -465,11 +480,7 @@ fn execute(
         let returns = crate::response::Returns {
             schema: "reel.workflow-returns.v1".into(),
             root: view.root.path().join("packet"),
-            files: result
-                .artifacts
-                .keys()
-                .map(|name| (name.clone(), name.clone()))
-                .collect(),
+            files: generated.paths()?,
         };
         let mut controls = base.controls.clone();
         controls.extend(

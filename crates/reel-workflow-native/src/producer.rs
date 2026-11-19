@@ -46,6 +46,26 @@ pub(crate) enum Generated {
     Issue(Box<crate::issue::Generated>),
 }
 impl Generated {
+    pub(crate) fn paths(&self) -> Result<BTreeMap<String, String>> {
+        let paths = crate::output_layout::identity(self.outputs());
+        let raw = self
+            .files()
+            .get("receipt.json")
+            .ok_or_else(|| crate::error(ErrorKind::Missing, "worker-produced-receipt"))?;
+        let receipt = reel_workflow::Artifact {
+            logical_id: "workflow/worker/receipt".into(),
+            sha256: reel_workflow::digest(raw),
+            bytes: raw.len() as u64,
+            media_type: "application/json".into(),
+        };
+        let files = self
+            .files()
+            .iter()
+            .map(|(p, raw)| (p.clone(), tig_core::Object::from_bytes(raw)))
+            .collect();
+        crate::output_layout::check(self.outputs(), &receipt, &paths, &files)?;
+        Ok(paths)
+    }
     pub(crate) fn files(&self) -> &BTreeMap<String, Vec<u8>> {
         match self {
             Self::Comic(g) => &g.files,

@@ -93,6 +93,11 @@ refuses substitution/retargeting and replays the restored original ticket with
 unchanged claims. All 51 default native tests and strict Clippy pass. This fixture
 does not execute the auxiliary program. Owned movie dispatch, movie result
 retention and interrupted-production recovery remain open.
+The [owned worker output layout](handoff/2026-11-19-worker-output-layout.md)
+separates artifact names from portable renderer-relative paths and verifies their
+exact manifest pins during recovery. Existing producers retain their flat return
+mappings and editable companion files. The movie capability still needs to supply
+its mapping and complete bounded execution, verification and retention.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
