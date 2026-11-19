@@ -57,9 +57,13 @@ two waves; deterministic comic staging/render/retention, replay and editable
 historical restoration now pass under the bounded-stack runtime.
 The isolated [HTTP provider/proxy transport](../crates/reel-workflow-http/README.md)
 performs bounded real POSTs with durable intent, received-prefix preservation and
-no automatic retries. Eight loopback/CLI tests and strict Clippy pass; it still
-needs native protected-job wiring, provider-specific request/response adapters,
-account/model/voice admission and actual service qualification.
+no automatic retries. Eight loopback/CLI tests and strict Clippy pass. It now
+connects to [protected native proxy jobs](handoff/2026-11-19-native-provider-proxy.md).
+The positive fixture retains exact request/response/config evidence after one
+local HTTP call; the uncertain fixture preserves its original Waiting job and
+refuses another POST, including after loss of local call files. All 48 default
+native tests and strict Clippy pass. Built-in service-specific request/response
+adapters, account/model/voice admission and actual service qualification remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

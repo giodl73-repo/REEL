@@ -52,10 +52,22 @@ actually called the provider. Manual pending returns remain explicit; provider
 pending ingress can resume the original captured result.
 
 Preflight/native-missing-input tests prove no network effects or new claims.
-Existing-pool fixtures are being qualified for one local HTTP call followed by
-retained evidence/replay, and for uncertain response preservation, unchanged claims,
-no repeated POST and refusal after loss of local call files. They use synthetic
-data and an explicit existing native pool, not real providers or private media.
+Both existing-pool fixtures pass: one local HTTP call followed by retained
+evidence/replay (174.82 seconds), and uncertain response preservation, unchanged
+claims, no repeated POST and refusal after loss of local call files (66.72 seconds).
+All 48 default native tests and strict native Clippy pass. They use synthetic data
+and an explicit existing native pool, not real providers or private media.
+
+Evidence: `F:/src/tig-dev-temp/reel-workflow-native-provider-20261119-v1/qualified-tools.json`.
+Source pin `4e72808`; all 1,838 archived files match. Runtime SHA256:
+`8b449aef6d80c32bea0586510603f52aee381568b8f70d9c50ddb5fe7036d267`.
+Fixture SHA256:
+`97d5f7c44fcf4fee4b98fe4139660f9666f43bef54317afca7ea430cd64823bd`.
+The complete controller is `F:/src/tig-dev-temp/.tmpcgbNWP`, source
+`F:/src/tig-dev-temp/.tmpIbeYJ3`; its result is Retained. The uncertain controller
+is `F:/src/tig-dev-temp/.tmpF6U0Cj`, source `F:/src/tig-dev-temp/.tmpX85dfp`;
+its original job remains Waiting. Preserve both contexts and scratch, especially
+the uncertain call owner's record, original ticket and captured response prefix.
 
 This is the generic proxy protocol. Built-in service-specific text/image and
 ElevenLabs v4 request composition, account/model/voice admission, contextual

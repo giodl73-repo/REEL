@@ -25,6 +25,11 @@ reel-workflow-native advance-recipe RECIPE BASE_PLAN BASE_BINDINGS CONFIG PRIVAT
 reel-workflow-native dispatch-task PLAN BINDINGS TASK CONFIG PRIVATE_DIRECTORY --apply
 ```
 
+Dispatch can use an explicit ordered-input [HTTP proxy provider](../../docs/handoff/2026-11-19-native-provider-proxy.md)
+with durable single-call ownership, private request/response/config evidence and
+actual native retained completion. Real provider/account/voice qualification is
+separate from the synthetic local proxy qualification.
+
 The isolated graph consumes `vendor/tig-workflow`, preserving all 247 source pins
 and the original source-pin manifest. It identifies dirty qualified source;
 c62c58c ancestry alone is insufficient. The bridge lockfile was seeded from that
