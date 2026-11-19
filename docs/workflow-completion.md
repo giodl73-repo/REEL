@@ -37,7 +37,10 @@ proposals to exact source declarations, previews, acceptance and original receip
 recovery, with positive composite qualification through native staging and a
 protected waiting prompt batch. The [recipe frontier](handoff/2026-11-18-recipe-frontier.md)
 now proposes bounded eligible waves and blocks stale descendants using native
-observations. Connect effectful recipe advancement, guarded job-slot close/reuse and
+observations. [Guarded job-slot close/reuse](handoff/2026-11-18-job-close.md)
+now passes original interrupted native Prepare recovery, retained-byte reopening
+and old-close fencing after reuse; scratch retirement remains separate.
+Connect effectful recipe advancement and
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
