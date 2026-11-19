@@ -560,6 +560,50 @@ pub fn check_output(
     Ok(())
 }
 
+/// Verify an exact returned output using a fixed-size buffer. `maximum` is an
+/// additional caller allowance; it never expands the packet's output contract.
+/// This checks bytes only, not semantic quality, execution or retained custody.
+pub fn check_output_reader(
+    packet: &Packet,
+    result: &ReturnedResult,
+    name: &str,
+    reader: &mut impl std::io::Read,
+    maximum: u64,
+) -> Result<()> {
+    check_result(packet, result)?;
+    let artifact = result.artifacts.get(name).ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "named-output".into(),
+    })?;
+    if artifact.bytes > maximum {
+        return fail(ErrorKind::Budget, "output-stream-allowance");
+    }
+    let mut hash = Sha256::new();
+    let mut length = 0u64;
+    let mut buffer = [0u8; 65536];
+    loop {
+        let count = match reader.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(_) => return fail(ErrorKind::NeedsRecovery, "output-stream-io"),
+        };
+        length = length
+            .checked_add(count as u64)
+            .filter(|n| *n <= artifact.bytes)
+            .ok_or_else(|| Error {
+                kind: ErrorKind::Integrity,
+                code: "output-content".into(),
+            })?;
+        hash.update(&buffer[..count]);
+    }
+    let actual: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if length != artifact.bytes || actual != artifact.sha256 {
+        return fail(ErrorKind::Integrity, "output-content");
+    }
+    Ok(())
+}
+
 /// Same logical attempt may replay exactly. A different response under that
 /// attempt conflicts; it must not overwrite the first or become a fresh retry.
 pub fn check_replay(prior: &ReturnedResult, returned: &ReturnedResult) -> Result<()> {

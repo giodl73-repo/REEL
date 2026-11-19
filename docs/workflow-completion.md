@@ -14,6 +14,15 @@ return and native admission bounds do not qualify that consumer. Streamed
 composition, complete bilingual content/delivery and original-operation recovery
 at that scale remain required; small comic/movie fixtures cannot close them.
 
+[Streamed return verification](handoff/2026-11-19-streamed-return-verification.md)
+now hashes generic candidate bytes from held ordinary files in fixed 64 KiB
+chunks; PNG decoding and structured-report semantic validation retain their
+existing bounded paths. All 102 workflow tests, 63 standard native tests and
+strict Clippy pass. This removes one whole-output allocation from verification;
+it does not lift v1 limits, stream producer capture or qualify multi-GB episode
+production. The consumer's eight retained S5 requirements remain open where the
+scale audit identifies missing integration/evidence.
+
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
 | Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic/issue workers, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Broader execution/admission scheduling, automatic derived controls and project configuration; preserve existing producers. |

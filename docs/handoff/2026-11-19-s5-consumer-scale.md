@@ -23,6 +23,12 @@ requires five-hour render windows. Source captions comprise fourteen tracks /
 whole-film conformance. Melena retains the contract payload and creative choices;
 REEL stores this small requirement/evidence mapping.
 
+The user's subsequent planning context names the retained working theme
+**Olas perdidas** at the full 2:00, a proposed Cuba / 1958 first card and a
+departure/Miami direction. These remain project planning choices, separate from
+technical acceptance and production adoption. The existing S4E7 jobs and exact
+approvals continue unchanged.
+
 The bounded movie/comic fixtures in the completion ledger do not establish this
 scale. Keep actual input count, logical byte total, largest object, scratch,
 output size and lifecycle transaction changes distinct during admission.

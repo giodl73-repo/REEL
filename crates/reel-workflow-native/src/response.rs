@@ -138,19 +138,26 @@ fn verify(
             reel_assets::jobs::open_workspace_directory(path.parent().unwrap())
                 .map_err(|_| error(ErrorKind::Denied, "response-file-ancestors"))?,
         );
-        let (raw, held) = crate::staging::read_held(&path, artifact.bytes.min(MAX_BYTES))?;
-        reel_workflow::check_output(packet, result, name, &raw)?;
-        if packet.task.operation == reel_workflow::Operation::ImageCandidate
-            && artifact.media_type == "image/png"
-        {
-            reel_workflow_http::raster::inspect_png(&raw)?;
-        }
-        if review
+        let image = packet.task.operation == reel_workflow::Operation::ImageCandidate
+            && artifact.media_type == "image/png";
+        let report = review
             .as_ref()
-            .is_some_and(|(_, bound)| bound.report_output() == name)
-        {
-            review_output = Some(raw);
-        }
+            .is_some_and(|(_, bound)| bound.report_output() == name);
+        let held = if image || report {
+            let (raw, held) = crate::staging::read_held(&path, artifact.bytes.min(MAX_BYTES))?;
+            reel_workflow::check_output(packet, result, name, &raw)?;
+            if image {
+                reel_workflow_http::raster::inspect_png(&raw)?;
+            }
+            if report {
+                review_output = Some(raw);
+            }
+            held
+        } else {
+            let mut held = crate::staging::open_held(&path, artifact.bytes.min(MAX_BYTES))?;
+            reel_workflow::check_output_reader(packet, result, name, &mut held, MAX_BYTES)?;
+            held
+        };
         files.push(held);
     }
     if let Some((_, bound)) = &review {

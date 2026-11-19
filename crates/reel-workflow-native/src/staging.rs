@@ -171,7 +171,7 @@ fn ordinary(metadata: &fs::Metadata, directory: bool) -> bool {
             metadata.is_file()
         }
 }
-pub(crate) fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
+pub(crate) fn open_held(path: &Path, maximum: u64) -> Result<File> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(windows)]
@@ -179,7 +179,7 @@ pub(crate) fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
         use std::os::windows::fs::OpenOptionsExt;
         options.share_mode(1).custom_flags(0x0020_0000);
     }
-    let mut file = options.open(path).map_err(io_error)?;
+    let file = options.open(path).map_err(io_error)?;
     let metadata = file.metadata().map_err(io_error)?;
     if !ordinary(&metadata, false) {
         return Err(error(ErrorKind::Denied, "staging-ordinary-file-required"));
@@ -187,6 +187,10 @@ pub(crate) fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
     if metadata.len() > maximum {
         return Err(error(ErrorKind::Budget, "staging-file-bytes"));
     }
+    Ok(file)
+}
+pub(crate) fn read_held(path: &Path, maximum: u64) -> Result<(Vec<u8>, File)> {
+    let mut file = open_held(path, maximum)?;
     let mut raw = Vec::new();
     Read::by_ref(&mut file)
         .take(maximum + 1)

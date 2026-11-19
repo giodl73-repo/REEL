@@ -59,6 +59,98 @@ fn returned(packet: &Packet, mode: Mode) -> ReturnedResult {
 }
 
 #[test]
+fn streamed_outputs_handle_short_reads_and_interruption_with_bounded_buffers() {
+    use std::io::Read;
+    struct ShortReads {
+        input: std::io::Cursor<Vec<u8>>,
+        interrupted: bool,
+        largest_request: usize,
+    }
+    impl Read for ShortReads {
+        fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+            assert!(buffer.len() <= 65536, "whole-output buffering requested");
+            self.largest_request = self.largest_request.max(buffer.len());
+            if !self.interrupted {
+                self.interrupted = true;
+                return Err(std::io::ErrorKind::Interrupted.into());
+            }
+            let count = buffer.len().min(7);
+            self.input.read(&mut buffer[..count])
+        }
+    }
+    let data = vec![0x61; 3 * 65536 + 13];
+    let mut declaration = plan();
+    declaration.tasks[0]
+        .outputs
+        .get_mut("note")
+        .unwrap()
+        .max_bytes = data.len() as u64;
+    let packet = make_packet(&declaration, "note", BTreeMap::new()).unwrap();
+    let mut result = returned(&packet, Mode::Handoff);
+    result.artifacts.get_mut("note").unwrap().sha256 = digest(&data);
+    result.artifacts.get_mut("note").unwrap().bytes = data.len() as u64;
+    let mut reader = ShortReads {
+        input: std::io::Cursor::new(data),
+        interrupted: false,
+        largest_request: 0,
+    };
+    check_output_reader(&packet, &result, "note", &mut reader, u64::MAX).unwrap();
+    assert_eq!(reader.input.position(), result.artifacts["note"].bytes);
+    assert!(reader.largest_request <= 65536);
+}
+
+#[test]
+fn streamed_output_refuses_truncation_trailing_data_corruption_and_io_failure() {
+    let packet = packet();
+    let result = returned(&packet, Mode::Handoff);
+    for raw in [
+        b"hell".as_slice(),
+        b"helloo".as_slice(),
+        b"hallo".as_slice(),
+    ] {
+        let error = check_output_reader(
+            &packet,
+            &result,
+            "note",
+            &mut std::io::Cursor::new(raw),
+            1024,
+        )
+        .unwrap_err();
+        assert_eq!(error.kind, ErrorKind::Integrity);
+        assert_eq!(error.code, "output-content");
+    }
+    struct Broken;
+    impl std::io::Read for Broken {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::BrokenPipe.into())
+        }
+    }
+    let error = check_output_reader(&packet, &result, "note", &mut Broken, 1024).unwrap_err();
+    assert_eq!(error.kind, ErrorKind::NeedsRecovery);
+    assert_eq!(error.code, "output-stream-io");
+}
+
+#[test]
+fn streamed_output_checks_declared_contract_and_caller_allowance_before_reading() {
+    struct Unread;
+    impl std::io::Read for Unread {
+        fn read(&mut self, _buffer: &mut [u8]) -> std::io::Result<usize> {
+            panic!("refused stream was read")
+        }
+    }
+    let packet = packet();
+    let mut result = returned(&packet, Mode::Handoff);
+    assert_eq!(
+        check_output_reader(&packet, &result, "note", &mut Unread, 4)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Budget
+    );
+    result.artifacts.get_mut("note").unwrap().bytes = 1025;
+    assert!(check_output_reader(&packet, &result, "note", &mut Unread, u64::MAX).is_err());
+}
+
+#[test]
 fn plans_are_project_neutral_and_language_specific() {
     let first = packet();
     let mut other = plan();
