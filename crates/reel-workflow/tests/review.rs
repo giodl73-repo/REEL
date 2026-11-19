@@ -344,6 +344,67 @@ struct ResolutionCase {
     after: BTreeMap<String, CheckedReport>,
     decision: reel_workflow::resolution::Decision,
 }
+#[test]
+fn close_draft_binds_one_delivered_finding_and_checked_resolution_without_copying_private_context()
+{
+    use reel_workflow::tracker::{self, close};
+    let c = ResolutionCase::new(true);
+    let resolution = c.propose().unwrap();
+    let finding = c.before.findings().keys().next().unwrap().clone();
+    let original = tracker::draft(
+        &c.before,
+        &Routes {
+            project: "example/project".into(),
+            reel: "example/reel".into(),
+            tig: "example/tig".into(),
+        },
+        &tracker::Text {
+            schema: "reel.workflow-issue-text.v1".into(),
+            finding_key: finding.clone(),
+            repository: "example/project".into(),
+            title: "Synthetic issue".into(),
+            body: "Explicit body".into(),
+            synthetic_reproduction: None,
+        },
+    )
+    .unwrap();
+    let issue = close::Issue {
+        create_operation_id: original.operation_id.clone(),
+        create_request_sha256: digest(&original.payload().unwrap()),
+        issue_id: "7".into(),
+        issue_url: "https://tracker.invalid/example/project/issues/7".into(),
+    };
+    let text = close::Text {
+        schema: "reel.workflow-issue-close-text.v1".into(),
+        finding_key: finding,
+        expected_revision: "rev-1".into(),
+        note: "Corrección revisada.".into(),
+    };
+    let draft = close::draft(&original, &issue, &resolution, &text).unwrap();
+    let payload: serde_json::Value = decode(&draft.payload().unwrap()).unwrap();
+    assert_eq!(payload["note"], text.note);
+    assert_eq!(payload["expected_state"], "open");
+    assert!(payload.get("baseline_report_sha256").is_none());
+    assert!(payload.get("finding_key").is_none());
+    let mut changed = draft.clone();
+    changed.note = "New note".into();
+    changed.expected_revision = "rev-2".into();
+    assert_eq!(close::operation(&changed).unwrap(), draft.operation_id);
+    let mut wrong = issue.clone();
+    wrong.create_request_sha256 = "d".repeat(64);
+    assert_eq!(
+        close::draft(&original, &wrong, &resolution, &text)
+            .unwrap_err()
+            .code,
+        "tracker-close-resolution-binding"
+    );
+    let mut wrong = text.clone();
+    wrong.finding_key = "e".repeat(64);
+    assert!(close::draft(&original, &issue, &resolution, &wrong).is_err());
+    let mut wrong = c.propose().unwrap();
+    wrong.finding_keys.clear();
+    assert!(close::draft(&original, &issue, &wrong, &text).is_err());
+}
 impl ResolutionCase {
     fn new(comic: bool) -> Self {
         let mut old = copy(comic, "es");

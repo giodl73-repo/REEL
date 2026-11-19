@@ -61,6 +61,34 @@ fn write(file: &mut File, bytes: &[u8]) -> Result<()> {
         .map_err(|_| error(ErrorKind::NeedsRecovery, "http-response-write-preserve"))
 }
 fn run(args: &[String]) -> Result<serde_json::Value> {
+    if let [command, config, original, draft, apply] = args
+        && command == "close-issue"
+        && apply == "--apply"
+    {
+        let config: reel_workflow_http::tracker::CloseConfig =
+            reel_workflow::decode(&read(config, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        let original =
+            reel_workflow::decode(&read(original, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        let draft = reel_workflow::decode(&read(draft, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        config.close(&original, &draft, |name| std::env::var(name).ok())?;
+        return Ok(
+            serde_json::json!({"ok":true,"scope":"issue-proxy-close","close_receipt_verified":true,"native_retained":false,"task_completed":false,"selected":false}),
+        );
+    }
+    if let [command, config, original, draft, query, apply] = args
+        && command == "reconcile-issue-close"
+        && apply == "--apply"
+    {
+        let config: reel_workflow_http::tracker::CloseConfig =
+            reel_workflow::decode(&read(config, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        let original =
+            reel_workflow::decode(&read(original, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        let draft = reel_workflow::decode(&read(draft, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        config.reconcile(&original, &draft, query, |name| std::env::var(name).ok())?;
+        return Ok(
+            serde_json::json!({"ok":true,"scope":"issue-proxy-close-reconciliation","close_receipt_verified":true,"native_retained":false,"task_completed":false,"selected":false}),
+        );
+    }
     if let [command, config, draft, apply] = args
         && command == "submit-issue"
         && apply == "--apply"
@@ -150,6 +178,9 @@ fn main() -> ExitCode {
         );
         println!(
             "reel-workflow-http submit-issue TRACKER_CONFIG DRAFT --apply\nreel-workflow-http reconcile-issue TRACKER_CONFIG DRAFT QUERY_ID --apply"
+        );
+        println!(
+            "reel-workflow-http close-issue CLOSE_CONFIG ORIGINAL_DRAFT CLOSE_DRAFT --apply\nreel-workflow-http reconcile-issue-close CLOSE_CONFIG ORIGINAL_DRAFT CLOSE_DRAFT QUERY_ID --apply"
         );
         return ExitCode::SUCCESS;
     }

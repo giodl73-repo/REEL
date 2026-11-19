@@ -1,6 +1,10 @@
 //! One create effect per durable operation, with explicit lookup reconciliation.
 //! The configured proxy must enforce operation-id/payload uniqueness remotely.
+#[path = "tracker_effect.rs"]
+mod effect;
 use super::{Config as HttpConfig, ResponseHead, error};
+use effect::Effect;
+pub use effect::{CloseConfig, CloseReceipt, Closed};
 use reel_workflow::{
     ErrorKind, MAX_CONTROL_BYTES, Result, canonical_digest, decode, digest, tracker::Draft,
 };
@@ -34,12 +38,12 @@ pub struct Receipt {
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct Delivered {
+pub struct Delivered<R = Receipt> {
     pub schema: String,
     pub operation_id: String,
     pub draft_sha256: String,
     pub evidence_key: String,
-    pub receipt: Receipt,
+    pub receipt: R,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -214,7 +218,34 @@ fn flush(file: &mut File, bytes: &[u8]) -> Result<()> {
         .map_err(|_| error(ErrorKind::NeedsRecovery, "tracker-control-write-preserve"))
 }
 impl Config {
-    fn check(&self, draft: &Draft) -> Result<()> {
+    pub fn submit(
+        &self,
+        draft: &Draft,
+        resolve: impl Fn(&str) -> Option<String>,
+    ) -> Result<Delivered> {
+        self.submit_effect(draft, resolve, true)
+    }
+    pub fn reconcile(
+        &self,
+        draft: &Draft,
+        query: &str,
+        resolve: impl Fn(&str) -> Option<String>,
+    ) -> Result<Delivered> {
+        self.reconcile_effect(draft, query, resolve)
+    }
+    /// Read-only, full original request/response/config validation. A serialized
+    /// receipt alone is insufficient. Lost/incomplete delivery must reconcile.
+    pub fn verified_delivery(&self, draft: &Draft) -> Result<Delivered> {
+        self.check(draft)?;
+        let registry = Registry::open(&self.registry, &draft.operation_id)?;
+        self.delivered(&registry, draft)?.ok_or_else(|| {
+            error(
+                ErrorKind::NeedsRecovery,
+                "tracker-verified-delivery-required",
+            )
+        })
+    }
+    fn check<E: Effect>(&self, draft: &E) -> Result<()> {
         draft.check()?;
         if self.schema != "reel.workflow-tracker.v1"
             || self.repositories.is_empty()
@@ -251,9 +282,10 @@ impl Config {
                 return Err(error(ErrorKind::Invalid, "tracker-issue-url-prefix"));
             }
         }
-        if !self.repositories.contains_key(&draft.repository) {
+        if !self.repositories.contains_key(draft.repository()) {
             return Err(error(ErrorKind::Denied, "tracker-repository-not-allowed"));
         }
+        draft.check_target(&self.repositories[draft.repository()])?;
         for http in [&self.create, &self.lookup] {
             if http.request_byte_limit > MAX_CONTROL_BYTES as u64
                 || http.response_byte_limit > MAX_CONTROL_BYTES as u64
@@ -264,21 +296,21 @@ impl Config {
         }
         Ok(())
     }
-    fn call(&self, draft: &Draft, query: Option<&str>) -> Result<(Call, Vec<u8>)> {
+    fn call<E: Effect>(&self, draft: &E, query: Option<&str>) -> Result<(Call, Vec<u8>)> {
         let payload = draft.payload()?;
         let (op, body) = if let Some(query) = query {
             if !super::token(query) {
                 return Err(error(ErrorKind::Invalid, "tracker-query-id"));
             }
-            (canonical_digest(&("reel.workflow-issue-lookup-operation.v1",&draft.operation_id,query))?,serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-issue-lookup.v1","operation_id":draft.operation_id,"repository":draft.repository,"request_sha256":digest(&payload)})).map_err(|_|error(ErrorKind::Invalid,"tracker-query-json"))?)
+            (canonical_digest(&(E::LOOKUP_OPERATION,draft.operation_id(),query))?,serde_json::to_vec(&serde_json::json!({"schema":E::LOOKUP,"operation_id":draft.operation_id(),"repository":draft.repository(),"request_sha256":digest(&payload)})).map_err(|_|error(ErrorKind::Invalid,"tracker-query-json"))?)
         } else {
-            (draft.operation_id.clone(), payload)
+            (draft.operation_id().to_owned(), payload)
         };
         Ok((
             Call {
-                schema: "reel.workflow-issue-call.v1".into(),
+                schema: E::CALL.into(),
                 operation_id: op,
-                create_operation_id: draft.operation_id.clone(),
+                create_operation_id: draft.operation_id().to_owned(),
                 config_sha256: canonical_digest(self)?,
                 draft_sha256: canonical_digest(draft)?,
                 request_sha256: digest(&body),
@@ -288,7 +320,7 @@ impl Config {
             body,
         ))
     }
-    fn original(&self, registry: &Registry, draft: &Draft, key: &str) -> Result<Call> {
+    fn original<E: Effect>(&self, registry: &Registry, draft: &E, key: &str) -> Result<Call> {
         let raw = registry.read(key, "intent")?;
         let recorded: Call = decode(&raw).map_err(|_| {
             error(
@@ -313,12 +345,12 @@ impl Config {
         }
         Ok(recorded)
     }
-    fn finish(&self, registry: &Registry, draft: &Draft, key: &str) -> Result<Receipt> {
+    fn finish<E: Effect>(&self, registry: &Registry, draft: &E, key: &str) -> Result<E::Receipt> {
         self.original(registry, draft, key)?;
         let complete: Complete = decode(&registry.read(key, "complete")?)
             .map_err(|_| error(ErrorKind::NeedsRecovery, "tracker-original-completion"))?;
         let raw = registry.read(key, "response")?;
-        if complete.schema != "reel.workflow-issue-response.v1"
+        if complete.schema != E::RESPONSE
             || complete.body_bytes != raw.len() as u64
             || complete.body_sha256 != digest(&raw)
         {
@@ -330,38 +362,28 @@ impl Config {
                 "tracker-remote-outcome-uncertain",
             ));
         }
-        let receipt: Receipt = decode(&raw).map_err(|_| {
+        let receipt: E::Receipt = decode(&raw).map_err(|_| {
             error(
                 ErrorKind::NeedsRecovery,
                 "tracker-remote-receipt-unreadable",
             )
         })?;
-        if receipt.schema != "reel.workflow-issue-receipt.v1"
-            || receipt.operation_id != draft.operation_id
-            || receipt.repository != draft.repository
-            || receipt.request_sha256 != digest(&draft.payload()?)
-            || !super::token(&receipt.issue_id)
-            || receipt.issue_url
-                != format!(
-                    "{}{}",
-                    self.repositories[&draft.repository], receipt.issue_id
-                )
-        {
-            return Err(error(
-                ErrorKind::Integrity,
-                "tracker-remote-receipt-binding",
-            ));
-        }
+        draft.receipt(&receipt, &self.repositories[draft.repository()])?;
         Ok(receipt)
     }
-    fn delivered(&self, registry: &Registry, draft: &Draft) -> Result<Option<Delivered>> {
-        if !registry.exists(&draft.operation_id, "receipt") {
+    fn delivered<E: Effect>(
+        &self,
+        registry: &Registry,
+        draft: &E,
+    ) -> Result<Option<Delivered<E::Receipt>>> {
+        if !registry.exists(draft.operation_id(), "receipt") {
             return Ok(None);
         }
-        let record: Delivered = decode(&registry.read(&draft.operation_id, "receipt")?)
-            .map_err(|_| error(ErrorKind::NeedsRecovery, "tracker-local-receipt-unreadable"))?;
-        if record.schema != "reel.workflow-issue-delivery.v1"
-            || record.operation_id != draft.operation_id
+        let record: Delivered<E::Receipt> =
+            decode(&registry.read(draft.operation_id(), "receipt")?)
+                .map_err(|_| error(ErrorKind::NeedsRecovery, "tracker-local-receipt-unreadable"))?;
+        if record.schema != E::DELIVERY
+            || record.operation_id != draft.operation_id()
             || record.draft_sha256 != canonical_digest(draft)?
             || record.evidence_key.len() != 64
             || !record
@@ -374,21 +396,26 @@ impl Config {
         }
         Ok(Some(record))
     }
-    fn persist_receipt(&self, registry: &Registry, draft: &Draft, key: &str) -> Result<Delivered> {
+    fn persist_receipt<E: Effect>(
+        &self,
+        registry: &Registry,
+        draft: &E,
+        key: &str,
+    ) -> Result<Delivered<E::Receipt>> {
         let record = Delivered {
-            schema: "reel.workflow-issue-delivery.v1".into(),
-            operation_id: draft.operation_id.clone(),
+            schema: E::DELIVERY.into(),
+            operation_id: draft.operation_id().to_owned(),
             draft_sha256: canonical_digest(draft)?,
             evidence_key: key.into(),
             receipt: self.finish(registry, draft, key)?,
         };
-        registry.store(&draft.operation_id, "receipt", &record)?;
+        registry.store(draft.operation_id(), "receipt", &record)?;
         Ok(record)
     }
-    fn send(
+    fn send<E: Effect>(
         &self,
         registry: &Registry,
-        draft: &Draft,
+        draft: &E,
         query: Option<&str>,
         resolve: impl Fn(&str) -> Option<String>,
     ) -> Result<String> {
@@ -408,6 +435,7 @@ impl Config {
             .take(4097)
             .count()
             + 6
+            + E::extra_files()
             > 4096
         {
             return Err(error(ErrorKind::Budget, "tracker-registry-entry-limit"));
@@ -429,7 +457,11 @@ impl Config {
                 {
                     return Err(error(ErrorKind::Integrity, "tracker-transport-intent"));
                 }
-                registry.store(key, "intent", &record)
+                registry.store(key, "intent", &record)?;
+                if query.is_none() {
+                    draft.consume(registry)?;
+                }
+                Ok(())
             },
             |head: &ResponseHead| registry.store(key, "head", head),
             |chunk| flush(&mut output, chunk),
@@ -438,7 +470,7 @@ impl Config {
             key,
             "complete",
             &Complete {
-                schema: "reel.workflow-issue-response.v1".into(),
+                schema: E::RESPONSE.into(),
                 status: response.status,
                 body_sha256: response.body_sha256,
                 body_bytes: response.body.len() as u64,
@@ -447,34 +479,41 @@ impl Config {
         Ok(key.clone())
     }
     /// A consumed create intent is never sent again, even on HTTP failure.
-    pub fn submit(
+    fn submit_effect<E: Effect>(
         &self,
-        draft: &Draft,
+        draft: &E,
         resolve: impl Fn(&str) -> Option<String>,
-    ) -> Result<Delivered> {
+        fresh: bool,
+    ) -> Result<Delivered<E::Receipt>> {
         self.check(draft)?;
-        let registry = Registry::open(&self.registry, &draft.operation_id)?;
-        if registry.exists(&draft.operation_id, "intent") {
-            self.original(&registry, draft, &draft.operation_id)?;
+        let registry = Registry::open(&self.registry, draft.operation_id())?;
+        if registry.exists(draft.operation_id(), "intent") {
+            self.original(&registry, draft, draft.operation_id())?;
             if let Some(receipt) = self.delivered(&registry, draft)? {
                 return Ok(receipt);
             }
-            return self.persist_receipt(&registry, draft, &draft.operation_id);
+            return self.persist_receipt(&registry, draft, draft.operation_id());
+        }
+        if !fresh {
+            return Err(error(
+                ErrorKind::NeedsRecovery,
+                "tracker-original-effect-uncertain",
+            ));
         }
         let key = self.send(&registry, draft, None, resolve)?;
         self.persist_receipt(&registry, draft, &key)
     }
     /// Proxy lookup MUST be read-only. Not-found/uncertain lookup never permits
     /// another create. A fresh query id permits another explicit lookup only.
-    pub fn reconcile(
+    fn reconcile_effect<E: Effect>(
         &self,
-        draft: &Draft,
+        draft: &E,
         query: &str,
         resolve: impl Fn(&str) -> Option<String>,
-    ) -> Result<Delivered> {
+    ) -> Result<Delivered<E::Receipt>> {
         self.check(draft)?;
-        let registry = Registry::open(&self.registry, &draft.operation_id)?;
-        self.original(&registry, draft, &draft.operation_id)?;
+        let registry = Registry::open(&self.registry, draft.operation_id())?;
+        self.original(&registry, draft, draft.operation_id())?;
         if let Some(receipt) = self.delivered(&registry, draft)? {
             return Ok(receipt);
         }

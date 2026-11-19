@@ -1,6 +1,7 @@
 //! Explicit issue text, separated from private review context. Validation is not
 //! rights approval, tracker delivery, issue closure or repair authorization.
 use crate::*;
+pub mod close;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Text {
