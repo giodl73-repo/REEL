@@ -61,6 +61,8 @@ hashes form a continuous hold even across logical aliases or cue boundaries.
 The hard hold maximum refuses production controls; preferred duration bounds
 produce hints. This audit measures selected primary drawings: camera/VFX changes
 do not count as new drawings in this forecast.
+The preview's `sample_rate`/`duration_samples` describe common analysis ticks;
+they do not change or resample the original recordings.
 
 The desired cel duration gives a composition-count target, not permission to
 invent semantic cuts or alter narration. `held-cels` forecasts one drawing per
@@ -108,3 +110,30 @@ Applied animation-direction, editing and rights/provenance producer checklists:
 style and feasibility are explicit; hard timing constraints and language clocks
 are preserved; unmet density remains visible; technical pass grants no creative,
 translation, reference-use or release decision.
+
+## Qualification
+
+Source `2132f9b80802db2814bf8a6fc64d9518854c1ed3` has 94 passing
+workflow tests, including ES/EN targets, unchanged legacy control bytes, drawing
+cadence independent of delivery fps, reuse without regeneration, cross-cue alias
+coalescing, clock overflow and budget/invalid-reference refusal. Strict workflow
+Clippy and strict native Clippy with/without film support pass. The standard native
+regression suite passed 58 tests and all 247 SDK source pins before the final
+preflight CLI/reuse refinements; those refinements received pure tests, rebuilt
+tools, strict Clippy and the explicit native execution below. All 1,897 archived
+source files verified.
+
+The existing-pool Spanish native fixture passed in 416.11 test seconds (416.79
+wall seconds), retaining and reopening six controls and replaying its original
+worker. The native preview command left claims unchanged and called no provider.
+The measured cuts remained 2,400/8,000 samples; the preview froze 24 delivery frames,
+three desired compositions, thirteen drawing slots for actual cuts and a fourteen
+slot conservative target. Style remained `realistic`, performance `theatrical`,
+with unresolved exposure binding explicitly true. The preflight ran after fixture
+input publication, not before those bytes existed. No footage was rendered.
+
+Preserved roots: `F:/src/tig-dev-temp/.tmpUnSUy9` (operation) and
+`F:/src/tig-dev-temp/.tmpVXJjT6` (source). Frozen tools, source, controls and raw
+check/fixture logs are pinned by
+`F:/src/tig-dev-temp/reel-film-direction-20261119-v1/qualified-tools.json`,
+SHA256 `6f8d57a86fe964d67e1e1fef9bf51f087aa563b8abeec28877222fc658d7eae5`.
