@@ -50,6 +50,10 @@ pending original adoption before admitting independent tasks. Full comic/control
 wave execution and project-specific configurations remain open. The existing-pool
 fixture now passes two admitted/staged tasks, retained parent completion and
 automatic admission of its dependent while preserving the other Waiting job.
+[Protected dispatch](handoff/2026-11-19-protected-dispatch.md) now connects
+optional recipe execution to owned input staging, protected manual batches and
+the existing retained comic worker. Its automatic handoff fixture passes across
+two waves; deterministic comic/history qualification remains in progress.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

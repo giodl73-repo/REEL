@@ -51,8 +51,9 @@ original import intent: Windows status `0xc00000fd` (stack overflow). The pinned
 runtime, original worker ticket, completed output packet, journal and claims are
 preserved at `F:/src/tig-dev-temp/.tmpgfZHie`; the Git source is
 `F:/src/tig-dev-temp/.tmp3Cv1qt`. The original-operation dispatch replay confirmed
-the same stack failure. A direct original `run-worker` recovery is being observed;
-no fresh attempt, selection, cleanup or claim release is inferred.
+the same stack failure. Direct original `run-worker` recovery then passed and
+verified the original result Retained, using the same worker ticket and runtime.
+No fresh attempt, selection, cleanup or claim release occurred.
 
 CLI execution now uses one explicitly bounded 32 MiB Rust thread in the same
 executable, preserving the lifecycle runtime pin and keeping all effect handles
