@@ -17,9 +17,13 @@ at that scale remain required; small comic/movie fixtures cannot close them.
 [Streamed return verification](handoff/2026-11-19-streamed-return-verification.md)
 now hashes generic candidate bytes from held ordinary files in fixed 64 KiB
 chunks; PNG decoding and structured-report semantic validation retain their
-existing bounded paths. All 102 workflow tests, 63 standard native tests and
-strict Clippy pass. This removes one whole-output allocation from verification;
-it does not lift v1 limits, stream producer capture or qualify multi-GB episode
+existing bounded paths. Movie return/historical verification now also streams
+media and buffers only execution controls/requested review metadata. All 103
+workflow tests, 63 standard native tests and strict Clippy pass. A 102.36-second
+native historical fixture reopens proof and the identical review copy/IDs after
+source slot reuse, with unchanged claims and old-activation fencing. These
+changes remove whole-media buffering from verification;
+they do not lift v1 limits, stream producer capture or qualify multi-GB episode
 production. The consumer's eight retained S5 requirements remain open where the
 scale audit identifies missing integration/evidence.
 
@@ -63,8 +67,8 @@ proof, and a 372.31-second continuation resumed without return files or changes
 to claims, journal or controls. The first recovery fixture's repeated-import
 error remains recorded; the continuation uses the required resume operation.
 All 63 standard native tests and strict Clippy pass; the harness-only correction
-also passes all 21 unit tests and both strict Clippy feature modes. Automatic
-resolution dispatch under the corrected capability registration, larger formats/
+also passes all 21 unit tests and both strict Clippy feature modes. The subsequent
+automatic fixture above closes that bounded dispatch gap. Larger formats/
 languages/projects, retained tracker delivery/close evidence and managed close
 scheduling remain open. These are technical synthetic declarations, not actual
 creative review or issue closure.

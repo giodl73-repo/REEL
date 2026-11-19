@@ -126,9 +126,10 @@ This uses producer-applied rights/provenance and comics-editor checklists:
 original language and context remain bound; technical retention is distinct
 from actual viewing, issue closure, creative/translation approval and release.
 The regression test checks that resolution dispatch still requires an owned
-worker configuration. Automatic resolution dispatch under the corrected
-runtime, retained tracker delivery/close evidence and managed close scheduling
-remain open.
+worker configuration. At this manual-only checkpoint, automatic resolution
+dispatch remained open; the subsequent qualification below closes that bounded
+gap. Retained tracker delivery/close evidence and managed close scheduling remain
+open.
 
 ## Automatic dispatch qualification
 

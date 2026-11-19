@@ -67,3 +67,14 @@ Streamed producer capture plus explicit large-job budgets and bounded native
 composition/recovery remain necessary for S5; this change does not adopt S5 or
 modify existing E7 jobs/approvals. Editor and rights/provenance checks preserve
 unchanged identities, clocks and technical/creative authority separation.
+
+The historical fixture now passes in 102.36 test seconds using source
+`10d5ea4043d32df6dad8ebe14e9a9f6bd0b267de`. Its 1,926 tracked files are archived
+and individually hash/length verified; the frozen optimized inspection test is
+`b2da757dc5db9dc417a0fc267f75fdbac45b3118fd0c93222ef2b432815a8ef1`
+(14,686,208 bytes). Both ordinary historical proof and review metadata capture
+reopened against the previously qualified media verifier. The complete exported
+review copy and IDs match, native claims are unchanged, and the original source
+activation remains refused after slot reuse. No production job, render or native
+publication was created. Exact private evidence is
+`F:/src/tig-dev-temp/reel-streamed-movie-20261119-v1/qualified-tools.json`.

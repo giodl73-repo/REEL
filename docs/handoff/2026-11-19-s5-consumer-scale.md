@@ -95,3 +95,19 @@ be represented as solving these film scale, content or delivery requirements.
 | S5WF-06 | H264/MP3 local review; H264/AAC 48 kHz stereo ES/EN and ES-ID; exact ID tables and eleven-file private handoff; shelf fallback and prior deliveries | Complete workflow delivery integration and target checks remain open. Private, public and Golden authority are separate. |
 | S5WF-07 | Interrupted long-movie/controller recovery, completed-render adoption, original runtime/work/claims and no duplicate effects | Bounded movie/history/replay evidence exists; interruption/adoption at consumer scale remains open. Routine technical steps must not create repeated creative approval prompts. |
 | S5WF-08 | Declarative cast role/age, exact likeness sheet, wardrobe/jewelry, selected voice consent/stage, location/date and pacing; distinct narrator/poet roles | Direction abstractions exist; exact project data bindings and actual creative/rights decisions remain with Melena. Private identity details must stay out of shareable review evidence. |
+
+### Selective rebuilds across Git revisions
+
+`make_packet` currently copies the plan-wide `source_commit` into every packet;
+`packet_key` includes that commit. Thus advancing the overall plan's commit also
+changes otherwise identical task identities. Existing within-snapshot isolation
+tests do not establish S5WF-03 across a real Git revision.
+
+Project adoption needs explicit task/producer snapshot and retained-result
+adoption semantics, so unchanged consumers can stay bound to their original
+exact snapshots while affected consumers advance. Graph, repair, review and
+native bindings must agree on that boundary. Qualify a real A -> B revision in
+which an affected-language task changes, the unaffected task/result/native
+binding stays identical, and only its actual downstream dependents rebuild.
+Keep exact commit/record/annex-leaf identities in all keys and checks; dropping
+the commit pin or substituting current/latest is not selective invalidation.
