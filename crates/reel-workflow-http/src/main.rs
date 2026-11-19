@@ -61,6 +61,32 @@ fn write(file: &mut File, bytes: &[u8]) -> Result<()> {
         .map_err(|_| error(ErrorKind::NeedsRecovery, "http-response-write-preserve"))
 }
 fn run(args: &[String]) -> Result<serde_json::Value> {
+    if let [command, config, draft, apply] = args
+        && command == "submit-issue"
+        && apply == "--apply"
+    {
+        let config: reel_workflow_http::tracker::Config =
+            reel_workflow::decode(&read(config, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        let draft: reel_workflow::tracker::Draft =
+            reel_workflow::decode(&read(draft, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        config.submit(&draft, |name| std::env::var(name).ok())?;
+        return Ok(
+            serde_json::json!({"ok":true,"scope":"issue-proxy-delivery","issue_receipt_verified":true,"native_retained":false,"task_completed":false,"issue_closed":false}),
+        );
+    }
+    if let [command, config, draft, query, apply] = args
+        && command == "reconcile-issue"
+        && apply == "--apply"
+    {
+        let config: reel_workflow_http::tracker::Config =
+            reel_workflow::decode(&read(config, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        let draft: reel_workflow::tracker::Draft =
+            reel_workflow::decode(&read(draft, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+        config.reconcile(&draft, query, |name| std::env::var(name).ok())?;
+        return Ok(
+            serde_json::json!({"ok":true,"scope":"issue-proxy-reconciliation","issue_receipt_verified":true,"native_retained":false,"task_completed":false,"issue_closed":false}),
+        );
+    }
     let [
         command,
         config,
@@ -121,6 +147,9 @@ fn main() -> ExitCode {
     if args == ["--help"] {
         println!(
             "reel-workflow-http post CONFIG OPERATION_ID JSON_BODY NEW_INTENT NEW_METADATA NEW_RESPONSE --apply"
+        );
+        println!(
+            "reel-workflow-http submit-issue TRACKER_CONFIG DRAFT --apply\nreel-workflow-http reconcile-issue TRACKER_CONFIG DRAFT QUERY_ID --apply"
         );
         return ExitCode::SUCCESS;
     }

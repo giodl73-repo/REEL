@@ -63,6 +63,55 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
+            ack,
+            routes,
+            text,
+            output,
+            apply,
+        ] if command == "export-issue-draft" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let guard = reel_workflow_native::retention::verify(
+                &packet,
+                &source,
+                &profile,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(ack))?,
+            )?;
+            let report = guard.review_report().ok_or(reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Unsupported,
+                code: "tracker-retained-review-required".into(),
+            })?;
+            let draft = reel_workflow::tracker::draft(
+                report,
+                &read_control(Path::new(routes))?,
+                &read_control(Path::new(text))?,
+            )?;
+            let raw = serde_json::to_vec(&draft).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "tracker-draft-json".into(),
+            })?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "tracker-draft-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-issue-draft-from-retained-review","issue_filed":false,"task_completed":false,"approved":false}),
+            )
+        }
         [command, packet, source, profile, receipt, output, apply]
             if command == "export-review-brief" && apply == "--apply" =>
         {
@@ -985,6 +1034,7 @@ fn main() -> ExitCode {
             "reel-workflow-native stage-retention PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native retain-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
+            "reel-workflow-native export-issue-draft PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK ROUTES ISSUE_TEXT NEW_DRAFT --apply\n",
             "reel-workflow-native export-review-brief PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT NEW_BRIEF --apply\n",
             "reel-workflow-native pack-review-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT REPORT NEW_RESULT --apply\n",
             "reel-workflow-native export-review-copy PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK NEW_COPY [NEW_COMIC_MANIFEST] --apply\n",

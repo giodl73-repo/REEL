@@ -1728,6 +1728,7 @@ name = "reel-workflow-http"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "fs2",
  "reel-assembly",
  "reel-workflow",
  "reqwest",

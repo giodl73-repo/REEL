@@ -61,6 +61,9 @@ mod review_native;
 #[path = "support/runner_native.rs"]
 mod runner_native;
 #[cfg(windows)]
+#[path = "support/tracker_draft.rs"]
+mod tracker_draft_native;
+#[cfg(windows)]
 use close_native::exercise_native_close;
 #[cfg(windows)]
 #[path = "support/issue_native.rs"]

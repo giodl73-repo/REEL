@@ -1,6 +1,7 @@
 //! HTTP transport only. Callers own input admission, durable intent, response
 //! normalization/publication and uncertain-operation reconciliation.
 pub mod elevenlabs;
+pub mod tracker;
 use reel_workflow::{Error, ErrorKind, Result};
 use reqwest::{
     Url,

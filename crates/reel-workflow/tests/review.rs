@@ -732,6 +732,57 @@ fn issue_proposals_route_and_deduplicate_without_delivering() {
 }
 
 #[test]
+fn tracker_draft_uses_explicit_text_and_keeps_private_review_context_out_of_payload() {
+    let copy = copy(true, "es");
+    let mut report = report(&copy);
+    report.findings[0].requested_change = "PRIVATE REVIEW NOTE".into();
+    let checked = check_report(&copy, &report).unwrap();
+    let key = checked.findings().keys().next().unwrap().clone();
+    let routes = Routes {
+        project: "example/project".into(),
+        reel: "example/reel".into(),
+        tig: "example/tig".into(),
+    };
+    let text = tracker::Text {
+        schema: "reel.workflow-issue-text.v1".into(),
+        finding_key: key,
+        repository: "EXAMPLE/PROJECT".into(),
+        title: "Explicit synthetic title".into(),
+        body: "Explicit shareable text only.".into(),
+        synthetic_reproduction: None,
+    };
+    let draft = tracker::draft(&checked, &routes, &text).unwrap();
+    let payload = String::from_utf8(draft.payload().unwrap()).unwrap();
+    assert!(!payload.contains("PRIVATE"));
+    assert!(!payload.contains("finding_key"));
+    assert!(!payload.contains("report_sha256"));
+    assert!(!payload.contains("publication/source"));
+    assert_eq!(
+        draft.operation_id,
+        issue_proposals(&checked, &routes).unwrap()[0].operation_key
+    );
+    let mut wrong = text.clone();
+    wrong.repository = "example/other".into();
+    assert_eq!(
+        tracker::draft(&checked, &routes, &wrong).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+    report.findings[0].route = Route::Reel;
+    let checked = check_report(&copy, &report).unwrap();
+    let mut generic = text;
+    generic.repository = "example/reel".into();
+    assert_eq!(
+        tracker::draft(&checked, &routes, &generic)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Denied
+    );
+    generic.synthetic_reproduction =
+        Some(pin("synthetic/reproduction", b"bounded synthetic fixture"));
+    tracker::draft(&checked, &routes, &generic).unwrap();
+}
+
+#[test]
 fn finding_and_expanded_issue_output_budgets_refuse() {
     let mut copy = copy(false, "es");
     let unit = copy.units["stable-unit"].clone();
