@@ -37,7 +37,9 @@ An [explicit retained-input read seam](docs/handoff/2026-11-18-retained-dependen
 binds child input identities to exact parent results and verifies native retained
 custody before byte reads. [Composite child admission](docs/handoff/2026-11-18-composite-child-inputs.md)
 adds child-owned input protection, bare-history readback and resumable staging.
-Composite tool replay and issue assembly wiring remain separate work.
+[Composite comic replay](docs/handoff/2026-11-18-composite-comic-replay.md)
+connects this protection to production, returned-file checks and retained editable
+restoration. Complete issue assembly from retained parts remains separate work.
 
 [Publication contracts](docs/publication.md) add film and comic language editions,
 ordered page/panel metadata and independently tracked output sets through

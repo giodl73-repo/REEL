@@ -273,7 +273,7 @@ impl Prepared {
         receipt: &Receipt,
         result: &reel_workflow::ReturnedResult,
         acknowledgement: &Acknowledgement,
-    ) -> Result<Vec<reel_assets::admission::MetadataLock>> {
+    ) -> Result<Fences> {
         let mut session = RetainedFences::default();
         self.verify_retained_in(receipt, result, acknowledgement, &mut session)?;
         Ok(session.locks)
@@ -301,7 +301,7 @@ impl Prepared {
                 &acknowledgement.target.actor,
             )
             .map_err(native_error)?;
-            session.locks.push(fence);
+            session.locks.push(std::sync::Arc::new(fence));
             session.identities.push(identity);
         }
         let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;

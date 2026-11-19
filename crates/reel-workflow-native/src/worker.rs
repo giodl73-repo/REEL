@@ -27,12 +27,6 @@ impl Ticket {
 }
 fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> {
     let packet = &selected.task.ticket.packet;
-    if packet.task.upstream_inputs.is_some() {
-        return Err(error(
-            ErrorKind::Unsupported,
-            "worker-composite-tool-replay-not-connected",
-        ));
-    }
     let tool = packet
         .task
         .tool
@@ -124,14 +118,18 @@ pub fn prepare(
         &selected.profile,
         &selected.task.ticket.packet,
     )?;
-    let _claims = admission::Prepared::open(
+    let claims = admission::Prepared::open(
         &selected.task.ticket.packet,
         &selected.profile.source,
         &selected.profile.admission,
         &selected.task.ticket.attempt_id,
     )?
     .reopen(&selected.profile.binding.admission)?;
-    let mut inputs = NativeInputs::open(&selected.task.ticket.packet, &selected.profile.source)?;
+    let mut inputs = NativeInputs::from_claims(
+        &selected.task.ticket.packet,
+        &selected.profile.source,
+        claims,
+    )?;
     reel_workflow::publication::bind_comic(&selected.task.ticket.packet, &mut inputs)?;
     let request_asset = &context(&selected)?.request;
     let raw = inputs.read(request_asset, request_asset.bytes)?;
@@ -350,7 +348,8 @@ fn execute(
             &ticket.admission.attempt_id,
         )?
         .reopen(&ticket.admission)?;
-        let generated = crate::comic::generate(&ticket.packet, &selected.profile.source)?;
+        let native = NativeInputs::from_claims(&ticket.packet, &selected.profile.source, claims)?;
+        let generated = crate::comic::generate(&ticket.packet, native)?;
         let receipt_raw = generated
             .files
             .get("receipt.json")
@@ -407,7 +406,6 @@ fn execute(
             &mut |_| Ok(()),
         )?;
         drop(generated);
-        drop(claims);
         drop(control);
     }
     let (result, returns) = completed(&mut view, &ticket, &base, pin)?;

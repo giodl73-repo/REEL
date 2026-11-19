@@ -382,6 +382,7 @@ pub struct NativeInputs {
     captured: BTreeMap<Object, Vec<u8>>,
     reads: usize,
     _claims: Option<Box<admission::ClaimsGuard>>,
+    _permit: Option<admission::InputPermit>,
 }
 impl NativeInputs {
     pub fn open(packet: &Packet, profile: &NativeProfile) -> Result<Self> {
@@ -411,6 +412,16 @@ impl NativeInputs {
             .reopen(receipt)?;
         Self::from_claims(packet, source, claims)
     }
+    pub(crate) fn from_permit(
+        packet: &Packet,
+        profile: &NativeProfile,
+        permit: admission::InputPermit,
+    ) -> Result<Self> {
+        permit.check_source(packet, profile)?;
+        let mut inputs = Self::open_inner(packet, profile, None)?;
+        inputs._permit = Some(permit);
+        Ok(inputs)
+    }
     fn open_inner(
         packet: &Packet,
         profile: &NativeProfile,
@@ -437,6 +448,7 @@ impl NativeInputs {
             captured: BTreeMap::new(),
             reads: 0,
             _claims: claims,
+            _permit: None,
         })
     }
     pub fn snapshot(&self) -> &SnapshotInputs {

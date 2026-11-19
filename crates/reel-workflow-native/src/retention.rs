@@ -57,7 +57,7 @@ impl Acknowledgement {
 /// Holds actual retained actor fences, exact snapshot/Git/annex pins and reopened
 /// native outputs. Cannot be constructed by deserializing an acknowledgement.
 pub struct RetainedGuard {
-    pub(crate) _fences: Vec<reel_assets::admission::MetadataLock>,
+    pub(crate) _fences: admission::Fences,
     pub(crate) _prepared: Prepared,
     _annex: File,
     _outputs: Vec<reader::VerifiedRead>,
@@ -92,6 +92,7 @@ pub(crate) fn pin_for_read(
         parent.packet,
         parent.source,
         parent.result,
+        prepared.input_permit(session.locks.clone()),
     )?);
     Ok(ReadPin {
         _git: prepared.into_git_guard(),
@@ -198,7 +199,7 @@ pub fn retain(
     // ordered source/retained fences protect this transition instead.
     drop(outputs(source, result).map_err(|e| phase(e, "retention-output-preflight"))?);
     drop(
-        crate::comic::check_native(packet, source, result)
+        crate::comic::check_native(packet, source, result, guard.input_permit())
             .map_err(|e| phase(e, "retention-comic-preflight"))?,
     );
     let acknowledgement = guard
@@ -206,7 +207,7 @@ pub fn retain(
         .map_err(|e| phase(e, "retention-apply"))?;
     guard.verify_retention(receipt, &acknowledgement)?;
     let _outputs = outputs(source, result).map_err(|e| phase(e, "retention-output-readback"))?;
-    let _comic = crate::comic::check_native(packet, source, result)
+    let _comic = crate::comic::check_native(packet, source, result, guard.input_permit())
         .map_err(|e| phase(e, "retention-comic-readback"))?;
     Ok(acknowledgement)
 }
@@ -272,9 +273,19 @@ fn verify_inner(
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
     let outputs = outputs(source, result)?;
     let comic = if capture {
-        crate::comic::capture_native(packet, source, result)?
+        crate::comic::capture_native(
+            packet,
+            source,
+            result,
+            prepared.input_permit(fences.clone()),
+        )?
     } else {
-        crate::comic::check_native(packet, source, result)?
+        crate::comic::check_native(
+            packet,
+            source,
+            result,
+            prepared.input_permit(fences.clone()),
+        )?
     };
     Ok(RetainedGuard {
         _fences: fences,

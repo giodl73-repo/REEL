@@ -707,7 +707,12 @@ uncertain, idle or reused states refuse for explicit original-work recovery;
 they do not release claims. Partial receipt files remain preserved.
 
 The existing manual result/retention path can carry composite intelligence tasks.
-Composite comic workers deliberately return `Unsupported` until tool replay and
-retained input verification use child-owned access. Full issue assembly, guarded
+Composite comic workers use child job claims for generation and returned-file
+replay. Historical native replay/export uses sealed permits derived from actual
+retained coverage, so it does not require the original job actor to remain active.
+Permits bind the exact input selection and source declaration; they cannot be
+deserialized. Shared fence ownership allows nested replay without acquiring an
+already held actor lock, and source byte gates still drop before index effects.
+Full issue assembly, guarded
 slot closure and scratch/capacity retirement remain separate work. Input admission
 or technical completion does not select an asset or grant creative/release approval.

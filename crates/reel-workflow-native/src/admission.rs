@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::PathBuf,
+    sync::Arc,
 };
 use tig_core::{
     Digest, LogicalPath, Object, identity,
@@ -86,10 +87,34 @@ pub struct Prepared {
 /// Constructed by actual native work/activation/coverage readback; not from a
 /// deserialized receipt. Holds the original cooperating actor fence, not bytes.
 pub struct ClaimsGuard {
-    _fences: Vec<reel_assets::admission::MetadataLock>,
+    _fences: Fences,
     _prepared: Prepared,
 }
+pub(crate) type Fences = Vec<Arc<reel_assets::admission::MetadataLock>>;
+/// Sealed live custody, never deserialized. The small handle keeps both deeply
+/// nested replay and Windows worker recovery off the large inline-guard path.
+#[derive(Clone)]
+pub(crate) struct InputPermit(Arc<InputAuthority>);
+struct InputAuthority {
+    profile: Profile,
+    attempt: String,
+    source_binding: Digest,
+    input: Selection,
+    _fences: Fences,
+}
+impl InputPermit {
+    pub(crate) fn check_source(&self, packet: &Packet, source: &NativeProfile) -> Result<()> {
+        let current = Prepared::open(packet, source, &self.0.profile, &self.0.attempt)?;
+        if current.source_binding != self.0.source_binding || current.input != self.0.input {
+            return Err(error(ErrorKind::Conflict, "permit-exact-source-required"));
+        }
+        Ok(())
+    }
+}
 impl ClaimsGuard {
+    pub(crate) fn input_permit(&self) -> InputPermit {
+        self._prepared.input_permit(self._fences.clone())
+    }
     pub(crate) fn check_source(&self, packet: &Packet, source: &NativeProfile) -> Result<()> {
         let current = Prepared::open(
             packet,
@@ -108,14 +133,14 @@ impl ClaimsGuard {
 /// Passive original-generation recovery fence. May coexist with a native
 /// Prepare; it grants no mutation capability and is not a settled ClaimsGuard.
 pub(crate) struct RecoveryGuard {
-    _fences: Vec<reel_assets::admission::MetadataLock>,
+    _fences: Fences,
     _prepared: Prepared,
 }
 /// One live retained-owner fence per exact controller/actor in a read session.
 #[derive(Default)]
 pub(crate) struct RetainedFences {
     identities: Vec<(Digest, PathBuf, Key)>,
-    locks: Vec<reel_assets::admission::MetadataLock>,
+    pub(crate) locks: Fences,
 }
 pub(crate) fn limits() -> projection::Limits {
     projection::Limits {
@@ -185,6 +210,15 @@ fn put(memory: &mut MemoryNodes, raw: &[u8]) -> Result<Object> {
         .map_err(|_| error(ErrorKind::Integrity, "admission-memory-node"))
 }
 impl Prepared {
+    pub(crate) fn input_permit(&self, fences: Fences) -> InputPermit {
+        InputPermit(Arc::new(InputAuthority {
+            profile: self.profile.clone(),
+            attempt: self.attempt.clone(),
+            source_binding: self.source_binding.clone(),
+            input: self.input.clone(),
+            _fences: fences,
+        }))
+    }
     pub(crate) fn into_git_guard(self) -> std::fs::File {
         self.snapshot._git_guard
     }
@@ -669,11 +703,7 @@ impl Prepared {
         }
         Ok(())
     }
-    fn actor_fences(
-        &self,
-        index: &Index,
-        companion: Option<&Key>,
-    ) -> Result<Vec<reel_assets::admission::MetadataLock>> {
+    fn actor_fences(&self, index: &Index, companion: Option<&Key>) -> Result<Fences> {
         let mut actors = vec![&self.profile.scope.actor];
         if let Some(actor) = companion {
             actors.push(actor);
@@ -689,6 +719,7 @@ impl Prepared {
                     actor,
                 )
                 .map_err(native_error)
+                .map(Arc::new)
             })
             .collect()
     }

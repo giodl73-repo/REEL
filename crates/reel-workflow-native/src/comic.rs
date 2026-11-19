@@ -63,9 +63,9 @@ fn source(packet: &Packet, inputs: &Inputs, path: &str) -> anyhow::Result<Vec<u8
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("verified source required"))
 }
-fn bind(packet: &Packet, profile: &NativeProfile) -> Result<(Inputs, publication::BoundComic)> {
+fn bind(packet: &Packet, native: NativeInputs) -> Result<(Inputs, publication::BoundComic)> {
     let mut inputs = Inputs {
-        native: NativeInputs::open(packet, profile)?,
+        native,
         bytes: BTreeMap::new(),
     };
     let bound = publication::bind_comic(packet, &mut inputs)?;
@@ -76,8 +76,8 @@ pub(crate) struct Generated {
     pub(crate) receipt: reel_publication::comic_source::Receipt,
     pub(crate) files: BTreeMap<String, Vec<u8>>,
 }
-pub(crate) fn generate(packet: &Packet, profile: &NativeProfile) -> Result<Generated> {
-    let (inputs, _bound) = bind(packet, profile)?;
+pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generated> {
+    let (inputs, _bound) = bind(packet, native)?;
     let request = source(packet, &inputs, "request.json")
         .map_err(|_| error(ErrorKind::Integrity, "comic-request-closure"))?;
     let (receipt, files) =
@@ -141,12 +141,12 @@ fn inventory(
 /// Native read gates drop before the caller admits new native protection.
 pub(crate) fn check_returned(
     packet: &Packet,
-    profile: &NativeProfile,
+    native: NativeInputs,
     result: &ReturnedResult,
     root: &std::path::Path,
     paths: &BTreeMap<String, String>,
 ) -> Result<(Vec<File>, Vec<reel_assets::jobs::WorkspaceDirectory>)> {
-    let (inputs, bound) = bind(packet, profile)?;
+    let (inputs, bound) = bind(packet, native)?;
     let (receipt, held) =
         crate::staging::read_held(&root.join("receipt.json"), pin(result)?.bytes)?;
     checked_raw(pin(result)?, &receipt)?;
@@ -198,26 +198,30 @@ pub(crate) fn check_native(
     packet: &Packet,
     profile: &NativeProfile,
     result: &ReturnedResult,
+    permit: crate::admission::InputPermit,
 ) -> Result<Option<Proof>> {
-    native_proof(packet, profile, result, false)
+    native_proof(packet, profile, result, false, permit)
 }
 pub(crate) fn capture_native(
     packet: &Packet,
     profile: &NativeProfile,
     result: &ReturnedResult,
+    permit: crate::admission::InputPermit,
 ) -> Result<Option<Proof>> {
-    native_proof(packet, profile, result, true)
+    native_proof(packet, profile, result, true, permit)
 }
 fn native_proof(
     packet: &Packet,
     profile: &NativeProfile,
     result: &ReturnedResult,
     capture: bool,
+    permit: crate::admission::InputPermit,
 ) -> Result<Option<Proof>> {
     if result.provenance.mode != reel_workflow::Mode::Tool {
         return Ok(None);
     }
-    let (inputs, bound) = bind(packet, profile)?;
+    let native = NativeInputs::from_permit(packet, profile, permit)?;
+    let (inputs, bound) = bind(packet, native)?;
     let mut held = Vec::new();
     let mut captured = BTreeMap::new();
     let mut native_read = |asset: &Artifact| -> Result<Vec<u8>> {

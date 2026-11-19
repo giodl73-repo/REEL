@@ -1557,6 +1557,12 @@ fn exercise_waiting_graph(
         staging,
     };
     let mut tasks = vec![packet.task.clone()];
+    if let Some(upstream) = &profile.source.snapshot.upstream {
+        tasks.splice(
+            0..0,
+            upstream.parents.values().map(|p| p.packet.task.clone()),
+        );
+    }
     if with_child {
         let mut child = packet.task.clone();
         child.id = "downstream".into();
@@ -1584,9 +1590,21 @@ fn exercise_waiting_graph(
             },
         )]),
     };
+    if profile.source.snapshot.upstream.is_some() {
+        let parents: Bindings = serde_json::from_slice(
+            &fs::read(case.temp.path().join("graph-parent-bindings.json")).unwrap(),
+        )
+        .unwrap();
+        bindings.tasks.extend(parents.tasks);
+    }
     let frontier = reel_workflow_native::graph::inspect(&plan, &bindings).unwrap();
     assert_eq!(
-        frontier.rows[0].status,
+        frontier
+            .rows
+            .iter()
+            .find(|r| r.task_id == packet.task.id)
+            .unwrap()
+            .status,
         reel_workflow::graph::Status::Waiting
     );
     if with_child {
@@ -2993,22 +3011,28 @@ fn staged_retention_refuses_lost_original_response_coverage_before_new_admission
 #[test]
 #[ignore = "Synthetic comic, installed private test font and existing explicitly declared native pool; no project adoption"]
 fn native_comic_worker_receipt_replay_retention_and_bare_history_complete_together() {
-    comic_native_case(false, false);
+    comic_native_case(false, false, false);
 }
 #[cfg(windows)]
 #[test]
 #[ignore = "Synthetic selected issue part and explicit existing native pool; no project adoption"]
 fn native_comic_part_preserves_master_identity_and_bounds_its_protected_source_closure() {
-    comic_native_case(true, false);
+    comic_native_case(true, false, false);
 }
 #[cfg(windows)]
 #[test]
 #[ignore = "Synthetic in-process comic dispatch and explicitly declared existing native pool; no project adoption"]
 fn native_comic_dispatch_materializes_and_retains_original_ready_task() {
-    comic_native_case(true, true);
+    comic_native_case(true, true, false);
 }
 #[cfg(windows)]
-fn comic_native_case(partitioned: bool, dispatch: bool) {
+#[test]
+#[ignore = "Synthetic composite comic from retained PNG input; existing native pool and explicit actors only"]
+fn composite_comic_worker_replays_and_restores_after_source_actor_coverage_is_lost() {
+    comic_native_case(true, true, true);
+}
+#[cfg(windows)]
+fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
     use reel_publication::{
         ComicPage, Content, Edition, PageKind, Publication, ReadingDirection,
         comic_source::{
@@ -3327,7 +3351,11 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
         BTreeMap::new(),
     )
     .unwrap();
-    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let mut case = if composite {
+        AdmissionCase::with_extra_slot(&fixture, native.store.clone(), None, true)
+    } else {
+        AdmissionCase::with_store(&fixture, native.store.clone())
+    };
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
         snapshot: fixture.profile.clone(),
@@ -3336,7 +3364,42 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
     };
     case.source.source.pool.control = control;
     case.source.source.maximum_bytes = 16 * 1024 * 1024;
-    let admission = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+    let mut parent = None;
+    let initial_packet = if composite {
+        let mut task = fixture.packet.task.clone();
+        task.id = "comic-art-parent".into();
+        task.operation = Operation::ImageCandidate;
+        task.tool = None;
+        task.prompt = "Return the exact synthetic PNG layer.".into();
+        task.outputs = BTreeMap::from([(
+            "art".into(),
+            OutputContract {
+                media_type: "image/png".into(),
+                max_bytes: 16 * 1024 * 1024,
+                required: true,
+            },
+        )]);
+        let packet = make_packet(
+            &Plan {
+                schema: PLAN_SCHEMA.into(),
+                project: fixture.packet.project.clone(),
+                source_commit: fixture.packet.source_commit.clone(),
+                tasks: vec![task],
+            },
+            "comic-art-parent",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let mut profile = case.profile.clone();
+        profile.scope.actor = tig_store::Key::parse("slot2").unwrap();
+        profile.scope.operation = tig_store::Key::parse("comic-art-parent").unwrap();
+        parent = Some((packet.clone(), profile));
+        packet
+    } else {
+        fixture.packet.clone()
+    };
+    let initial_profile = parent.as_ref().map(|p| &p.1).unwrap_or(&case.profile);
+    let admission = Prepared::open(&initial_packet, &case.source, initial_profile, "attempt-1")
         .unwrap()
         .accept()
         .unwrap();
@@ -3360,6 +3423,203 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
         )
         .unwrap();
     }
+    let admission = if let Some((parent_packet, parent_profile)) = parent {
+        use reel_workflow::upstream::{Bindings, Reference, Selector};
+        use reel_workflow_native::{retention, upstream};
+        let (index, (path, art, _)) = assets
+            .iter()
+            .enumerate()
+            .find(|(_, (_, a, _))| a.media_type == "image/png")
+            .unwrap();
+        let result = ReturnedResult {
+            schema: RESULT_SCHEMA.into(),
+            task_id: parent_packet.task.id.clone(),
+            task_key: parent_packet.task_key.clone(),
+            attempt_id: admission.attempt_id.clone(),
+            artifacts: BTreeMap::from([("art".into(), art.clone())]),
+            provenance: Provenance {
+                mode: Mode::Handoff,
+                provider: None,
+                model: None,
+                executable: None,
+            },
+            worker_receipt: None,
+        };
+        let returns = response::Returns {
+            schema: "reel.workflow-returns.v1".into(),
+            root: raw_source.path().into(),
+            files: BTreeMap::from([("art".into(), path.clone())]),
+        };
+        response::ingest(
+            &parent_packet,
+            &case.source,
+            &parent_profile,
+            &admission,
+            &result,
+            &returns,
+        )
+        .unwrap();
+        let ack = retention::retain(
+            &parent_packet,
+            &case.source,
+            &parent_profile,
+            &admission,
+            &result,
+            &retained_target(),
+        )
+        .unwrap();
+        let acknowledgements = case.temp.path().join("parent-acknowledgements");
+        fs::create_dir(&acknowledgements).unwrap();
+        let runtime_raw = fs::read(&executable).unwrap();
+        let control = reel_workflow_native::handoff::Profile {
+            schema: "reel.workflow-native-handoff.v1".into(),
+            source: serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap(),
+            admission: parent_profile.clone(),
+            binding: reel_workflow_native::handoff::Binding {
+                schema: "reel.workflow-native-handoff-binding.v1".into(),
+                admission: admission.clone(),
+                target: retained_target(),
+            },
+            runtime: Tool {
+                path: executable.clone(),
+                sha256: digest(&runtime_raw),
+                bytes: runtime_raw.len() as u64,
+            },
+            acknowledgements,
+        };
+        let packet_path = case.temp.path().join("graph-parent-packet.json");
+        let profile_path = case.temp.path().join("graph-parent-profile.json");
+        let result_path = case.temp.path().join("graph-parent-result.json");
+        let returns_path = case.temp.path().join("graph-parent-returns.json");
+        let journal = case.temp.path().join("graph-parent-journal");
+        for (path, raw) in [
+            (&packet_path, serde_json::to_vec(&parent_packet).unwrap()),
+            (&profile_path, serde_json::to_vec(&control).unwrap()),
+            (&result_path, serde_json::to_vec(&result).unwrap()),
+            (&returns_path, serde_json::to_vec(&returns).unwrap()),
+        ] {
+            fs::write(path, raw).unwrap();
+        }
+        let created = Command::new(&executable)
+            .arg("create-handoff")
+            .arg(&packet_path)
+            .arg(&profile_path)
+            .arg(&journal)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stdout)
+        );
+        let completed = Command::new(&executable)
+            .arg("import-handoff")
+            .arg(&journal)
+            .arg(&profile_path)
+            .arg(&result_path)
+            .arg(&returns_path)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(
+            completed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&completed.stdout)
+        );
+        let graph = reel_workflow_native::graph::Bindings {
+            schema: "reel.workflow-run-bindings.v1".into(),
+            tasks: BTreeMap::from([(
+                parent_packet.task.id.clone(),
+                reel_workflow_native::graph::Binding {
+                    journal,
+                    profile: reel_workflow_native::graph::PinnedFile {
+                        path: profile_path.clone(),
+                        sha256: digest(&fs::read(&profile_path).unwrap()),
+                    },
+                    staging_ticket: None,
+                },
+            )]),
+        };
+        fs::write(
+            case.temp.path().join("graph-parent-bindings.json"),
+            serde_json::to_vec(&graph).unwrap(),
+        )
+        .unwrap();
+        let bindings = Bindings {
+            schema: "reel.workflow-upstream-inputs.v1".into(),
+            inputs: BTreeMap::from([(
+                art.logical_id.clone(),
+                Reference {
+                    task_id: parent_packet.task.id.clone(),
+                    artifact: Selector::Output { name: "art".into() },
+                },
+            )]),
+        };
+        let parents = BTreeMap::from([(
+            parent_packet.task.id.clone(),
+            upstream::Parent {
+                packet: &parent_packet,
+                result: &result,
+                source: &case.source,
+                admission: &parent_profile,
+                receipt: &admission,
+                acknowledgement: &ack,
+            },
+        )]);
+        let frozen = upstream::Frozen::capture(&bindings, &parents);
+        let mut child_source: NativeProfile =
+            serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap();
+        child_source.snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
+        child_source.snapshot.upstream = Some(frozen);
+        child_source.snapshot.bindings.remove(&art.logical_id);
+        child_source.snapshot.input_streams.remove(&art.logical_id);
+        child_source
+            .snapshot
+            .records
+            .retain(|p| p != &format!("records/comic-{index}.tig"));
+        let raw = bindings.canonical_bytes().unwrap();
+        let mut task = fixture.packet.task.clone();
+        task.depends_on = vec![parent_packet.task.id.clone()];
+        task.upstream_inputs = Some(Artifact {
+            logical_id: "workflow/comic-upstream".into(),
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+            media_type: "application/json".into(),
+        });
+        task.native_inputs = Some(Fixture::declaration(&child_source.snapshot));
+        fixture.packet = make_packet(
+            &Plan {
+                schema: PLAN_SCHEMA.into(),
+                project: fixture.packet.project.clone(),
+                source_commit: fixture.packet.source_commit.clone(),
+                tasks: vec![parent_packet.task.clone(), task],
+            },
+            "comic-render",
+            BTreeMap::from([(
+                parent_packet.task.id.clone(),
+                DependencyResult {
+                    result_sha256: canonical_digest(&result).unwrap(),
+                    artifacts: result.artifacts.clone(),
+                },
+            )]),
+        )
+        .unwrap();
+        let receipt = upstream::Admission::prepare(
+            &fixture.packet,
+            &child_source,
+            &case.profile,
+            "attempt-1",
+            parents,
+        )
+        .unwrap()
+        .accept()
+        .unwrap();
+        case.source = child_source;
+        receipt
+    } else {
+        admission
+    };
     let output_owner = tempfile::tempdir_in(case.temp.path()).unwrap();
     let output = output_owner.path().join("rendered");
     let rendered = Command::new(&executable)
@@ -3601,7 +3861,13 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
             false
         );
         assert_eq!(
-            graph::inspect(&plan, &bindings).unwrap().rows[0].status,
+            graph::inspect(&plan, &bindings)
+                .unwrap()
+                .rows
+                .iter()
+                .find(|r| r.task_id == fixture.packet.task.id)
+                .unwrap()
+                .status,
             reel_workflow::graph::Status::Waiting
         );
         for name in result.artifacts.keys() {
@@ -3630,7 +3896,13 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
             .unwrap();
         assert!(!pending.status.success());
         assert_eq!(
-            graph::inspect(&plan, &bindings).unwrap().rows[0].status,
+            graph::inspect(&plan, &bindings)
+                .unwrap()
+                .rows
+                .iter()
+                .find(|r| r.task_id == fixture.packet.task.id)
+                .unwrap()
+                .status,
             reel_workflow::graph::Status::NeedsRecovery
         );
         let completed = invoke("run-worker", &pin);
@@ -3699,6 +3971,49 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
         true
     );
     let result: ReturnedResult = serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+    if composite {
+        // Test-only job coverage loss, not a production close transaction.
+        // Retained ownership must independently authorize historical replay.
+        use tig_core::tree::{Tree, TreeLimits};
+        use tig_store::{
+            metadata::MetadataStore,
+            source_claims::{
+                Selection,
+                protection::{self, work},
+            },
+        };
+        let mut index = Index::open(
+            &profile.admission.index_root,
+            &profile.binding.admission.index_checkpoint,
+        )
+        .unwrap();
+        let mut nodes = MetadataStore::open(
+            &profile.admission.metadata_root,
+            &profile.binding.admission.metadata_checkpoint,
+        )
+        .unwrap();
+        let current = index
+            .actor(&mut nodes, &profile.admission.scope.actor)
+            .unwrap();
+        let entries = Tree::from_root(current.selection.root)
+            .entries(&mut nodes, TreeLimits::default())
+            .unwrap()
+            .0;
+        let update = protection::Update {
+            operation: tig_store::Key::parse("fixture-remove-comic-job-coverage").unwrap(),
+            actor: profile.admission.scope.actor.clone(),
+            owner: profile.admission.scope.owner.clone(),
+            expected_revision: current.revision,
+            selection: Selection {
+                root: Tree::empty(&mut nodes).unwrap().root().clone(),
+                context: current.selection.context,
+            },
+            changes: entries.keys().map(|p| (p.clone(), None)).collect(),
+            ready: true,
+        };
+        let reference = work::stage(&mut index, &update, None, &mut nodes).unwrap();
+        work::execute(&mut index, &reference, &mut nodes).unwrap();
+    }
     let bare = case.temp.path().join("comic-history.git");
     git(
         fixture.temp.path(),
@@ -4035,7 +4350,9 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
     if let Some(unselected) = unselected {
         assert!(case.protected(&unselected).is_empty());
     }
-    if let Some(directory) = std::env::var_os(if dispatch {
+    if let Some(directory) = std::env::var_os(if composite {
+        "REEL_COMPOSITE_COMIC_EVIDENCE_DIRECTORY"
+    } else if dispatch {
         "REEL_COMIC_WORKER_NATIVE_EVIDENCE_DIRECTORY"
     } else if partitioned {
         "REEL_COMIC_PART_NATIVE_EVIDENCE_DIRECTORY"

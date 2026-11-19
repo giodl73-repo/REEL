@@ -124,18 +124,19 @@ fn verify(
         if paths.contains("receipt.json") {
             return Err(error(ErrorKind::Conflict, "comic-receipt-path-alias"));
         }
-        let receipt = result
+        let worker_receipt = result
             .worker_receipt
             .as_ref()
             .ok_or_else(|| error(ErrorKind::Missing, "comic-worker-receipt-required"))?;
         if total
-            .checked_add(receipt.bytes)
+            .checked_add(worker_receipt.bytes)
             .is_none_or(|n| n > MAX_BYTES)
         {
             return Err(error(ErrorKind::Budget, "response-byte-limit"));
         }
+        let native = crate::NativeInputs::open_admitted(packet, source, profile, receipt)?;
         let (extra_files, extra_directories) =
-            crate::comic::check_returned(packet, source, result, &root, &returns.files)?;
+            crate::comic::check_returned(packet, native, result, &root, &returns.files)?;
         files.extend(extra_files);
         directories.extend(extra_directories);
     }
