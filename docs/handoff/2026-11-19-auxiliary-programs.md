@@ -2,7 +2,7 @@
 
 Deterministic `ToolContract` and expansion templates support optional
 `auxiliary_executables`: role -> exact Artifact. These portable identities enter
-the task key, native candidate context and resource tree at `runtime/aux/ROLE`.
+the task key, native candidate context and resource tree at `runtime/auxiliary/ROLE`.
 Expansion preserves the declarations. They are runtime resources, not additional
 creative inputs or instructions to execute arbitrary code.
 
@@ -48,6 +48,10 @@ retained outputs/replay, same-length executable corruption, same-byte path
 retargeting, unchanged claims/ticket on refusal and restoration under the original
 ticket. The auxiliary Git copy is declared but not executed by that pure control
 producer; this fixture does not claim movie rendering or media-tool execution.
+The first native attempt exposed the reserved Windows component `aux` during
+preparation, before admission. The prefix is now `auxiliary`, and invalid native
+runtime paths return a structured Invalid error instead of panicking. Preserve
+the refused fixture roots `F:/src/tig-dev-temp/.tmpaXAV9e` and `.tmpT2WR7y`.
 Actual qualification evidence is recorded after running it.
 
 Producer-applied custody/recovery and rights/provenance checks keep runtime

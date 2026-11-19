@@ -3,6 +3,25 @@
 mod closing;
 mod response;
 mod retention;
+const AUXILIARY_RUNTIME_PREFIX: &str = "auxiliary";
+fn runtime_path(name: &str) -> Result<LogicalPath> {
+    LogicalPath::parse(&format!("runtime/{name}"))
+        .map_err(|_| error(ErrorKind::Invalid, "admission-runtime-path"))
+}
+#[cfg(test)]
+mod runtime_path_tests {
+    use super::*;
+    #[test]
+    fn auxiliary_namespace_is_portable_and_reserved_names_refuse_without_panic() {
+        assert!(runtime_path(&format!("{AUXILIARY_RUNTIME_PREFIX}/ffmpeg")).is_ok());
+        assert!(runtime_path("git").is_ok());
+        for name in ["aux/ffmpeg", "auxiliary/aux", "auxiliary/../escape"] {
+            let error = runtime_path(name).unwrap_err();
+            assert_eq!(error.kind, ErrorKind::Invalid);
+            assert_eq!(error.code, "admission-runtime-path");
+        }
+    }
+}
 use crate::{
     NativeProfile, SnapshotInputs, error,
     qualified::{self, slots},
@@ -303,7 +322,7 @@ impl Prepared {
             );
             for (role, program) in &tool.auxiliary_executables {
                 runtime.insert(
-                    format!("aux/{role}"),
+                    format!("{AUXILIARY_RUNTIME_PREFIX}/{role}"),
                     Object {
                         sha256: Digest::parse(&program.sha256).map_err(|_| {
                             error(ErrorKind::Invalid, "admission-auxiliary-runtime-pin")
@@ -379,10 +398,7 @@ impl Prepared {
             );
         }
         for (name, object) in &runtime {
-            entries.insert(
-                LogicalPath::parse(&format!("runtime/{name}")).unwrap(),
-                object.clone(),
-            );
+            entries.insert(runtime_path(name)?, object.clone());
         }
         let input = Selection {
             root: Tree::build(&entries, &mut memory, TreeLimits::default())

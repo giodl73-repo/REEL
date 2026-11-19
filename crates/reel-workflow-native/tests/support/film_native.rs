@@ -175,10 +175,29 @@ fn run_scene_controls(auxiliary: bool) {
         )
         .unwrap();
     }
+    for (name, bytes) in [
+        ("packet.json", serde_json::to_vec(&fixture.packet).unwrap()),
+        ("source.json", serde_json::to_vec(&case.source).unwrap()),
+        (
+            "admission-profile.json",
+            serde_json::to_vec(&case.profile).unwrap(),
+        ),
+        (
+            "auxiliary-programs.json",
+            serde_json::to_vec(&programs).unwrap(),
+        ),
+    ] {
+        fs::write(root.join(name), bytes).unwrap();
+    }
     let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
         .unwrap()
         .accept()
         .unwrap();
+    fs::write(
+        root.join("admission-receipt.json"),
+        serde_json::to_vec(&receipt).unwrap(),
+    )
+    .unwrap();
     if auxiliary {
         let mut nodes = tig_store::metadata::MetadataStore::open(
             &case.profile.metadata_root,
@@ -190,7 +209,7 @@ fn run_scene_controls(auxiliary: bool) {
             .unwrap()
             .0;
         assert_eq!(
-            entries[&LogicalPath::parse("runtime/aux/git-reader").unwrap()],
+            entries[&LogicalPath::parse("runtime/auxiliary/git-reader").unwrap()],
             Object::from_bytes(&git_bytes)
         );
     }

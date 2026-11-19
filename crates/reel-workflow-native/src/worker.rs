@@ -554,7 +554,7 @@ pub fn prepare_file_with_programs(
         return Err(error(ErrorKind::Invalid, "worker-explicit-ticket-path"));
     }
     let selected = graph::select(plan, bindings, batch, id)?;
-    validate_programs(&selected.task.ticket.packet, programs)?;
+    let _programs = hold_programs(&selected.task.ticket.packet, programs)?;
     let parent = open_workspace_directory(
         path.parent()
             .ok_or_else(|| error(ErrorKind::Invalid, "worker-ticket-parent"))?,
