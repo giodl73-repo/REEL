@@ -33,6 +33,38 @@ check retained stream gates and an empty capture map, and preserve ticket/claims
 It admits no new native job and publishes/selects no asset. Its original scratch
 and capacity are preserved; the actual source/tool/result pins follow execution.
 
+## Native result and evidence
+
+The positive native fixture passed in 60.62 test seconds against retained movie
+job `.tmpy4yMWg`, using preserved staging root `.tmp7f0mI1`. It reopened the
+original admission without admitting another job, exported 10 synthetic inputs
+and 4 controls, and replayed with the exact original ticket. The workspace's
+3,272,447 logical bytes include both parts and linked targets; this is not an
+episode-scale byte count. Direct native stream checks retained all ten native
+gates while leaving the capture map empty. Source claims and ticket bytes
+remained identical. Capacity and scratch remain preserved. No rendering, native
+publication, asset selection or consumer adoption occurred. A dedicated native
+duplicate-object alias fixture remains open; the positive movie inputs are
+distinct objects.
+
+All 69 standard native tests (including the three new component tests), 247 SDK
+source pins and strict all-target Clippy with/without film pass. Production source
+is `3146ade8f84fbf16d53591e511a0f23ebc67e263`; the fixture-only corrected consumer
+is pinned at `f6b1cc3ff5b5a516b32756f2157d1a38cfc3356e`. All 1,932 tracked source
+files are archived and individually hash/length verified against build inputs.
+Frozen test executable: SHA256
+`e896d31aace77632f530971bf3de418c90b5f6f151505eeca8eb103a57aa9423`,
+27,963,904 bytes, test profile without debug information, with film support.
+
+Private evidence certificate:
+`F:/src/tig-dev-temp/reel-streamed-staging-20261119-v2/qualified-tools-v2.json`,
+SHA256 `d922a68c4a7a18d655a4eecf05a0dde7aed82a6e235d8f70cafdf0b54353a281`.
+It binds source archive/manifest, frozen tool, terminal log/timing, outcome,
+original ticket/pin and intent/completion evidence. It supersedes the first
+certificate, which omitted two hashes because of mixed separators in an extended
+Windows path; the incomplete certificate is preserved as evidence. The native
+fixture was not rerun for that metadata correction.
+
 The first run at source `3146ade` used the separate slot-replacement job, whose
 admission had qualified slot reuse without qualifying input availability. Native
 export returned `NeedsRecovery/native-input-io` after 7.56 seconds and refused

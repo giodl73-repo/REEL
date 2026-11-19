@@ -68,6 +68,13 @@ of those states and does not adopt an S4 or S5 job.
 
 ### Required qualification
 
+The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
+stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
+recovery, native gates, tickets and claims. Its ten-input movie fixture passes
+native export/replay; generated-source component tests reject bad/failed streams
+before completion. This removes the former whole-input-set buffering step, but
+the 512 MiB staging reservation and the other limits above remain unchanged.
+
 1. Define a streamed producer/return contract over guarded exact native objects,
    with explicit total/per-object/output/scratch/time/process bounds. Inputs and
    output hashing must use bounded buffers; no whole-master `Vec` requirement.

@@ -14,6 +14,16 @@ return and native admission bounds do not qualify that consumer. Streamed
 composition, complete bilingual content/delivery and original-operation recovery
 at that scale remain required; small comic/movie fixtures cannot close them.
 
+The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
+now copies native inputs through fixed 64 KiB buffers without capturing the whole
+input set. It preserves exact bindings/gates, original tickets, capacity, partial
+parts and final completion checks. Its 60.62-second native fixture exports and
+replays ten existing synthetic movie inputs with unchanged ticket/claims and an
+empty stream capture map. All 69 standard native tests, 247 SDK pins and strict
+Clippy pass. The earlier metadata-only replacement-input refusal remains intact.
+All v1 limits remain; large-film budgets/composition, native alias qualification
+and real-size interruption/adoption are still required.
+
 [Streamed return verification](handoff/2026-11-19-streamed-return-verification.md)
 now hashes generic candidate bytes from held ordinary files in fixed 64 KiB
 chunks; PNG decoding and structured-report semantic validation retain their
