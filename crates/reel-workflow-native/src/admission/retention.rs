@@ -32,6 +32,19 @@ fn plan(
 }
 
 impl Prepared {
+    /// Read-only preflight; later retention still rechecks actual coverage.
+    pub(crate) fn check_retained_target(&self, target: &Target) -> Result<()> {
+        let (mut index, mut nodes) = self.stores(None)?;
+        self.retained_scope(&index, target)?;
+        if !index
+            .actor(&mut nodes, &target.actor)
+            .map_err(|e| native_error(e.into()))?
+            .ready
+        {
+            return Err(error(ErrorKind::Busy, "retention-target-not-ready"));
+        }
+        Ok(())
+    }
     pub(crate) fn validate_retained_target(
         &self,
         receipt: &Receipt,

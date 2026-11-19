@@ -207,7 +207,7 @@ impl Frozen {
         }
         Ok(receipt)
     }
-    fn output_path(
+    pub(crate) fn output_path(
         &self,
         output: &Path,
     ) -> Result<(reel_assets::jobs::WorkspaceDirectory, std::path::PathBuf)> {
@@ -257,6 +257,23 @@ impl Frozen {
             }
         }
         for binding in self.bindings.tasks.values() {
+            let (bytes, _held) = binding.profile.read()?;
+            let profile: crate::handoff::Profile = reel_workflow::decode(&bytes)?;
+            staging::check_parent(parent.path(), &profile.source, &profile.admission)?;
+            for root in [
+                &profile.acknowledgements,
+                &profile.source.snapshot.repository,
+            ] {
+                if parent
+                    .path()
+                    .starts_with(root.canonicalize().map_err(io_error)?)
+                {
+                    return Err(error(
+                        ErrorKind::Denied,
+                        "frozen-expansion-output-overlaps-run-control",
+                    ));
+                }
+            }
             if parent
                 .path()
                 .starts_with(binding.journal.canonicalize().map_err(io_error)?)

@@ -63,6 +63,22 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, plan, frozen, pin, config, directory, apply]
+            if command == "advance-expanded" && apply == "--apply" =>
+        {
+            let (frozen, _held) =
+                reel_workflow_native::expansion::read_pinned(Path::new(frozen), pin)?;
+            let summary = reel_workflow_native::advancement::advance(
+                &read_control(Path::new(plan))?,
+                &frozen,
+                &read_control(Path::new(config))?,
+                Path::new(directory),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-expanded-graph-adoption","summary":summary,
+                "provider_invoked":false,"scratch_allocated":false,"selected":false,"input_claims_released":false}),
+            )
+        }
         [command, journal, profile, target, output, apply]
             if command == "prepare-close" && apply == "--apply" =>
         {
@@ -757,6 +773,7 @@ fn main() -> ExitCode {
             "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",
             "reel-workflow-native recover-close TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native schedule-recipe RECIPE PLAN RUN_BINDINGS LIMIT NEW_PRIVATE_SCHEDULE --apply\n",
+            "reel-workflow-native advance-expanded PLAN FROZEN FROZEN_SHA256 CONFIG PRIVATE_DIRECTORY --apply\n",
             "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
             "reel-workflow-native prepare-expanded PLAN RUN_BINDINGS TEMPLATE SOURCE ADMISSION ATTEMPT NEW_FROZEN --apply\n",
             "reel-workflow-native accept-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
@@ -792,7 +809,7 @@ fn main() -> ExitCode {
             "Response staging records work; registration admits output claims; ingestion publishes native bytes.\n",
             "Retain-response acknowledges retained ownership; verify-retained checks live retained protection and bytes.\n",
             "Native handoff completion requires original work, actual retained-owner proof and exact output bytes.\n",
-            "No provider execution, cleanup, actor close or selection."
+            "No automatic provider execution, cleanup or selection."
         ));
         return ExitCode::SUCCESS;
     }
