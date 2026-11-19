@@ -331,7 +331,7 @@ pub struct Report {
     pub copy_sha256: String,
     pub findings: Vec<Finding>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct CheckedFinding {
     key: String,
     finding: Finding,
@@ -344,7 +344,9 @@ impl CheckedFinding {
         &self.finding
     }
 }
-#[derive(Debug, Serialize)]
+/// Owned semantic assessment. Cloning it does not clone a native guard, byte
+/// protection, retained ownership or authority to complete a workflow task.
+#[derive(Clone, Debug, Serialize)]
 pub struct CheckedReport {
     copy: Copy,
     report_sha256: String,
