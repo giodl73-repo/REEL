@@ -6,6 +6,141 @@ use std::{fs, path::Path, process::Command};
 mod png_sequence;
 
 #[test]
+fn review_cel_ids_follow_exact_cut_frames_and_preserve_clean_master() {
+    let mut temp = tempfile::tempdir().unwrap();
+    temp.disable_cleanup(true);
+    let root = temp.path();
+    eprintln!("Review ID fixture root: {}", root.display());
+    let mut job = fixture(root);
+    job["width"] = json!(320);
+    job["height"] = json!(180);
+    write_json(&root.join("job.json"), &job);
+    scene_delivery::render(&root.join("job.json"), root, &root.join("clean")).unwrap();
+    let selected_font = std::env::var_os("REEL_TEST_REVIEW_FONT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from("C:/Windows/Fonts/arial.ttf"));
+    fs::copy(selected_font, root.join("selected-review-font.ttf")).unwrap();
+    job["review_ids"] = json!({"font":file(root,"selected-review-font.ttf"),"font_size":16});
+    write_json(&root.join("labelled-job.json"), &job);
+    let out = root.join("labelled");
+    let receipt = scene_delivery::render(&root.join("labelled-job.json"), root, &out).unwrap();
+    scene_delivery::check(&root.join("labelled-job.json"), root, &out).unwrap();
+    let map: Value =
+        serde_json::from_slice(&fs::read(out.join("review-ids.json")).unwrap()).unwrap();
+    assert_eq!(map["labels"][0]["cel_id"], "red");
+    assert_eq!(map["labels"][1]["cel_id"], "blue");
+    assert_eq!(map["labels"][0]["end_frame"], 24);
+    assert_eq!(map["labels"][1]["start_frame"], 24);
+    assert_eq!(map["labels"][0]["end_sample"], 48001);
+    assert_eq!(map["master_modified"], false);
+    assert_eq!(receipt.plan.review_ids.len(), 2);
+    let decode = |path: &Path| {
+        let o = Command::new("ffmpeg")
+            .args(["-v", "error", "-nostdin", "-i"])
+            .arg(path)
+            .args(["-map", "0:v:0", "-pix_fmt", "rgb24", "-f", "rawvideo", "-"])
+            .output()
+            .unwrap();
+        assert!(o.status.success());
+        o.stdout
+    };
+    let master = decode(&out.join("master.mkv"));
+    assert_eq!(master, decode(&root.join("clean/master.mkv")));
+    let review = decode(&out.join("review.mp4"));
+    assert_eq!(review.len(), master.len());
+    let stride = 320 * 180 * 3;
+    for frame in [0, 23, 24, 47] {
+        let p = &review[frame * stride..(frame + 1) * stride];
+        let whites = p
+            .chunks_exact(3)
+            .take(320 * 40)
+            .filter(|p| p.iter().all(|v| *v > 180))
+            .count();
+        assert!(whites > 10, "label missing from frame {frame}");
+    }
+    let label_crop = |frame: usize| {
+        let p = &review[frame * stride..(frame + 1) * stride];
+        (0..40)
+            .flat_map(|y| {
+                p[y * 320 * 3..y * 320 * 3 + 140 * 3]
+                    .chunks_exact(3)
+                    .map(|rgb| rgb.iter().all(|v| *v > 180))
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_ne!(label_crop(23), label_crop(24));
+    let mut mapped_job = job.clone();
+    let mapped = map_media_inputs(root, &mut mapped_job);
+    write_json(&root.join("mapped-label-job.json"), &mapped_job);
+    let mapped_out = root.join("mapped-labelled");
+    scene_delivery::render_with_inputs(&root.join("mapped-label-job.json"), &mapped, &mapped_out)
+        .unwrap();
+    scene_delivery::check_with_inputs(&root.join("mapped-label-job.json"), &mapped, &mapped_out)
+        .unwrap();
+    let stored: scene_delivery::Receipt =
+        serde_json::from_slice(&fs::read(mapped_out.join("receipt.json")).unwrap()).unwrap();
+    let scattered = root.join("labelled-scattered");
+    fs::create_dir(&scattered).unwrap();
+    let receipt_ref: scene_delivery::FileRef =
+        serde_json::from_value(file(&mapped_out, "receipt.json")).unwrap();
+    let mut output_files = std::collections::BTreeMap::new();
+    for (i, item) in stored.outputs.values().chain([&receipt_ref]).enumerate() {
+        let dest = scattered.join(format!("object-{i}.blob"));
+        fs::copy(mapped_out.join(&item.path), &dest).unwrap();
+        let mut actual = item.clone();
+        actual.path = dest;
+        output_files.insert(item.path.clone(), actual);
+    }
+    let borrowed = MappedInputs {
+        files: output_files,
+        requests: Default::default(),
+        programs: None,
+        program_requests: Default::default(),
+    };
+    scene_delivery::check_with_output_files(
+        &root.join("mapped-label-job.json"),
+        &mapped,
+        &borrowed,
+        &receipt_ref,
+    )
+    .unwrap();
+    assert_eq!(master, decode(&mapped_out.join("master.mkv")));
+    // Unknown/missing font and unsafe identity refuse during planning.
+    job["review_ids"]["font"]["sha256"] = json!("0".repeat(64));
+    write_json(&root.join("stale-font-job.json"), &job);
+    assert!(scene_delivery::plan(&root.join("stale-font-job.json"), root).is_err());
+    let mut contract: Value =
+        serde_json::from_slice(&fs::read(root.join("contract.json")).unwrap()).unwrap();
+    contract["attachments"][0]["target"]["cel_id"] = json!("unsafe:label");
+    write_json(&root.join("unsafe-contract.json"), &contract);
+    let mut unsafe_job: Value =
+        serde_json::from_slice(&fs::read(root.join("labelled-job.json")).unwrap()).unwrap();
+    unsafe_job["contract"] = file(root, "unsafe-contract.json");
+    write_json(&root.join("unsafe-job.json"), &unsafe_job);
+    assert!(scene_delivery::plan(&root.join("unsafe-job.json"), root).is_err());
+    let map_path = out.join("review-ids.json");
+    let original = fs::read(&map_path).unwrap();
+    let original_receipt = fs::read(out.join("receipt.json")).unwrap();
+    let mut altered: Value = serde_json::from_slice(&original).unwrap();
+    altered["labels"][0]["cel_id"] = json!("wrong");
+    write_json(&map_path, &altered);
+    let mut changed_receipt: Value =
+        serde_json::from_slice(&fs::read(out.join("receipt.json")).unwrap()).unwrap();
+    let altered_ref = file(&out, "review-ids.json");
+    changed_receipt["outputs"]["review-ids.json"] = altered_ref;
+    write_json(&out.join("receipt.json"), &changed_receipt);
+    assert!(scene_delivery::check(&root.join("labelled-job.json"), root, &out).is_err());
+    fs::copy(&map_path, root.join("refused-review-ids.json")).unwrap();
+    fs::copy(out.join("receipt.json"), root.join("refused-receipt.json")).unwrap();
+    fs::write(&map_path, &original).unwrap();
+    fs::write(out.join("receipt.json"), &original_receipt).unwrap();
+    scene_delivery::check(&root.join("labelled-job.json"), root, &out).unwrap();
+    fs::write(root.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"decoded_master_equal":true,"decoded_review_frames":48,"labels_visible_at_frames":[0,23,24,47],"cut_frame":24,"tampered_map_refused":true,"creative_approval":false})).unwrap()).unwrap();
+    // Preserve the original successful evidence separately from the negative case.
+    fs::write(root.join("preserved-original-review-ids.json"), original).unwrap();
+}
+
+#[test]
 fn explicit_stretch_fills_canvas_while_default_and_explicit_contain_preserve_padding() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path();
@@ -733,6 +868,14 @@ fn map_media_inputs(root: &Path, job: &mut Value) -> MappedInputs {
             entry["source"]["path"] = json!(logical);
             files.insert(logical.into(), actual);
         }
+    }
+    if let Some(review) = job.get_mut("review_ids") {
+        let mut actual: scene_delivery::FileRef =
+            serde_json::from_value(review["font"].clone()).unwrap();
+        actual.path = root.join(&actual.path);
+        let logical = "asset-ids/review-font";
+        review["font"]["path"] = json!(logical);
+        files.insert(logical.into(), actual);
     }
     MappedInputs {
         files,

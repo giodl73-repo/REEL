@@ -652,6 +652,9 @@ impl Source {
         for picture in &job.pictures {
             self.register(&mut inputs, &picture.source)?;
         }
+        if let Some(review) = &job.review_ids {
+            self.register(&mut inputs, &review.font)?;
+        }
         for audio in &job.audio {
             self.register(&mut inputs, &audio.source)?;
             if let Some(offset) = &audio.placement_offset {

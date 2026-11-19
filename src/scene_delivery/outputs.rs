@@ -54,6 +54,9 @@ pub fn output_contract(job: &Job, plan: &Plan) -> Result<OutputContract> {
         names.insert("pre-camera-picture.mkv".into());
     }
     names.extend(crate::motioncraft_review::output_names(job, plan)?);
+    if job.review_ids.is_some() {
+        names.extend(["review-ids.json".into(), "review-id-font.ttf".into()]);
+    }
     if let Some(font) = overlays.iter().find_map(|layer| layer.font.as_ref()) {
         names.insert(format!("fonts/{}", font_stage_name(font)?));
     }

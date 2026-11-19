@@ -53,6 +53,8 @@ pub struct DeliveryProfile {
     pub asset_paths: AssetPaths,
     pub width: u32,
     pub height: u32,
+    #[serde(default)]
+    pub review_ids: Option<ReviewIdsProfile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -86,6 +88,32 @@ pub struct DeliveryProfile {
         BTreeMap<String, crate::scene_delivery::AudioChannelMapping>,
     #[serde(default)]
     pub sonic_placement_offsets_by_binding: BTreeMap<String, SonicPlacementOffset>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewIdsProfile {
+    pub font_binding: String,
+    pub font_size: u32,
+}
+
+fn review_policy(
+    review: Option<&ReviewIdsProfile>,
+    mode: AssetPaths,
+    scopes: &[&ScopedBindings],
+) -> Result<Option<Value>> {
+    review
+        .map(|review| -> Result<Value> {
+            if !(8..=96).contains(&review.font_size) {
+                bail!("review ID font size out of range");
+            }
+            let font = reel_assembly::scene_authoring::resolve_selected_binding(
+                &review.font_binding,
+                scopes,
+            )?;
+            Ok(json!({"font":media_ref(font,mode),"font_size":review.font_size}))
+        })
+        .transpose()
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize)]
@@ -245,6 +273,9 @@ fn close_delivery_graph(
         .map(|a| a.sha256.clone())
         .collect::<BTreeSet<_>>();
     let mut media = Vec::new();
+    if !job["review_ids"].is_null() {
+        media.push((&job["review_ids"]["font"], Lane::Presentation));
+    }
     for row in job["audio"].as_array().into_iter().flatten() {
         media.push((
             &row["source"],
@@ -1307,6 +1338,7 @@ fn compile_with_budget(
     if tail_samples != 0 {
         contract["tail_duration_samples"] = json!(tail_samples);
     }
+    let review_policy = review_policy(profile.review_ids.as_ref(), profile.asset_paths, &scopes)?;
     let dir = output_dir(&root, &request.output_dir)?;
     for name in [
         "production.json",
@@ -1344,6 +1376,9 @@ fn compile_with_budget(
     });
     if let Some(layout) = &profile.caption_picture_layout {
         job["caption_picture_layout"] = serde_json::to_value(layout)?;
+    }
+    if let Some(review) = review_policy {
+        job["review_ids"] = review;
     }
     if let Some(region) = &profile.picture_region {
         job["picture_region"] = serde_json::to_value(region)?;
@@ -1695,6 +1730,33 @@ mod tests {
             close_delivery_graph(&graph, &pointer, "scene", "delivery", &[&candidate], &job)
                 .is_err()
         );
+    }
+
+    #[test]
+    fn review_profile_requires_one_selected_font_and_explicit_bounded_size() {
+        let mut scope:ScopedBindings=serde_json::from_value(json!({"schema":"reel.scene-asset-bindings.v1","scope_id":"scene","assets":{"review.font":{"logical_id":"fonts/review","sha256":"1".repeat(64),"bytes":100,"cache_uri":format!("cache://sha256/{}","1".repeat(64)),"selection_state":"selected-private-production"}}})).unwrap();
+        let mut policy = super::ReviewIdsProfile {
+            font_binding: "review.font".into(),
+            font_size: 16,
+        };
+        let value = super::review_policy(Some(&policy), AssetPaths::AssetId, &[&scope])
+            .unwrap()
+            .unwrap();
+        assert_eq!(value["font"]["path"], "fonts/review");
+        assert_eq!(value["font_size"], 16);
+        assert!(
+            super::review_policy(Some(&policy), AssetPaths::AssetId, &[&scope, &scope]).is_err()
+        );
+        assert!(
+            super::review_policy(None, AssetPaths::AssetId, &[])
+                .unwrap()
+                .is_none()
+        );
+        policy.font_size = 0;
+        assert!(super::review_policy(Some(&policy), AssetPaths::AssetId, &[&scope]).is_err());
+        policy.font_size = 16;
+        scope.assets.get_mut("review.font").unwrap().selection_state = "candidate".into();
+        assert!(super::review_policy(Some(&policy), AssetPaths::AssetId, &[&scope]).is_err());
     }
 
     #[test]

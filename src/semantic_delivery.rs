@@ -93,6 +93,11 @@ fn allowed_hashes(selection: &SelectedClosure) -> BTreeSet<String> {
 
 fn validate_job_media(selection: &SelectedClosure, job: &Job) -> Result<()> {
     let allowed = allowed_hashes(selection);
+    if let Some(review) = &job.review_ids {
+        if !allowed.contains(&review.font.sha256) {
+            bail!("review ID font is not selected by semantic closure");
+        }
+    }
     for picture in &job.pictures {
         if !allowed.contains(&picture.source.sha256) {
             bail!(

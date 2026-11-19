@@ -39,6 +39,8 @@ pub struct Job {
     pub width: u32,
     pub height: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub review_ids: Option<crate::scene_review_ids::Policy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub caption_picture_layout: Option<crate::caption_presentation::CaptionPictureLayoutConfig>,
     /// Explicit output-space viewport for side panels or portrait reflow.
     /// Source/protection coordinates remain local to the fitted picture.
@@ -332,6 +334,8 @@ fn conform_timed_layer_frames(
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_ids: Vec<crate::scene_review_ids::Label>,
     pub schema: String,
     pub id: String,
     pub job_sha256: String,
@@ -1221,7 +1225,8 @@ fn plan_from_bytes(
     if used.len() != attached.len() {
         bail!("unconsumed compiled attachments; declare external layers explicitly");
     }
-    let plan = Plan {
+    let mut plan = Plan {
+        review_ids: vec![],
         schema: "reel.scene-delivery-plan.v0.1".into(),
         id: job.id.clone(),
         job_sha256: <sha2::Sha256 as sha2::Digest>::digest(job_bytes)
@@ -1326,6 +1331,8 @@ fn plan_from_bytes(
         }
     }
     crate::motioncraft_review::samples(&job, &plan)?;
+    plan.review_ids = crate::scene_review_ids::labels(&job, &plan, &compiled.attachments)?;
+    crate::scene_review_ids::validate(&job, &plan, asset_root)?;
     Ok((job, plan))
 }
 
@@ -2427,30 +2434,34 @@ fn render_planned(
             arg(&root.join("master.mkv")),
         ],
     )?;
-    ffmpeg_with_inputs(
-        asset_root,
-        &[
-            "-i".into(),
-            arg(&root.join("master.mkv")),
-            "-map".into(),
-            "0:v:0".into(),
-            "-map".into(),
-            "0:a:0".into(),
-            "-c:v".into(),
-            "libx264".into(),
-            "-crf".into(),
-            "18".into(),
-            "-pix_fmt".into(),
-            "yuv420p".into(),
-            "-c:a".into(),
-            "aac".into(),
-            "-b:a".into(),
-            "192k".into(),
-            "-movflags".into(),
-            "+faststart".into(),
-            arg(&root.join("review.mp4")),
-        ],
-    )?;
+    if job.review_ids.is_some() {
+        crate::scene_review_ids::render(&job, &plan, root, asset_root)?;
+    } else {
+        ffmpeg_with_inputs(
+            asset_root,
+            &[
+                "-i".into(),
+                arg(&root.join("master.mkv")),
+                "-map".into(),
+                "0:v:0".into(),
+                "-map".into(),
+                "0:a:0".into(),
+                "-c:v".into(),
+                "libx264".into(),
+                "-crf".into(),
+                "18".into(),
+                "-pix_fmt".into(),
+                "yuv420p".into(),
+                "-c:a".into(),
+                "aac".into(),
+                "-b:a".into(),
+                "192k".into(),
+                "-movflags".into(),
+                "+faststart".into(),
+                arg(&root.join("review.mp4")),
+            ],
+        )?;
+    }
     let names = output_contract(&job, &plan)?.names;
     crate::motioncraft_review::render_with_inputs(&job, &plan, root, asset_root)?;
     let mut outputs = BTreeMap::new();
@@ -2915,6 +2926,7 @@ fn check_outputs_impl(
         paths.insert(item.path.clone(), files.verified_path(item)?);
     }
     let output = CheckedOutputPaths { paths };
+    crate::scene_review_ids::check(&job, &plan, asset_root, |name| output.path(name))?;
     crate::motioncraft_review::check_with_output_paths(
         &job,
         &plan,
@@ -3367,6 +3379,7 @@ mod timed_overlay_end_frame_tests {
         })
         .save(root.join("layer.png"))?;
         let plan = Plan {
+            review_ids: vec![],
             schema: "synthetic-test-only".into(),
             id: "rgba-overlay-test".into(),
             job_sha256: "0".repeat(64),
@@ -3437,6 +3450,7 @@ mod timed_overlay_end_frame_tests {
         clip(root, "a.mkv", "red", 47, Some("white"))?;
         clip(root, "b.mkv", "blue", 71, Some("yellow"))?;
         let plan = Plan {
+            review_ids: vec![],
             schema: "synthetic-test-only".into(),
             id: "timed-overlay-test".into(),
             job_sha256: "0".repeat(64),

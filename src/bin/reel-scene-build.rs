@@ -256,6 +256,9 @@ fn emit_changed_only_graph(index_path: &str, asset_root: &Path, output_path: &st
             inputs.push(local_file("template-receipt", &checked(&root, receipt)?)?);
         }
         inputs.push(bound_asset("contract", asset_root, &scene_job.contract)?);
+        if let Some(review) = &scene_job.review_ids {
+            inputs.push(bound_asset("review-id-font", asset_root, &review.font)?);
+        }
         for (number, picture) in scene_job.pictures.iter().enumerate() {
             inputs.push(bound_asset(
                 &format!("picture-{number:03}"),
