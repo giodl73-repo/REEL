@@ -247,6 +247,12 @@ fn put(memory: &mut MemoryNodes, raw: &[u8]) -> Result<Object> {
         .map_err(|_| error(ErrorKind::Integrity, "admission-memory-node"))
 }
 impl Prepared {
+    fn projection_limits(&self) -> projection::Limits {
+        projection::Limits {
+            logical_bytes: self.snapshot.projection_bytes,
+            ..limits()
+        }
+    }
     pub(crate) fn input_permit(&self, fences: Fences) -> InputPermit {
         InputPermit(Arc::new(InputAuthority {
             profile: self.profile.clone(),
@@ -507,7 +513,7 @@ impl Prepared {
             &self.resources,
             &self.profile.scope.policy,
             &mut memory,
-            limits(),
+            self.projection_limits(),
         )
         .map_err(|e| native_error(e.into()))?;
         let marker = slots::activation(
@@ -524,7 +530,7 @@ impl Prepared {
             &self.profile.scope,
             &prepared,
             &marker,
-            limits(),
+            self.projection_limits(),
             false,
         )
         .map_err(native_error)?;
@@ -567,7 +573,7 @@ impl Prepared {
             &self.resources,
             &self.profile.scope.policy,
             &mut nodes,
-            limits(),
+            self.projection_limits(),
         )
         .map_err(|e| native_error(e.into()))?;
         let minimum = nodes.finish().map_err(|e| native_error(e.into()))?;
@@ -580,7 +586,7 @@ impl Prepared {
             &self.resources,
             &self.profile.scope.policy,
             &mut nodes,
-            limits(),
+            self.projection_limits(),
         )
         .map_err(|e| native_error(e.into()))?;
         let marker = slots::activation(
@@ -597,7 +603,7 @@ impl Prepared {
             &self.profile.scope,
             &prepared,
             &marker,
-            limits(),
+            self.projection_limits(),
             true,
         )
         .map_err(native_error)?;
@@ -760,7 +766,7 @@ impl Prepared {
         let current = index
             .actor(nodes, &self.profile.scope.actor)
             .map_err(|e| native_error(e.into()))?;
-        let binding = envelope::read_binding(&current.selection, nodes, limits())
+        let binding = envelope::read_binding(&current.selection, nodes, self.projection_limits())
             .map_err(|e| native_error(e.into()))?;
         let entries = Tree::from_root(current.selection.root)
             .entries(nodes, TreeLimits::default())

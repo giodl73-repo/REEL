@@ -442,7 +442,8 @@ impl ClaimsGuard {
             objects.extend([retained.selection.root.clone(), evidence.clone()]);
             objects.extend(next.values().cloned());
             let total = objects.iter().try_fold(0u64, |n, o| n.checked_add(o.bytes));
-            if objects.len() > 512 || total.is_none_or(|n| n > 1024 * 1024 * 1024) {
+            let limits = p.projection_limits();
+            if objects.len() > limits.objects || total.is_none_or(|n| n > limits.logical_bytes) {
                 return Err(error(ErrorKind::Budget, "retention-resource-bound"));
             }
             nodes

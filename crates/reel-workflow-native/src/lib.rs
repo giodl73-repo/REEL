@@ -78,6 +78,32 @@ pub struct SnapshotProfile {
     pub input_streams: BTreeMap<String, Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub upstream: Option<upstream::Frozen>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<SnapshotBudget>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotBudget {
+    pub schema: String,
+    pub input_bytes: u64,
+    pub input_object_bytes: u64,
+    pub projection_bytes: u64,
+}
+impl SnapshotBudget {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema != "reel.workflow-snapshot-budget.v1" {
+            return Err(error(ErrorKind::Invalid, "native-snapshot-budget-version"));
+        }
+        if self.input_object_bytes == 0
+            || self.input_object_bytes > self.input_bytes
+            || self.input_bytes > 64 * 1024 * 1024 * 1024
+            || self.projection_bytes < self.input_bytes
+            || self.projection_bytes > 128 * 1024 * 1024 * 1024
+        {
+            return Err(error(ErrorKind::Budget, "native-snapshot-budget"));
+        }
+        Ok(())
+    }
 }
 impl SnapshotProfile {
     /// Portable authored declaration; machine repository/tool locators are not
@@ -90,6 +116,17 @@ impl SnapshotProfile {
             value["schema"] = "reel.workflow-native-composite-bindings.v1".into();
             value["upstream"] = serde_json::to_value(upstream)
                 .map_err(|_| error(ErrorKind::Invalid, "composite-declaration-json"))?;
+        }
+        if let Some(budget) = &self.budget {
+            budget.validate()?;
+            value["schema"] = if self.upstream.is_some() {
+                "reel.workflow-native-composite-bindings.v2"
+            } else {
+                "reel.workflow-native-bindings.v2"
+            }
+            .into();
+            value["budget"] = serde_json::to_value(budget)
+                .map_err(|_| error(ErrorKind::Invalid, "native-snapshot-budget-json"))?;
         }
         let bytes = tig_core::identity::canonical_json(&value)
             .map_err(|_| error(ErrorKind::Invalid, "native-binding-canonical-json"))?;
@@ -215,6 +252,7 @@ fn hold_tool(tool: &Tool) -> Result<File> {
 /// Constructed only by actual exact-commit, record and annex-leaf resolution.
 /// No Deserialize implementation: a supplied receipt cannot create this proof.
 pub struct SnapshotInputs {
+    projection_bytes: u64,
     packet: Packet,
     objects: BTreeMap<String, Object>,
     checkpoint: String,
@@ -232,14 +270,23 @@ impl SnapshotInputs {
             (Some(_), Some(frozen)) => frozen.bound(packet)?,
             _ => return Err(error(ErrorKind::Conflict, "composite-origin-declaration")),
         };
-        let schema = if profile.upstream.is_some() {
-            "reel.workflow-native-composite-snapshot.v1"
-        } else {
-            "reel.workflow-native-snapshot.v1"
+        let schema = match (profile.upstream.is_some(), profile.budget.is_some()) {
+            (false, false) => "reel.workflow-native-snapshot.v1",
+            (true, false) => "reel.workflow-native-composite-snapshot.v1",
+            (false, true) => "reel.workflow-native-snapshot.v2",
+            (true, true) => "reel.workflow-native-composite-snapshot.v2",
         };
         if profile.schema != schema || profile.commit != packet.source_commit {
             return Err(error(ErrorKind::Stale, "native-task-commit"));
         }
+        if let Some(budget) = &profile.budget {
+            budget.validate()?;
+        }
+        let projection_bytes = profile
+            .budget
+            .as_ref()
+            .map(|b| b.projection_bytes)
+            .unwrap_or(1024 * 1024 * 1024);
         let commit = GitId::parse(&profile.commit).map_err(git_error)?;
         let binding = packet
             .task
@@ -279,7 +326,20 @@ impl SnapshotInputs {
             .iter()
             .try_fold(0u64, |n, a| n.checked_add(a.bytes))
             .ok_or_else(|| error(ErrorKind::Budget, "native-input-total"))?;
-        if total > 64 * 1024 * 1024 {
+        let input_limit = profile
+            .budget
+            .as_ref()
+            .map(|b| b.input_bytes)
+            .unwrap_or(64 * 1024 * 1024);
+        if total > input_limit
+            || profile.budget.as_ref().is_some_and(|b| {
+                packet
+                    .task
+                    .inputs
+                    .iter()
+                    .any(|a| a.bytes > b.input_object_bytes)
+            })
+        {
             return Err(error(ErrorKind::Budget, "native-input-total"));
         }
         let paths: BTreeSet<_> = profile
@@ -320,6 +380,7 @@ impl SnapshotInputs {
                     BTreeSet::new(),
                 )?;
             return Ok(Self {
+                projection_bytes,
                 packet: packet.clone(),
                 objects,
                 checkpoint: archive.sha256.as_str().into(),
@@ -387,7 +448,15 @@ impl SnapshotInputs {
         } else {
             bound.assets.checkpoint().as_str().into()
         };
+        if profile.budget.as_ref().is_some_and(|b| {
+            declared_objects
+                .iter()
+                .any(|o| o.bytes > b.input_object_bytes)
+        }) {
+            return Err(error(ErrorKind::Budget, "native-declared-object-budget"));
+        }
         Ok(Self {
+            projection_bytes,
             packet: packet.clone(),
             objects,
             checkpoint,

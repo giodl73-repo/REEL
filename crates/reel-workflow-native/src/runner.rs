@@ -117,7 +117,10 @@ pub fn advance(
             )?;
         }
         if step.source.snapshot.upstream.is_some()
-            || step.source.snapshot.schema != "reel.workflow-native-snapshot.v1"
+            || !matches!(
+                step.source.snapshot.schema.as_str(),
+                "reel.workflow-native-snapshot.v1" | "reel.workflow-native-snapshot.v2"
+            )
             || step.source.snapshot.commit != base.source_commit
             || step.attempt_id.is_empty()
             || step.attempt_id.len() > 128

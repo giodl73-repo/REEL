@@ -184,6 +184,7 @@ impl Fixture {
         let git = git_path();
         let raw = fs::read(&git).unwrap();
         let profile = SnapshotProfile {
+            budget: None,
             upstream: None,
             schema: "reel.workflow-native-snapshot.v1".into(),
             git: Tool {
@@ -274,6 +275,163 @@ impl Fixture {
             BTreeMap::new(),
         )
         .unwrap();
+    }
+}
+
+#[test]
+fn versioned_snapshot_budget_resolves_large_declared_bytes_and_preserves_legacy_declaration() {
+    let mut fixture = Fixture::with_object(Object {
+        sha256: tig_core::Digest::blob(b"synthetic declared large input"),
+        bytes: 3_600_000_001,
+    });
+    let legacy_bytes = fixture.profile.declaration_bytes().unwrap();
+    let legacy_json = serde_json::to_value(&fixture.profile).unwrap();
+    assert!(legacy_json.get("budget").is_none());
+    assert_eq!(
+        SnapshotInputs::open(&fixture.packet, &fixture.profile)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Budget
+    );
+    let old_key = fixture.packet.task_key.clone();
+    fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
+    fixture.profile.budget = Some(reel_workflow_native::SnapshotBudget {
+        schema: "reel.workflow-snapshot-budget.v1".into(),
+        input_bytes: 4 * 1024 * 1024 * 1024,
+        input_object_bytes: 4 * 1024 * 1024 * 1024,
+        projection_bytes: 8 * 1024 * 1024 * 1024,
+    });
+    fixture.repin();
+    assert_ne!(fixture.packet.task_key, old_key);
+    assert_eq!(
+        SnapshotInputs::open(&fixture.packet, &fixture.profile)
+            .unwrap()
+            .input_count(),
+        1
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&fixture.profile.declaration_bytes().unwrap()).unwrap();
+    assert_eq!(value["schema"], "reel.workflow-native-bindings.v2");
+    assert_eq!(
+        value["budget"]["projection_bytes"],
+        8u64 * 1024 * 1024 * 1024
+    );
+    // Choosing the tiny preview must not hide the large selected object from
+    // the per-object bound on the complete declared annex binding.
+    fixture
+        .profile
+        .input_streams
+        .insert("input/source".into(), Some("preview".into()));
+    let preview = Object::from_bytes(b"preview");
+    fixture.packet.task.inputs[0].sha256 = preview.sha256.as_str().into();
+    fixture.packet.task.inputs[0].bytes = preview.bytes;
+    fixture.profile.budget.as_mut().unwrap().input_object_bytes = 1024;
+    fixture.repin();
+    let refusal = SnapshotInputs::open(&fixture.packet, &fixture.profile)
+        .err()
+        .unwrap();
+    assert_eq!(refusal.kind, ErrorKind::Budget);
+    assert_eq!(refusal.code, "native-declared-object-budget");
+    fixture
+        .profile
+        .input_streams
+        .insert("input/source".into(), None);
+    fixture.profile.schema = "reel.workflow-native-snapshot.v1".into();
+    fixture.profile.budget = None;
+    assert_eq!(fixture.profile.declaration_bytes().unwrap(), legacy_bytes);
+}
+
+#[cfg(windows)]
+#[test]
+fn projection_budget_covers_the_full_resource_closure_and_cannot_be_rebound_after_admission() {
+    let bytes = 3_600_000_001;
+    let mut fixture = Fixture::with_object(Object {
+        sha256: tig_core::Digest::blob(b"synthetic protected large input"),
+        bytes,
+    });
+    fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
+    fixture.profile.budget = Some(reel_workflow_native::SnapshotBudget {
+        schema: "reel.workflow-snapshot-budget.v1".into(),
+        input_bytes: bytes,
+        input_object_bytes: bytes,
+        projection_bytes: bytes,
+    });
+    fixture.repin();
+    let case = AdmissionCase::new(&fixture);
+    let prepared = reel_workflow_native::admission::Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "attempt-1",
+    )
+    .unwrap();
+    assert_eq!(prepared.preview().unwrap_err().kind, ErrorKind::Budget);
+    // The consumed bytes alone are insufficient: metadata, other declared
+    // streams and installed runtimes also belong to the protected projection.
+    fixture.profile.budget.as_mut().unwrap().projection_bytes = 8 * 1024 * 1024 * 1024;
+    fixture.repin();
+    let mut case = AdmissionCase::new(&fixture);
+    let prepared = reel_workflow_native::admission::Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "attempt-1",
+    )
+    .unwrap();
+    assert!(prepared.preview().unwrap().logical_bytes > bytes);
+    let receipt = prepared.accept().unwrap();
+    let old_key = fixture.packet.task_key.clone();
+    fixture.profile.budget.as_mut().unwrap().projection_bytes -= 1;
+    fixture.repin();
+    case.source.snapshot = fixture.profile.clone();
+    assert_ne!(fixture.packet.task_key, old_key);
+    assert!(
+        reel_workflow_native::admission::Prepared::open(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            "attempt-1"
+        )
+        .unwrap()
+        .reopen(&receipt)
+        .is_err()
+    );
+}
+
+#[test]
+fn snapshot_budget_versions_and_consumed_object_bounds_refuse_before_payload_access() {
+    for change in [
+        "no-budget",
+        "legacy-with-budget",
+        "object",
+        "invalid-projection",
+    ] {
+        let mut fixture = Fixture::new();
+        fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
+        fixture.profile.budget = Some(reel_workflow_native::SnapshotBudget {
+            schema: "reel.workflow-snapshot-budget.v1".into(),
+            input_bytes: 1024,
+            input_object_bytes: 1024,
+            projection_bytes: 1024 * 1024,
+        });
+        match change {
+            "no-budget" => fixture.profile.budget = None,
+            "legacy-with-budget" => {
+                fixture.profile.schema = "reel.workflow-native-snapshot.v1".into()
+            }
+            "object" => fixture.profile.budget.as_mut().unwrap().input_object_bytes = 1,
+            _ => {
+                fixture.profile.budget.as_mut().unwrap().projection_bytes = 1;
+                assert!(fixture.profile.declaration_bytes().is_err());
+                continue;
+            }
+        }
+        fixture.repin();
+        assert!(
+            SnapshotInputs::open(&fixture.packet, &fixture.profile).is_err(),
+            "{change}"
+        );
     }
 }
 

@@ -59,8 +59,9 @@ impl Prepared {
         outputs: &BTreeSet<Object>,
         nodes: &mut MetadataStore,
     ) -> Result<()> {
-        let binding = envelope::read_binding(&record.update.selection, nodes, limits())
-            .map_err(|e| native_error(e.into()))?;
+        let binding =
+            envelope::read_binding(&record.update.selection, nodes, self.projection_limits())
+                .map_err(|e| native_error(e.into()))?;
         let present: BTreeSet<_> = entries(&record.update.selection, nodes)?
             .into_values()
             .collect();
@@ -123,7 +124,7 @@ impl ClaimsGuard {
                 &Resources::admitted(&p.input, objects),
                 &p.profile.scope.policy,
                 &mut nodes,
-                limits(),
+                p.projection_limits(),
             )
             .map_err(|e| native_error(e.into()))?;
             let next = entries(target.selection(), &mut nodes)?;

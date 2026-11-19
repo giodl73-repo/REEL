@@ -311,7 +311,10 @@ pub fn prepare(
     attempt: &str,
 ) -> Result<Frozen> {
     if source.snapshot.upstream.is_some()
-        || source.snapshot.schema != "reel.workflow-native-snapshot.v1"
+        || !matches!(
+            source.snapshot.schema.as_str(),
+            "reel.workflow-native-snapshot.v1" | "reel.workflow-native-snapshot.v2"
+        )
         || source.snapshot.commit != base.source_commit
     {
         return Err(error(
@@ -321,7 +324,12 @@ pub fn prepare(
     }
     let (mut expansion, parents) = graph::expansion_parents(base, bindings, template)?;
     if let (Some(bindings), Some(parents)) = (&expansion.upstream, &parents) {
-        source.snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
+        source.snapshot.schema = if source.snapshot.budget.is_some() {
+            "reel.workflow-native-composite-snapshot.v2"
+        } else {
+            "reel.workflow-native-composite-snapshot.v1"
+        }
+        .into();
         source.snapshot.upstream = Some(upstream::Frozen::capture(bindings, &parents.borrowed()?));
     }
     let raw = source.snapshot.declaration_bytes()?;
