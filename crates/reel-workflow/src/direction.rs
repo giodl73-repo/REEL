@@ -277,7 +277,9 @@ pub fn preview(
             .saturating_add(compositions - 1)
             .min(frames),
     };
-    let extra = target.saturating_sub(selected.len() as u64);
+    // Every actual run already has its initial drawing bound, even when a
+    // previously selected drawing is reused in a non-adjacent composition.
+    let extra = target.saturating_sub(runs.len() as u64);
     let selected_bytes = selected
         .values()
         .try_fold(0u64, |n, v| n.checked_add(*v))

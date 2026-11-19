@@ -77,6 +77,37 @@ fn picture(id: &str) -> Artifact {
     }
 }
 #[test]
+fn non_adjacent_selected_drawing_reuse_does_not_request_regeneration() {
+    let mut settings: direction::Settings =
+        decode(&serde_json::to_vec(&support::direction_settings()).unwrap()).unwrap();
+    settings.desired_seconds_per_cel = direction::Ratio {
+        numerator: 1,
+        denominator: 1,
+    };
+    let spans: Vec<_> = (0..3)
+        .map(|i| NativeEventSpan {
+            event_id: format!("event-{i}"),
+            cue_id: "cue".into(),
+            start_sample: i * 1000,
+            end_sample: (i + 1) * 1000,
+            sample_rate: 1000,
+        })
+        .collect();
+    let mut second = picture("drawing/second");
+    second.sha256 = digest(b"different drawing");
+    second.bytes = b"different drawing".len() as u64;
+    let pictures = BTreeMap::from([
+        ("event-0".into(), picture("drawing/first")),
+        ("event-1".into(), second),
+        ("event-2".into(), picture("drawing/reused-first")),
+    ]);
+    let preview = direction::preview(&settings, "es", &spans, &pictures).unwrap();
+    assert_eq!(preview.actual_composition_count, 3);
+    assert_eq!(preview.unique_selected_drawings, 2);
+    assert_eq!(preview.additional_candidates_upper_bound, 0);
+    assert_eq!(preview.estimated_generation_cost_microunits, Some(0));
+}
+#[test]
 fn adjacent_aliases_across_different_cue_clocks_cannot_evade_hold_policy() {
     let mut settings: direction::Settings =
         decode(&serde_json::to_vec(&support::direction_settings()).unwrap()).unwrap();
