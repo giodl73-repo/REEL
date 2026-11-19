@@ -57,8 +57,10 @@ pub fn bind(
     if raw.len() as u64 != pin.bytes || digest(&raw) != pin.sha256 {
         return fail(ErrorKind::Integrity, "upstream-binding-content");
     }
-    if bindings.schema != "reel.workflow-upstream-inputs.v1"
-        || bindings.inputs.is_empty()
+    if !matches!(
+        bindings.schema.as_str(),
+        "reel.workflow-upstream-inputs.v1" | "reel.workflow-upstream-inputs.v2"
+    ) || bindings.inputs.is_empty()
         || bindings.inputs.len() > MAX_INPUTS
     {
         return fail(ErrorKind::Invalid, "upstream-binding-contract");
@@ -89,7 +91,8 @@ pub fn bind(
         })?;
         if parent.packet.task.id != *id
             || parent.packet.project != packet.project
-            || parent.packet.source_commit != packet.source_commit
+            || (bindings.schema == "reel.workflow-upstream-inputs.v1"
+                && parent.packet.source_commit != packet.source_commit)
             || canonical_digest(parent.result)? != expected.result_sha256
             || parent.result.artifacts != expected.artifacts
         {

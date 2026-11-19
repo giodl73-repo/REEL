@@ -111,6 +111,7 @@ impl Fixture {
         };
         let plan = Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: "film".into(),
             source_commit: "a".repeat(40),
             tasks: vec![task],
@@ -128,6 +129,7 @@ impl Fixture {
         self.packet = make_packet(
             &Plan {
                 schema: PLAN_SCHEMA.into(),
+                task_snapshots: Default::default(),
                 project: self.packet.project.clone(),
                 source_commit: self.packet.source_commit.clone(),
                 tasks: vec![self.packet.task.clone()],

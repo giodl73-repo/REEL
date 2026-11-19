@@ -54,6 +54,14 @@ impl Frozen {
             || expansion.plan.source_commit != base.source_commit
             || expansion.plan.tasks.len() != base.tasks.len() + 1
             || expansion.plan.tasks[..base.tasks.len()] != base.tasks
+            || base.tasks.iter().any(|t| {
+                expansion.plan.source_commit_for(&t.id).ok() != base.source_commit_for(&t.id).ok()
+            })
+            || expansion
+                .plan
+                .source_commit_for(&expansion.packet.task.id)
+                .ok()
+                != Some(base.source_commit.as_str())
             || expansion
                 .plan
                 .tasks

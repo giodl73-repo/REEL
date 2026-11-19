@@ -98,10 +98,12 @@ be represented as solving these film scale, content or delivery requirements.
 
 ### Selective rebuilds across Git revisions
 
-`make_packet` currently copies the plan-wide `source_commit` into every packet;
-`packet_key` includes that commit. Thus advancing the overall plan's commit also
-changes otherwise identical task identities. Existing within-snapshot isolation
-tests do not establish S5WF-03 across a real Git revision.
+Legacy v2 `make_packet` copies the plan-wide `source_commit` into every packet;
+`packet_key` includes that commit. Thus advancing a v2 plan's commit changes
+otherwise identical task identities. The new [v3 task snapshot contract](2026-11-19-task-snapshots.md)
+preserves explicit per-task snapshots, with versioned repair/upstream behavior
+and protocol tests for unchanged packets and stale affected jobs. These tests
+do not establish S5WF-03 across a real native Git revision.
 
 Project adoption needs explicit task/producer snapshot and retained-result
 adoption semantics, so unchanged consumers can stay bound to their original

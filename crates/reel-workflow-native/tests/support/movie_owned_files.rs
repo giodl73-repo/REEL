@@ -77,6 +77,7 @@ fn file_backed_movie_adopts_completed_render_and_retains_without_rerender() {
     task.tool.as_mut().unwrap().executable.bytes = runtime.bytes;
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: template.project.clone(),
         source_commit: template.source_commit.clone(),
         tasks: vec![task],

@@ -15,6 +15,7 @@ pub(super) fn run_comic(
 ) -> std::process::Output {
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: packet.project.clone(),
         source_commit: packet.source_commit.clone(),
         tasks: vec![packet.task.clone()],

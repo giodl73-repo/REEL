@@ -545,7 +545,12 @@ reel-workflow-native export-ready PLAN RUN_BINDINGS TASK_IDS_JSON NEW_PRIVATE_BA
 reel-workflow-native import-ready PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID RESULT RETURNS --apply
 ```
 
-The existing workflow plan remains `reel.workflow-plan.v2`. Private
+Workflow plan v2 retains its original single-snapshot behavior. Explicit
+`reel.workflow-plan.v3` plans provide a complete `task_snapshots` map so unchanged
+tasks can retain their exact commits while affected tasks advance. Scoped repair
+revision v2 and upstream-inputs v2 preserve those boundaries; no missing task pin
+falls back to latest. See [task snapshot contracts](../../docs/handoff/2026-11-19-task-snapshots.md)
+for compatibility and the still-open native adoption/rollback qualification. Private
 `reel.workflow-run-bindings.v1` controls map task IDs to existing journal paths,
 an exact profile file pin (`{path, sha256}`), and an optional staging ticket file
 pin. Missing entries mean explicitly unadmitted work; a configured journal/profile

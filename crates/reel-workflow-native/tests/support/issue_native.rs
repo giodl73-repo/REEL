@@ -525,6 +525,7 @@ fn complete_issue(derived_control: bool) {
     };
     let mut parent_plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "synthetic-comic".into(),
         source_commit: fixture.profile.commit.clone(),
         tasks: part_data.iter().map(|p| p.0.clone()).collect(),
@@ -1195,6 +1196,7 @@ fn admitted_issue_staging_recovery_preserves_original_close_refusal() {
     tasks.push(packet.task.clone());
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: packet.project.clone(),
         source_commit: packet.source_commit.clone(),
         tasks,

@@ -23,6 +23,7 @@ pub mod tracker;
 pub mod upstream;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
+pub const SCOPED_PLAN_SCHEMA: &str = "reel.workflow-plan.v3";
 pub const PACKET_SCHEMA: &str = "reel.workflow-packet.v2";
 pub const RESULT_SCHEMA: &str = "reel.workflow-result.v2";
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
@@ -158,7 +159,31 @@ pub struct Plan {
     pub schema: String,
     pub project: String,
     pub source_commit: String,
+    /// V3 only: a complete authored task -> exact snapshot map. The plan's
+    /// source_commit identifies its overall revision, not an implicit fallback.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub task_snapshots: BTreeMap<String, String>,
     pub tasks: Vec<Task>,
+}
+impl Plan {
+    pub fn source_commit_for(&self, task_id: &str) -> Result<&str> {
+        if !self.tasks.iter().any(|t| t.id == task_id) {
+            return fail(ErrorKind::Missing, "plan-snapshot-task");
+        }
+        match self.schema.as_str() {
+            PLAN_SCHEMA if self.task_snapshots.is_empty() => Ok(&self.source_commit),
+            SCOPED_PLAN_SCHEMA => self
+                .task_snapshots
+                .get(task_id)
+                .map(String::as_str)
+                .filter(|c| hex(c, &[40, 64]) && !c.bytes().all(|b| b == b'0'))
+                .ok_or_else(|| Error {
+                    kind: ErrorKind::Invalid,
+                    code: "plan-task-snapshot".into(),
+                }),
+            _ => fail(ErrorKind::Invalid, "plan-snapshot-version"),
+        }
+    }
 }
 
 /// Planning reference only. A hash or caller-supplied descriptor is not a
@@ -390,13 +415,25 @@ pub fn canonical_digest(value: &impl Serialize) -> Result<String> {
 /// Returns a stable topological order, refusing cycles and missing dependencies.
 pub fn check_plan(plan: &Plan) -> Result<Vec<String>> {
     canonical_digest(plan)?;
-    if plan.schema != PLAN_SCHEMA
+    if !matches!(plan.schema.as_str(), PLAN_SCHEMA | SCOPED_PLAN_SCHEMA)
         || !token(&plan.project)
         || !hex(&plan.source_commit, &[40, 64])
+        || (plan.schema == SCOPED_PLAN_SCHEMA && plan.source_commit.bytes().all(|b| b == b'0'))
         || plan.tasks.is_empty()
         || plan.tasks.len() > MAX_TASKS
     {
         return fail(ErrorKind::Invalid, "plan-contract");
+    }
+    if (plan.schema == PLAN_SCHEMA && !plan.task_snapshots.is_empty())
+        || (plan.schema == SCOPED_PLAN_SCHEMA
+            && (plan.task_snapshots.keys().collect::<BTreeSet<_>>()
+                != plan.tasks.iter().map(|t| &t.id).collect()
+                || plan
+                    .tasks
+                    .iter()
+                    .any(|t| plan.source_commit_for(&t.id).is_err())))
+    {
+        return fail(ErrorKind::Invalid, "plan-task-snapshot-set");
     }
     let mut by_id = BTreeMap::new();
     for value in &plan.tasks {
@@ -488,7 +525,7 @@ pub fn make_packet(
     let mut packet = Packet {
         schema: PACKET_SCHEMA.into(),
         project: plan.project.clone(),
-        source_commit: plan.source_commit.clone(),
+        source_commit: plan.source_commit_for(task_id)?.to_owned(),
         task: value.clone(),
         dependencies,
         task_key: String::new(),

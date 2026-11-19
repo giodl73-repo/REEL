@@ -716,7 +716,21 @@ pub(crate) fn task_references(task: &Task) -> Vec<&Artifact> {
 /// Does not mutate a plan, release old jobs, apply selections or close findings.
 pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Result<Impact> {
     let order = check_plan(plan)?;
-    if plan.project != report.copy.project || plan.source_commit != report.copy.source_commit {
+    let snapshot_matches = if plan.schema == SCOPED_PLAN_SCHEMA {
+        let commits: BTreeSet<_> = plan
+            .tasks
+            .iter()
+            .filter(|t| {
+                t.language.as_ref() == Some(&report.copy.language)
+                    && task_references(t).contains(&&report.copy.publication)
+            })
+            .map(|t| plan.source_commit_for(&t.id))
+            .collect::<Result<_>>()?;
+        commits.len() == 1 && commits.contains(report.copy.source_commit.as_str())
+    } else {
+        plan.source_commit == report.copy.source_commit
+    };
+    if plan.project != report.copy.project || !snapshot_matches {
         return fail(ErrorKind::Stale, "review-repair-baseline");
     }
     let repair_sha256 = canonical_digest(repair)?;

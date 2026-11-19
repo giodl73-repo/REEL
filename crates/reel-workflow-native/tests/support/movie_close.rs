@@ -98,6 +98,7 @@ fn completed_movie_survives_interrupted_close_and_unrelated_slot_reuse() {
     let next_packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: packet.project.clone(),
             source_commit: packet.source_commit.clone(),
             tasks: vec![next_task],

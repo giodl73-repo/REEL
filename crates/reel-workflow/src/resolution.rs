@@ -120,7 +120,7 @@ pub fn propose(
         let context = &decision.contexts[language];
         if copy.project != plan.project
             || &copy.language != language
-            || copy.source_commit != candidate.plan.source_commit
+            || copy.source_commit != candidate.plan.source_commit_for(&context.production_task)?
             || context.report_sha256 != report.report_sha256()
         {
             return fail(ErrorKind::Stale, "resolution-corrected-edition");

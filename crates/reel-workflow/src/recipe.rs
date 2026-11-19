@@ -245,6 +245,12 @@ pub fn inspect(
         || plan.source_commit != recipe.base.source_commit
         || plan.tasks.len() < recipe.base.tasks.len()
         || plan.tasks[..recipe.base.tasks.len()] != recipe.base.tasks
+        || recipe.base.tasks.iter().any(|t| {
+            plan.source_commit_for(&t.id).ok() != recipe.base.source_commit_for(&t.id).ok()
+        })
+        || plan.tasks[recipe.base.tasks.len()..]
+            .iter()
+            .any(|t| plan.source_commit_for(&t.id).ok() != Some(recipe.base.source_commit.as_str()))
         || plan.tasks[recipe.base.tasks.len()..]
             .iter()
             .any(|t| !recipe.steps.iter().any(|s| s.id == t.id))

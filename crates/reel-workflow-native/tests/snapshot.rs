@@ -231,6 +231,7 @@ impl Fixture {
         let packet = make_packet(
             &Plan {
                 schema: PLAN_SCHEMA.into(),
+                task_snapshots: Default::default(),
                 project: "synthetic-native".into(),
                 source_commit: commit,
                 tasks: vec![task],
@@ -261,6 +262,7 @@ impl Fixture {
         self.packet = make_packet(
             &Plan {
                 schema: PLAN_SCHEMA.into(),
+                task_snapshots: Default::default(),
                 project: self.packet.project.clone(),
                 source_commit: self.profile.commit.clone(),
                 tasks: vec![task],
@@ -405,6 +407,7 @@ fn explicit_stream_selection_binds_the_stream_object_and_invalidates_old_results
     fixture.packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: fixture.packet.project.clone(),
             source_commit: fixture.profile.commit.clone(),
             tasks: vec![task],
@@ -1657,6 +1660,7 @@ fn exercise_waiting_graph(
     }
     let plan = reel_workflow::Plan {
         schema: reel_workflow::PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: packet.project.clone(),
         source_commit: packet.source_commit.clone(),
         tasks,
@@ -2314,6 +2318,7 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
     second.id = "parallel".into();
     let plan = reel_workflow::Plan {
         schema: reel_workflow::PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: fixture.packet.project.clone(),
         source_commit: fixture.packet.source_commit.clone(),
         tasks: vec![fixture.packet.task.clone(), second],
@@ -3008,6 +3013,7 @@ fn frozen_composite_metadata_cannot_grant_acceptance_recovery_or_byte_access() {
     });
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: fixture.packet.project.clone(),
         source_commit: fixture.packet.source_commit.clone(),
         tasks: vec![fixture.packet.task.clone(), task],
@@ -3517,6 +3523,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
     fixture.packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: "synthetic-comic".into(),
             source_commit: fixture.profile.commit.clone(),
             tasks: vec![task],
@@ -3558,6 +3565,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
         let packet = make_packet(
             &Plan {
                 schema: PLAN_SCHEMA.into(),
+                task_snapshots: Default::default(),
                 project: fixture.packet.project.clone(),
                 source_commit: fixture.packet.source_commit.clone(),
                 tasks: vec![task],
@@ -3767,6 +3775,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
         fixture.packet = make_packet(
             &Plan {
                 schema: PLAN_SCHEMA.into(),
+                task_snapshots: Default::default(),
                 project: fixture.packet.project.clone(),
                 source_commit: fixture.packet.source_commit.clone(),
                 tasks: vec![parent_packet.task.clone(), task],
@@ -4303,6 +4312,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
         });
         let plan = Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: fixture.packet.project.clone(),
             source_commit: fixture.packet.source_commit.clone(),
             tasks: vec![fixture.packet.task.clone(), child],
@@ -5163,6 +5173,7 @@ fn admission_node_budget_refuses_before_claim_or_metadata_changes() {
     fixture.packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: fixture.packet.project.clone(),
             source_commit: fixture.profile.commit.clone(),
             tasks: vec![task],

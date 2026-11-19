@@ -254,7 +254,12 @@ pub fn prepare(
         None
     };
     let upstream = (!upstream_inputs.is_empty()).then_some(upstream::Bindings {
-        schema: "reel.workflow-upstream-inputs.v1".into(),
+        schema: if plan.schema == SCOPED_PLAN_SCHEMA {
+            "reel.workflow-upstream-inputs.v2"
+        } else {
+            "reel.workflow-upstream-inputs.v1"
+        }
+        .into(),
         inputs: upstream_inputs,
     });
     let upstream_pin = upstream
@@ -283,6 +288,11 @@ pub fn prepare(
     };
     let mut expanded = plan.clone();
     expanded.tasks.push(task);
+    if expanded.schema == SCOPED_PLAN_SCHEMA {
+        expanded
+            .task_snapshots
+            .insert(t.id.clone(), plan.source_commit.clone());
+    }
     let packet = make_packet(&expanded, &t.id, dependencies)?;
     let expansion = Expansion {
         schema: "reel.workflow-expansion.v1".into(),

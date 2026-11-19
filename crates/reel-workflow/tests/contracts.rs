@@ -25,6 +25,7 @@ fn task(id: &str) -> Task {
 fn plan() -> Plan {
     Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "synthetic-film".into(),
         source_commit: "a".repeat(40),
         tasks: vec![task("note")],

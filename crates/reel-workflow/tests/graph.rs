@@ -31,10 +31,81 @@ fn plan() -> Plan {
     tasks[2].depends_on = vec!["a".into()];
     Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "synthetic".into(),
         source_commit: "a".repeat(40),
         tasks,
     }
+}
+#[test]
+fn scoped_snapshots_preserve_unchanged_packets_and_refuse_stale_affected_jobs() {
+    let baseline = plan();
+    let a = make_packet(&baseline, "a", BTreeMap::new()).unwrap();
+    let b = make_packet(&baseline, "b", BTreeMap::new()).unwrap();
+    let mut revised = baseline.clone();
+    revised.schema = SCOPED_PLAN_SCHEMA.into();
+    revised.source_commit = "b".repeat(40);
+    revised.task_snapshots = BTreeMap::from([
+        ("a".into(), "a".repeat(40)),
+        ("b".into(), "b".repeat(40)),
+        ("c".into(), "b".repeat(40)),
+    ]);
+    assert_eq!(make_packet(&revised, "a", BTreeMap::new()).unwrap(), a);
+    assert_ne!(
+        make_packet(&revised, "b", BTreeMap::new())
+            .unwrap()
+            .task_key,
+        b.task_key
+    );
+    let mut fixture = Fixture::default();
+    fixture.jobs.insert("a".into(), job(a, State::Retained));
+    fixture.jobs.insert("b".into(), job(b, State::Retained));
+    let frontier = graph::inspect(&revised, &mut fixture).unwrap();
+    assert_eq!(frontier.rows[0].status, Status::RetainedObserved);
+    assert_eq!(frontier.rows[1].status, Status::Refused);
+    assert!(!frontier.needs_admission.contains_key("b"));
+    assert_eq!(frontier.needs_admission["c"].source_commit, "b".repeat(40));
+    assert!(frontier.needs_admission["c"].dependencies.contains_key("a"));
+}
+
+#[test]
+fn scoped_plan_requires_complete_exact_snapshots_and_preserves_legacy_json() {
+    let legacy = plan();
+    let raw = serde_json::to_value(&legacy).unwrap();
+    assert!(raw.get("task_snapshots").is_none());
+    let decoded: Plan = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(serde_json::to_value(decoded).unwrap(), raw);
+    let mut scoped = legacy.clone();
+    scoped.task_snapshots = scoped
+        .tasks
+        .iter()
+        .map(|t| (t.id.clone(), "a".repeat(40)))
+        .collect();
+    assert!(check_plan(&scoped).is_err());
+    scoped.schema = SCOPED_PLAN_SCHEMA.into();
+    check_plan(&scoped).unwrap();
+    for mutation in ["missing", "extra", "zero", "malformed", "global-zero"] {
+        let mut bad = scoped.clone();
+        match mutation {
+            "missing" => {
+                bad.task_snapshots.remove("a");
+            }
+            "extra" => {
+                bad.task_snapshots.insert("unknown".into(), "a".repeat(40));
+            }
+            "zero" => {
+                bad.task_snapshots.insert("a".into(), "0".repeat(40));
+            }
+            "malformed" => {
+                bad.task_snapshots.insert("a".into(), "latest".into());
+            }
+            _ => {
+                bad.source_commit = "0".repeat(40);
+            }
+        }
+        assert!(check_plan(&bad).is_err(), "{mutation}");
+    }
+    assert!(scoped.source_commit_for("unknown").is_err());
 }
 fn artifact(id: &str) -> Artifact {
     Artifact {
@@ -284,6 +355,58 @@ fn expansion_uses_exact_verified_parent_outputs_and_preserves_existing_tasks() {
         digest(&raw)
     );
 }
+#[test]
+fn scoped_expansion_and_recipe_preserve_base_snapshots_and_pin_new_tasks() {
+    let (mut recipe, mut observer) = recipe_fixture();
+    recipe.base.schema = SCOPED_PLAN_SCHEMA.into();
+    recipe.base.source_commit = "b".repeat(40);
+    recipe.base.task_snapshots = recipe
+        .base
+        .tasks
+        .iter()
+        .map(|t| (t.id.clone(), "a".repeat(40)))
+        .collect();
+    let expanded = expansion::prepare(
+        &recipe.base,
+        &expansion_template(&recipe.base),
+        &mut observer,
+    )
+    .unwrap();
+    assert_eq!(
+        expanded.plan.source_commit_for("a").unwrap(),
+        "a".repeat(40)
+    );
+    assert_eq!(
+        expanded.plan.source_commit_for("late-child").unwrap(),
+        "b".repeat(40)
+    );
+    assert_eq!(
+        expanded.upstream.unwrap().schema,
+        "reel.workflow-upstream-inputs.v2"
+    );
+    check_plan(&expanded.plan).unwrap();
+    let wave = recipe::inspect(&recipe, &recipe.base, 1, &mut observer).unwrap();
+    let mut current = recipe.base.clone();
+    current.tasks.push(wave.proposals[0].packet.task.clone());
+    current.task_snapshots.insert("one".into(), "b".repeat(40));
+    observer.jobs.insert(
+        "one".into(),
+        job(wave.proposals[0].packet.clone(), State::Waiting),
+    );
+    recipe::inspect(&recipe, &current, 1, &mut observer).unwrap();
+    for id in ["a", "one"] {
+        let mut tampered = current.clone();
+        tampered.task_snapshots.insert(id.into(), "c".repeat(40));
+        assert_eq!(
+            recipe::inspect(&recipe, &tampered, 1, &mut observer)
+                .err()
+                .unwrap()
+                .code,
+            "recipe-append-only-plan"
+        );
+    }
+}
+
 #[test]
 fn expansion_refuses_waiting_pending_cancelled_or_unverified_parent_jobs() {
     let plan = plan();

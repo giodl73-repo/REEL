@@ -63,6 +63,7 @@ fn proxy_dispatch_requires_declared_evidence_and_native_inputs_before_network_ef
         reel_workflow_native::handoff::create(&journal, &fixture.packet, &profile).unwrap();
         let plan = Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: fixture.packet.project.clone(),
             source_commit: fixture.packet.source_commit.clone(),
             tasks: vec![fixture.packet.task.clone()],
@@ -450,6 +451,7 @@ fn run_case(uncertain: bool, speech: bool, image: bool, text: bool) {
     );
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: fixture.packet.project.clone(),
         source_commit: fixture.packet.source_commit.clone(),
         tasks: vec![fixture.packet.task.clone()],

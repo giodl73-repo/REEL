@@ -130,6 +130,7 @@ mod image_context_tests {
         let mut packet = reel_workflow::make_packet(
             &reel_workflow::Plan {
                 schema: reel_workflow::PLAN_SCHEMA.into(),
+                task_snapshots: Default::default(),
                 project: "synthetic".into(),
                 source_commit: "a".repeat(40),
                 tasks: vec![task],

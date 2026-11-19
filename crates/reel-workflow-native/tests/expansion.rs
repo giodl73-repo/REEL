@@ -29,6 +29,7 @@ fn expansion_cli_exports_only_new_private_planning_controls_and_refuses_unretain
     };
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "synthetic-expansion".into(),
         source_commit: "a".repeat(40),
         tasks: vec![task.clone()],

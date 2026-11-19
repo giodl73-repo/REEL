@@ -34,6 +34,7 @@ fn retained_finding_exports_a_revised_plan_and_refuses_a_stale_report() {
     };
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: checked.copy().project.clone(),
         source_commit: checked.copy().source_commit.clone(),
         tasks: vec![Task {

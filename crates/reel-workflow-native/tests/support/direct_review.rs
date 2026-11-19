@@ -146,6 +146,7 @@ fn run(invalid: bool) {
     let claims = fs::read(case.profile.index_root.join("claims.json")).unwrap();
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: fixture.packet.project.clone(),
         source_commit: fixture.packet.source_commit.clone(),
         tasks: vec![fixture.packet.task.clone()],

@@ -38,7 +38,7 @@ without completion or replacement. Their initial test setup reused an existing
 workspace operation and correctly refused; distinct explicit fixture operation
 identities fixed the harness without relaxing ownership checks.
 
-## Native qualification to execute
+## Native qualification
 
 The bounded native fixture uses existing synthetic movie inputs and explicitly
 closes the retained automatic-resolution source slot into retained coverage,
@@ -50,12 +50,13 @@ dispatch mode. It creates an owned worker ticket and renders once through
 controller boundary, render request/outcome exist but worker receipt/completion
 do not. A separate original-ticket worker process must adopt those exact completed
 outputs, retain/reopen them and replay without render-control/timestamp or claim
-changes. Review IDs must match the original synthetic movie. Previous resolution
-history and the original movie's separate claims must remain intact.
+changes. All those checks passed. Review IDs matched the original synthetic
+movie; previous resolution history reopened and the original movie's separate
+claims remained intact.
 
 Source/Index work, activation, ticket, tool pins, returned bytes and scratch are
 preserved on failure. Do not rerun this effectful fixture fresh after acceptance;
-reconcile the original handles. Its actual results are recorded after execution.
+reconcile the original handles. The actual run passed in 1,005.82 test seconds.
 This is a completed-render/controller-boundary fixture, not proof of every
 mid-render crash, lost-evidence or episode-scale recovery case.
 
@@ -77,7 +78,7 @@ subsequent fixture-only staging-ticket correction and note are pinned at
 and individually hash/length verified. The v1 evidence packet was build/source
 only; no native lifecycle fixture was executed from it.
 
-The corrected native fixture is running in preserved root `.tmpy4yMWg`, previous
+The corrected native fixture passed in preserved root `.tmpy4yMWg`, previous
 job `.tmpCNEYpK`, using the same Index `.tmp4xlWag/index`, new attempt 3 and task
 key `e033ce3ea0a4fa973dd60bf64dd26b6fd19fe9824db7ca0ccf1a460905d0e344`.
 Frozen runtime: `147d2aa54f2e0a80fda9e41515bde458655e99a74ecbf136556fae7ee0710dd5`
@@ -85,5 +86,11 @@ Frozen runtime: `147d2aa54f2e0a80fda9e41515bde458655e99a74ecbf136556fae7ee0710dd
 `de951f7902dab595d7664db9c223ddcf353d505cc3aab08e8db841d87803980a`
 (27,906,560 bytes). Private evidence is under
 `F:/src/tig-dev-temp/reel-owned-file-movie-20261119-v2`.
-Final native qualification remains unconfirmed. Continue the original handle;
-do not restart this effectful fixture as a fresh operation.
+The completed evidence certificate is `qualified-tools.json`, SHA256
+`fb2ff66239b4867a23603d9bfd1a634a26c301a6c573470427f300403dc4204f`.
+It binds source archive/manifest, frozen tools, terminal log/timing and the
+fixture result. The earlier `pending-run.json` remains historical evidence;
+session 74277 terminated successfully. One render occurred; separate-process
+adoption and replay preserved the original render controls and modification
+times. No new Index, consumer adoption, selection or scratch retirement occurred.
+This qualifies only the declared synthetic completed-render recovery boundary.

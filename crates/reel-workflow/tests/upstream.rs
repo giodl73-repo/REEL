@@ -30,11 +30,19 @@ fn task(id: &str) -> Task {
     }
 }
 fn packet(task: Task, dependencies: BTreeMap<String, DependencyResult>) -> Packet {
+    packet_at(task, dependencies, "a".repeat(40))
+}
+fn packet_at(
+    task: Task,
+    dependencies: BTreeMap<String, DependencyResult>,
+    commit: String,
+) -> Packet {
     make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: "synthetic".into(),
-            source_commit: "a".repeat(40),
+            source_commit: commit,
             tasks: std::iter::once(task.clone())
                 .chain(task.depends_on.iter().map(|id| self::task(id)))
                 .collect(),
@@ -58,6 +66,69 @@ fn returned(packet: &Packet, id: &str) -> ReturnedResult {
             model: None,
             executable: None,
         },
+    }
+}
+#[test]
+fn versioned_upstream_accepts_exact_cross_snapshot_parent_and_refuses_substitution() {
+    let parent = packet(task("a"), BTreeMap::new());
+    let result = returned(&parent, "part/a");
+    let parents = BTreeMap::from([(
+        "a".into(),
+        Parent {
+            packet: &parent,
+            result: &result,
+        },
+    )]);
+    for version in ["v1", "v2"] {
+        let bindings = Bindings {
+            schema: format!("reel.workflow-upstream-inputs.{version}"),
+            inputs: BTreeMap::from([(
+                "part/a".into(),
+                Reference {
+                    task_id: "a".into(),
+                    artifact: Selector::Output {
+                        name: "note".into(),
+                    },
+                },
+            )]),
+        };
+        let mut consumer = child(&bindings, &parents, vec![result.artifacts["note"].clone()]);
+        consumer = packet_at(consumer.task, consumer.dependencies, "b".repeat(40));
+        if version == "v1" {
+            assert_eq!(
+                bind(&consumer, &bindings, &parents).unwrap_err().kind,
+                ErrorKind::Stale
+            );
+            continue;
+        }
+        assert_eq!(bind(&consumer, &bindings, &parents).unwrap().len(), 1);
+        let wrong_parent = packet_at(
+            parent.task.clone(),
+            parent.dependencies.clone(),
+            "c".repeat(40),
+        );
+        let mut wrong_result = result.clone();
+        wrong_result.task_key = wrong_parent.task_key.clone();
+        // Identical output bytes and logical IDs do not satisfy the pinned result.
+        let substituted = BTreeMap::from([(
+            "a".into(),
+            Parent {
+                packet: &wrong_parent,
+                result: &wrong_result,
+            },
+        )]);
+        assert_eq!(
+            bind(&consumer, &bindings, &substituted).unwrap_err().kind,
+            ErrorKind::Stale
+        );
+        let inconsistent = BTreeMap::from([(
+            "a".into(),
+            Parent {
+                packet: &wrong_parent,
+                result: &result,
+            },
+        )]);
+        assert!(bind(&consumer, &bindings, &inconsistent).is_err());
     }
 }
 fn child(
@@ -191,6 +262,7 @@ fn changed_attempt_or_project_cannot_reuse_an_identical_parent_artifact() {
     );
     let mut other = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "other".into(),
         source_commit: "a".repeat(40),
         tasks: vec![task("a")],

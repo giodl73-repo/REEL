@@ -30,6 +30,7 @@ fn packet() -> Packet {
     make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: "synthetic".into(),
             source_commit: "a".repeat(40),
             tasks: vec![task],
@@ -106,6 +107,7 @@ fn png_pack_refuses_malformed_missing_aliased_and_trace_companion_returns() {
     p = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: p.project,
             source_commit: p.source_commit,
             tasks: vec![p.task],

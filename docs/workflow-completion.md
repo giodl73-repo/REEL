@@ -32,11 +32,18 @@ now captures owned media behind held files, records in-place output identities
 in the worker manifest and stream-verifies staging/completion without media
 buffers or duplicate parts. The explicit buffered APIs remain available. All
 65 standard native tests and both strict Clippy configurations pass. Its fresh
-native completed-render/controller-boundary fixture is running with exact source,
-runtime and operation pins; final native qualification is still unconfirmed.
+native completed-render/controller-boundary fixture passed in 1,005.82 seconds
+with exact source, runtime and operation pins.
 V1 limits remain unchanged, so this does not qualify S5 episode scale or adopt
 production. Large budgets, bounded composition, cross-revision adoption and
 broader interrupted-controller cases remain required.
+
+The [task snapshot contract](handoff/2026-11-19-task-snapshots.md) now supports
+explicit per-task exact commits in plan v3, scoped repair revision v2 and exact
+cross-snapshot upstream v2. Legacy plans/repairs keep their original serialized
+semantics. Protocol tests preserve unaffected packets while refusing stale
+affected jobs and snapshot tampering. Native A -> B adoption/rollback and real
+affected-language/consumer integration remain open; this does not close S5WF-03.
 
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |

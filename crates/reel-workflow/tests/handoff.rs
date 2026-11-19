@@ -33,6 +33,7 @@ fn fixture() -> (Ticket, ReturnedResult) {
     let packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: "synthetic-comic".into(),
             source_commit: "a".repeat(40),
             tasks: vec![task],

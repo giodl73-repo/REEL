@@ -65,7 +65,7 @@ fn production_copy(
     if job.state != reel_workflow::handoff::State::Retained
         || job.ticket.packet.task_key != task_key
         || !plan.tasks.iter().any(|t| t == &job.ticket.packet.task)
-        || job.ticket.packet.source_commit != plan.source_commit
+        || job.ticket.packet.source_commit != plan.source_commit_for(id)?
         || job.ticket.packet.project != plan.project
     {
         return Err(error(ErrorKind::Stale, "resolution-production-observation"));

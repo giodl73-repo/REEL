@@ -16,6 +16,7 @@ fn auxiliary_program_roles_and_pins_are_checked_without_opening_program_paths() 
     let packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: f.packet.project,
             source_commit: f.packet.source_commit,
             tasks: vec![f.packet.task],
@@ -141,6 +142,7 @@ fn run_scene_controls(auxiliary: bool, directed: bool) {
     fixture.packet = make_packet(
         &Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: film.packet.project,
             source_commit: fixture.profile.commit.clone(),
             tasks: vec![task],

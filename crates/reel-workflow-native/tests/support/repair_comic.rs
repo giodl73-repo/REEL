@@ -428,6 +428,7 @@ fn retained_finding_drives_corrected_comic_render_retention_and_contextual_revie
     fixture.profile.git = old_profile.source.snapshot.git.clone();
     let baseline = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: old_packet.project.clone(),
         source_commit: old_packet.source_commit.clone(),
         tasks: vec![old_packet.task.clone()],

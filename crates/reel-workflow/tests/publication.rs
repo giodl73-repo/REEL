@@ -236,6 +236,7 @@ fn build() -> (Plan, Memory, Receipt) {
     (
         Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: "synthetic-comic".into(),
             source_commit: "a".repeat(40),
             tasks: vec![task],
@@ -556,6 +557,7 @@ fn derived_review_controls_bind_exact_parent_and_emit_a_ready_structured_request
     }
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: child.project.clone(),
         source_commit: child.source_commit.clone(),
         tasks: vec![task],

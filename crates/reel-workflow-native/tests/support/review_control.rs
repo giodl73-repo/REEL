@@ -198,6 +198,7 @@ fn retained_comic_drives_owned_review_controls_and_a_protected_structured_review
     };
     let mut plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: producer.project.clone(),
         source_commit: producer.source_commit.clone(),
         tasks: vec![producer.task.clone(), task],

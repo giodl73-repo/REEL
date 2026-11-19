@@ -29,6 +29,12 @@ Current v2 task/result contracts use named multi-artifact sets shared with
 see [publication contracts](publication.md). The single-output v1 prototype is
 not silently reinterpreted.
 
+The additive [plan v3 task snapshot contract](handoff/2026-11-19-task-snapshots.md)
+retains exact task commits across overall revisions. Scoped repair revision v2
+advances only the rebuild closure; upstream-inputs v2 binds exact results across
+snapshots. Packets/results remain v2 and legacy plan/repair serialization stays
+unchanged. Native project adoption and rollback remain qualification gates.
+
 No API/proxy, ElevenLabs recording, image-generation, GitHub issue,
 selection application or
 scratch retirement adapter is installed. `check-result` never marks a task

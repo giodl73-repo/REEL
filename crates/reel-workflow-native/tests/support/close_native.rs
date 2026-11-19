@@ -129,6 +129,7 @@ pub(super) fn exercise_native_close(
         .push_str(" New explicitly admitted generation.");
     let next_plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: fixture.packet.project.clone(),
         source_commit: fixture.packet.source_commit.clone(),
         tasks: vec![next_task],

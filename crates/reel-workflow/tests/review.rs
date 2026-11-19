@@ -53,6 +53,7 @@ fn structured() -> (Plan, Memory, ReturnedResult, Vec<u8>) {
     )]);
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "synthetic".into(),
         source_commit: "b".repeat(40),
         tasks: vec![task],
@@ -302,6 +303,7 @@ fn task(id: &str, language: &str, inputs: Vec<Artifact>, depends: &[&str]) -> Ta
 fn plan() -> Plan {
     Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: "synthetic".into(),
         source_commit: "a".repeat(40),
         tasks: vec![
@@ -699,6 +701,7 @@ fn returned_review_binds_task_language_source_bytes_and_evidence() {
         )]);
         let mut plan = Plan {
             schema: PLAN_SCHEMA.into(),
+            task_snapshots: Default::default(),
             project: copy.project.clone(),
             source_commit: copy.source_commit.clone(),
             tasks: vec![task],
@@ -1186,6 +1189,127 @@ fn repair_revision_materializes_exact_inputs_and_preserves_other_languages() {
         bad.source_commit = "0".repeat(40);
         assert!(reel_workflow::repair::materialize(&baseline, &checked, &repair, &bad).is_err());
     }
+}
+
+#[test]
+fn scoped_repair_preserves_unaffected_native_packets_and_requires_only_rebuilt_bindings() {
+    let copy = copy(true, "es");
+    let checked = check_report(&copy, &report(&copy)).unwrap();
+    let mut baseline = plan();
+    for task in &mut baseline.tasks {
+        task.native_inputs = Some(pin(&format!("native/{}", task.id), b"old declaration"));
+    }
+    let repair = repair(&checked, pin("input/es-text", b"Spanish text"));
+    let impact = repair_impact(&baseline, &checked, &repair).unwrap();
+    let mut revision = reel_workflow::repair::Revision {
+        schema: "reel.workflow-repair-revision.v2".into(),
+        source_commit: "b".repeat(40),
+        native_inputs: baseline
+            .tasks
+            .iter()
+            .filter(|t| impact.rebuild.contains(&t.id))
+            .map(|t| {
+                let before = t.native_inputs.clone().unwrap();
+                (
+                    t.id.clone(),
+                    Edit {
+                        after: pin(&before.logical_id, b"new declaration"),
+                        before,
+                    },
+                )
+            })
+            .collect(),
+    };
+    let candidate =
+        reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision).unwrap();
+    assert_eq!(candidate.plan.schema, SCOPED_PLAN_SCHEMA);
+    for task in &baseline.tasks {
+        if impact.rebuild.contains(&task.id) {
+            assert_eq!(
+                candidate.plan.source_commit_for(&task.id).unwrap(),
+                "b".repeat(40)
+            );
+            let changed = candidate
+                .plan
+                .tasks
+                .iter()
+                .find(|t| t.id == task.id)
+                .unwrap();
+            assert_ne!(changed.native_inputs, task.native_inputs);
+        } else {
+            assert_eq!(
+                candidate.plan.source_commit_for(&task.id).unwrap(),
+                baseline.source_commit
+            );
+            let dependencies = task
+                .depends_on
+                .iter()
+                .map(|id| {
+                    (
+                        id.clone(),
+                        DependencyResult {
+                            result_sha256: digest(b"unchanged retained result"),
+                            artifacts: BTreeMap::from([(
+                                "candidate".into(),
+                                pin("candidate/shared", b"same bytes"),
+                            )]),
+                        },
+                    )
+                })
+                .collect::<BTreeMap<_, _>>();
+            assert_eq!(
+                make_packet(&candidate.plan, &task.id, dependencies.clone()).unwrap(),
+                make_packet(&baseline, &task.id, dependencies).unwrap()
+            );
+        }
+    }
+    revision.native_inputs.remove("es-reading");
+    assert_eq!(
+        reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision)
+            .unwrap_err()
+            .code,
+        "repair-revision-native-task-set"
+    );
+    let before = baseline.tasks[0].native_inputs.clone().unwrap();
+    revision.native_inputs.insert(
+        "art".into(),
+        Edit {
+            after: pin(&before.logical_id, b"unneeded"),
+            before,
+        },
+    );
+    assert!(reel_workflow::repair::materialize(&baseline, &checked, &repair, &revision).is_err());
+}
+
+#[test]
+fn scoped_review_requires_exact_publication_language_and_unambiguous_task_snapshot() {
+    let copy = copy(true, "es");
+    let checked = check_report(&copy, &report(&copy)).unwrap();
+    let mut baseline = plan();
+    baseline.schema = SCOPED_PLAN_SCHEMA.into();
+    baseline.source_commit = "b".repeat(40);
+    baseline.task_snapshots = baseline
+        .tasks
+        .iter()
+        .map(|t| (t.id.clone(), "a".repeat(40)))
+        .collect();
+    let repair = repair(&checked, pin("input/es-text", b"Spanish text"));
+    assert!(repair_impact(&baseline, &checked, &repair).is_err());
+    baseline.tasks[1].inputs.push(copy.publication.clone());
+    repair_impact(&baseline, &checked, &repair).unwrap();
+    baseline
+        .task_snapshots
+        .insert("es-lettering".into(), "b".repeat(40));
+    assert!(repair_impact(&baseline, &checked, &repair).is_err());
+    baseline.tasks[0].inputs.push(copy.publication.clone());
+    assert!(repair_impact(&baseline, &checked, &repair).is_err());
+    baseline
+        .task_snapshots
+        .insert("es-lettering".into(), "a".repeat(40));
+    repair_impact(&baseline, &checked, &repair).unwrap();
+    baseline.tasks[1].language = Some("en".into());
+    baseline.tasks[0].language = Some("en".into());
+    assert!(repair_impact(&baseline, &checked, &repair).is_err());
 }
 
 #[test]

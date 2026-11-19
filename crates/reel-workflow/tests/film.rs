@@ -23,6 +23,7 @@ fn auxiliary_program_identity_changes_task_key_and_legacy_contract_omits_empty_m
         .insert("ffmpeg".into(), runtime.clone());
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: f.packet.project.clone(),
         source_commit: f.packet.source_commit.clone(),
         tasks: vec![task.clone()],

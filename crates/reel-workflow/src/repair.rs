@@ -7,8 +7,8 @@ use crate::*;
 pub struct Revision {
     pub schema: String,
     pub source_commit: String,
-    /// Every native task needs a fresh commit-bound declaration, including
-    /// creatively unaffected tasks. These are pointers, not custody evidence.
+    /// V1 rebinds every native task. V2 rebinds exactly affected/rebuilt native
+    /// tasks and preserves unaffected exact snapshots. Pointers are not custody.
     pub native_inputs: BTreeMap<String, review::Edit>,
 }
 
@@ -39,7 +39,9 @@ pub fn materialize(
 ) -> Result<Candidate> {
     let impact = review::repair_impact(baseline, report, repair)?;
     let revision_sha256 = canonical_digest(revision)?;
-    if revision.schema != "reel.workflow-repair-revision.v1"
+    let scoped = revision.schema == "reel.workflow-repair-revision.v2";
+    if (!scoped && revision.schema != "reel.workflow-repair-revision.v1")
+        || (!scoped && baseline.schema != PLAN_SCHEMA)
         || !hex(&revision.source_commit, &[40, 64])
         || revision.source_commit.bytes().all(|b| b == b'0')
         || revision.source_commit == baseline.source_commit
@@ -49,7 +51,7 @@ pub fn materialize(
     let required: BTreeSet<_> = baseline
         .tasks
         .iter()
-        .filter(|t| t.native_inputs.is_some())
+        .filter(|t| t.native_inputs.is_some() && (!scoped || impact.rebuild.contains(&t.id)))
         .map(|t| &t.id)
         .collect();
     if revision.native_inputs.keys().collect::<BTreeSet<_>>() != required {
@@ -57,6 +59,23 @@ pub fn materialize(
     }
     let mut plan = baseline.clone();
     plan.source_commit = revision.source_commit.clone();
+    if scoped {
+        plan.schema = SCOPED_PLAN_SCHEMA.into();
+        plan.task_snapshots = baseline
+            .tasks
+            .iter()
+            .map(|t| {
+                Ok((
+                    t.id.clone(),
+                    if impact.rebuild.contains(&t.id) {
+                        revision.source_commit.clone()
+                    } else {
+                        baseline.source_commit_for(&t.id)?.to_owned()
+                    },
+                ))
+            })
+            .collect::<Result<_>>()?;
+    }
     for task in &mut plan.tasks {
         for pin in &mut task.inputs {
             replace(pin, &repair.edits);
@@ -75,7 +94,9 @@ pub fn materialize(
         if let Some(pin) = &mut task.upstream_inputs {
             replace(pin, &repair.edits);
         }
-        if let Some(pin) = &mut task.native_inputs {
+        if let Some(pin) = &mut task.native_inputs
+            && (!scoped || impact.rebuild.contains(&task.id))
+        {
             let edit = &revision.native_inputs[&task.id];
             artifact(&edit.before)?;
             artifact(&edit.after)?;

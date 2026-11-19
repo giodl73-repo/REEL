@@ -16,6 +16,7 @@ fn freeze(fixture: &Fixture, case: &AdmissionCase) -> (Plan, Frozen) {
     let task = &fixture.packet.task;
     let base = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: fixture.packet.project.clone(),
         source_commit: fixture.packet.source_commit.clone(),
         tasks: vec![task.clone()],
@@ -101,6 +102,46 @@ fn expanded_source_freeze_accept_and_original_receipt_recovery_preserve_one_oper
     assert_eq!(receipt.activation, recovered.activation);
     assert_eq!(frozen.attempt_id, recovered.attempt_id);
 }
+#[test]
+fn scoped_frozen_expansion_refuses_base_or_new_task_snapshot_retargeting_before_admission() {
+    let (_fixture, case, mut base, mut frozen) = prepare();
+    base.schema = reel_workflow::SCOPED_PLAN_SCHEMA.into();
+    let base_id = base.tasks[0].id.clone();
+    base.task_snapshots.insert(base_id.clone(), "a".repeat(40));
+    frozen.expansion.base_plan_sha256 = canonical_digest(&base).unwrap();
+    frozen.expansion.plan.schema = base.schema.clone();
+    frozen.expansion.plan.task_snapshots = base.task_snapshots.clone();
+    let new_id = frozen.expansion.packet.task.id.clone();
+    frozen
+        .expansion
+        .plan
+        .task_snapshots
+        .insert(new_id.clone(), base.source_commit.clone());
+    frozen.check(&base).unwrap();
+    let metadata = fs::read(case.profile.metadata_root.join("metadata.json")).unwrap();
+    for id in [base_id, new_id] {
+        let original = frozen
+            .expansion
+            .plan
+            .task_snapshots
+            .insert(id.clone(), "b".repeat(40))
+            .unwrap();
+        assert_eq!(
+            frozen.accept(&base).unwrap_err().code,
+            "frozen-expansion-original-plan"
+        );
+        frozen.expansion.plan.task_snapshots.insert(id, original);
+        assert_eq!(
+            fs::read(case.profile.metadata_root.join("metadata.json")).unwrap(),
+            metadata
+        );
+        assert!(
+            case.protected(&Object::from_bytes(b"synthetic input"))
+                .is_empty()
+        );
+    }
+}
+
 #[test]
 fn frozen_expansion_refuses_changed_base_preview_packet_and_existing_outputs() {
     let (_fixture, case, mut base, mut frozen) = prepare();

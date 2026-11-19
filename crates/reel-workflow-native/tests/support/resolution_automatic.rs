@@ -76,6 +76,7 @@ fn retained_resolution_slot_reuses_for_automatic_worker_and_preserves_history() 
     tool.executable.bytes = runtime.bytes;
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
         project: old_packet.project.clone(),
         source_commit: old_packet.source_commit.clone(),
         tasks: vec![task],
