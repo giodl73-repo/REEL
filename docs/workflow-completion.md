@@ -63,7 +63,12 @@ The positive fixture retains exact request/response/config evidence after one
 local HTTP call; the uncertain fixture preserves its original Waiting job and
 refuses another POST, including after loss of local call files. All 48 default
 native tests and strict Clippy pass. Built-in service-specific request/response
-adapters, account/model/voice admission and actual service qualification remain open.
+adapters remain broader work. The [built-in timed ElevenLabs adapter](handoff/2026-11-19-elevenlabs-adapter.md)
+now composes requests from exact source/catalogue/scope inputs, produces candidate
+WAV/original alignment/language-local timing, and preserves response identifiers
+before body capture. Thirteen HTTP component/CLI tests and strict Clippy pass.
+Its complete native fixture, actual account/model/voice entitlement and real
+service qualification remain open; frozen declarations do not authenticate consent.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

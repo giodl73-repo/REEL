@@ -245,3 +245,35 @@ fn timeout_preserves_original_operation_uncertainty_without_a_retry() {
     stop.send(()).unwrap();
     worker.join().unwrap();
 }
+
+#[test]
+fn response_identifiers_are_observed_before_a_truncated_body() {
+    let recorded = Arc::new(AtomicBool::new(false));
+    let (endpoint,worker)=server(b"HTTP/1.1 200 OK\r\nContent-Length: 20\r\nrequest-id: request-17\r\nhistory-item-id: history-9\r\nConnection: close\r\n\r\nshort".to_vec(),recorded.clone());
+    let mut head = None;
+    let mut prefix = Vec::new();
+    let error = config(endpoint)
+        .prepare("original", b"{}", |_| None)
+        .unwrap()
+        .send_observed(
+            |_| {
+                recorded.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            |observed| {
+                head = Some(serde_json::to_value(observed).unwrap());
+                Ok(())
+            },
+            |bytes| {
+                prefix.extend_from_slice(bytes);
+                Ok(())
+            },
+        )
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ErrorKind::NeedsRecovery);
+    assert_eq!(head.as_ref().unwrap()["request_id"], "request-17");
+    assert_eq!(head.as_ref().unwrap()["history_item_id"], "history-9");
+    assert_eq!(prefix, b"short");
+    worker.join().unwrap();
+}

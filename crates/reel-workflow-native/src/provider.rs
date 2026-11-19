@@ -16,6 +16,15 @@ pub struct Config {
     pub send_inputs: Vec<String>,
     pub http: reel_workflow_http::Config,
     pub workspace: Profile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<Service>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Service {
+    ElevenlabsTimed {
+        spec: reel_workflow_http::elevenlabs::Spec,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,6 +102,38 @@ pub(crate) fn check(packet: &Packet, c: &Config) -> Result<()> {
             "provider-explicit-inputs-outputs",
         ));
     }
+    if let Some(Service::ElevenlabsTimed { spec }) = &c.service {
+        spec.check(&c.model)?;
+        spec.check_endpoint(&c.http)?;
+        if packet.task.operation != Operation::SpeechCandidate
+            || c.provider != "elevenlabs"
+            || packet.task.language.as_deref() != Some(spec.language.as_str())
+            || c.send_inputs != [spec.text_input.clone()]
+            || [
+                &spec.text_input,
+                &spec.models_input,
+                &spec.admission_input,
+                &spec.decision_input,
+            ]
+            .iter()
+            .any(|id| !packet.task.inputs.iter().any(|a| &a.logical_id == *id))
+        {
+            return Err(error(ErrorKind::Invalid, "elevenlabs-native-context"));
+        }
+        for (name, media) in reel_workflow_http::elevenlabs::OUTPUTS
+            .into_iter()
+            .chain([("http.json", "application/json")])
+        {
+            if packet
+                .task
+                .outputs
+                .get(name)
+                .is_none_or(|o| !o.required || o.media_type != media)
+            {
+                return Err(error(ErrorKind::Invalid, "elevenlabs-declared-outputs"));
+            }
+        }
+    }
     for (name, limit) in [
         (REQUEST, c.http.request_byte_limit),
         (RESPONSE, c.http.response_byte_limit),
@@ -167,7 +208,11 @@ fn intent(
     config: &Config,
     batch: &graph::PinnedFile,
 ) -> Result<Plan> {
-    let portable = serde_json::json!({"schema":config.schema,"provider":config.provider,"model":config.model,"send_inputs":config.send_inputs,"http":config.http});
+    let mut portable = serde_json::json!({"schema":config.schema,"provider":config.provider,"model":config.model,"send_inputs":config.send_inputs,"http":config.http});
+    if let Some(service) = &config.service {
+        portable["service"] = serde_json::to_value(service)
+            .map_err(|_| error(ErrorKind::Invalid, "provider-service-json"))?;
+    }
     let operation = reel_workflow::canonical_digest(
         &serde_json::json!({"schema":"reel.workflow-provider-workspace.v1","admission":receipt.operation_identity()?,"packet":packet,"config":portable,"batch":batch}),
     )?;
@@ -417,9 +462,20 @@ pub fn run_file(
         let mut native =
             NativeInputs::from_claims(&ticket.packet, &selected.profile.source, claims)?;
         let mut buffers = BTreeMap::new();
+        let mut raw_inputs = BTreeMap::new();
         let mut total = 0u64;
         for asset in &ticket.packet.task.inputs {
             let bytes = native.read(asset, asset.bytes)?;
+            if ticket.config.service.is_some() {
+                total = total
+                    .checked_add(asset.bytes)
+                    .ok_or_else(|| error(ErrorKind::Budget, "elevenlabs-input-bytes"))?;
+                if total > 128 * 1024 * 1024 {
+                    return Err(error(ErrorKind::Budget, "elevenlabs-input-bytes"));
+                }
+                raw_inputs.insert(asset.logical_id.clone(), bytes);
+                continue;
+            }
             if ticket.config.send_inputs.contains(&asset.logical_id) {
                 total = total
                     .checked_add(asset.bytes)
@@ -433,21 +489,40 @@ pub fn run_file(
                 );
             }
         }
-        let inputs: Vec<_> = ticket
-            .config
-            .send_inputs
-            .iter()
-            .map(|id| &buffers[id])
-            .collect();
-        let outputs: BTreeMap<_, _> = ticket
-            .packet
-            .task
-            .outputs
-            .iter()
-            .filter(|(n, _)| ![REQUEST, RESPONSE, CONFIG].contains(&n.as_str()))
-            .collect();
-        let body=serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-proxy-request.v1","operation_id":op,"provider":ticket.config.provider,"model":ticket.config.model,
-            "task":{"id":ticket.packet.task.id,"task_key":ticket.packet.task_key,"attempt_id":ticket.admission.attempt_id,"operation":ticket.packet.task.operation,"language":ticket.packet.task.language,"prompt":ticket.packet.task.prompt,"outputs":outputs},"inputs":inputs})).map_err(|_|error(ErrorKind::Invalid,"provider-request-json"))?;
+        let body = if let Some(Service::ElevenlabsTimed { spec }) = &ticket.config.service {
+            let inputs = ticket
+                .packet
+                .task
+                .inputs
+                .iter()
+                .map(|a| {
+                    (
+                        a.logical_id.clone(),
+                        reel_workflow_http::elevenlabs::Input {
+                            artifact: a,
+                            bytes: &raw_inputs[&a.logical_id][..],
+                        },
+                    )
+                })
+                .collect();
+            spec.request(&ticket.config.model, &inputs)?
+        } else {
+            let inputs: Vec<_> = ticket
+                .config
+                .send_inputs
+                .iter()
+                .map(|id| &buffers[id])
+                .collect();
+            let outputs: BTreeMap<_, _> = ticket
+                .packet
+                .task
+                .outputs
+                .iter()
+                .filter(|(n, _)| ![REQUEST, RESPONSE, CONFIG].contains(&n.as_str()))
+                .collect();
+            serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-proxy-request.v1","operation_id":op,"provider":ticket.config.provider,"model":ticket.config.model,
+            "task":{"id":ticket.packet.task.id,"task_key":ticket.packet.task_key,"attempt_id":ticket.admission.attempt_id,"operation":ticket.packet.task.operation,"language":ticket.packet.task.language,"prompt":ticket.packet.task.prompt,"outputs":outputs},"inputs":inputs})).map_err(|_|error(ErrorKind::Invalid,"provider-request-json"))?
+        };
         let prepared = ticket
             .config
             .http
@@ -463,7 +538,7 @@ pub fn run_file(
                     "provider-original-response-preserve",
                 )
             })?;
-        let reply = prepared.send_captured(
+        let reply = prepared.send_observed(
             |intent| {
                 let mut global = OpenOptions::new()
                     .write(true)
@@ -489,6 +564,13 @@ pub fn run_file(
                 file.write_all(&json(intent)?)
                     .and_then(|_| file.sync_all())
                     .map_err(|_| error(ErrorKind::NeedsRecovery, "provider-call-intent-preserve"))
+            },
+            |head| {
+                preserve(
+                    &root.join("http-head.json"),
+                    &json(head)?,
+                    reel_workflow::MAX_CONTROL_BYTES as u64,
+                )
             },
             |bytes| {
                 response
@@ -545,50 +627,77 @@ pub fn run_file(
             "provider-http-status-reconcile",
         ));
     }
-    let reply: Reply = serde_json::from_slice(&response)
-        .map_err(|_| error(ErrorKind::Integrity, "provider-response-json"))?;
-    if reply.schema != "reel.workflow-proxy-response.v1"
-        || reply.operation_id != op
-        || reply.provider != ticket.config.provider
-        || reply.model != ticket.config.model
-    {
-        return Err(error(ErrorKind::Conflict, "provider-response-context"));
-    }
+    let mut creative = if let Some(Service::ElevenlabsTimed { spec }) = &ticket.config.service {
+        let request_value: serde_json::Value = serde_json::from_slice(&request)
+            .map_err(|_| error(ErrorKind::Integrity, "elevenlabs-original-request"))?;
+        let text = request_value["text"]
+            .as_str()
+            .ok_or_else(|| error(ErrorKind::Integrity, "elevenlabs-original-text"))?;
+        let mut outputs = spec.normalize(
+            &ticket.config.model,
+            text.as_bytes(),
+            &response,
+            ticket.packet.task.outputs["speech.wav"].max_bytes,
+        )?;
+        let (head, _guard) = read_held(
+            &root.join("http-head.json"),
+            reel_workflow::MAX_CONTROL_BYTES as u64,
+        )?;
+        let observed: reel_workflow_http::ResponseHead = reel_workflow::decode(&head)?;
+        if observed.schema != "reel.workflow-http-head.v1" || observed.status != complete.status {
+            return Err(error(ErrorKind::Integrity, "elevenlabs-http-head"));
+        }
+        outputs.insert("http.json".into(), head);
+        outputs
+    } else {
+        let reply: Reply = serde_json::from_slice(&response)
+            .map_err(|_| error(ErrorKind::Integrity, "provider-response-json"))?;
+        if reply.schema != "reel.workflow-proxy-response.v1"
+            || reply.operation_id != op
+            || reply.provider != ticket.config.provider
+            || reply.model != ticket.config.model
+        {
+            return Err(error(ErrorKind::Conflict, "provider-response-context"));
+        }
+        let mut files = BTreeMap::new();
+        let mut total = 0u64;
+        for (name, output) in reply.outputs {
+            let contract = ticket
+                .packet
+                .task
+                .outputs
+                .get(&name)
+                .ok_or_else(|| error(ErrorKind::Invalid, "provider-undeclared-output"))?;
+            if [REQUEST, RESPONSE, CONFIG].contains(&name.as_str())
+                || output.media_type != contract.media_type
+                || output.base64.len() as u64
+                    > contract
+                        .max_bytes
+                        .saturating_mul(4)
+                        .div_ceil(3)
+                        .saturating_add(8)
+            {
+                return Err(error(ErrorKind::Invalid, "provider-output-contract"));
+            }
+            let bytes = STANDARD
+                .decode(output.base64)
+                .map_err(|_| error(ErrorKind::Integrity, "provider-output-base64"))?;
+            total = total
+                .checked_add(bytes.len() as u64)
+                .ok_or_else(|| error(ErrorKind::Budget, "provider-output-bytes"))?;
+            if bytes.len() as u64 > contract.max_bytes || total > 128 * 1024 * 1024 {
+                return Err(error(ErrorKind::Budget, "provider-output-bytes"));
+            }
+            files.insert(name, bytes);
+        }
+        files
+    };
     let mut files = BTreeMap::from([
         (REQUEST.to_string(), request),
         (RESPONSE.to_string(), response),
         (CONFIG.to_string(), json(&ticket.config)?),
     ]);
-    let mut total = 0u64;
-    for (name, output) in reply.outputs {
-        let contract = ticket
-            .packet
-            .task
-            .outputs
-            .get(&name)
-            .ok_or_else(|| error(ErrorKind::Invalid, "provider-undeclared-output"))?;
-        if [REQUEST, RESPONSE, CONFIG].contains(&name.as_str())
-            || output.media_type != contract.media_type
-            || output.base64.len() as u64
-                > contract
-                    .max_bytes
-                    .saturating_mul(4)
-                    .div_ceil(3)
-                    .saturating_add(8)
-        {
-            return Err(error(ErrorKind::Invalid, "provider-output-contract"));
-        }
-        let bytes = STANDARD
-            .decode(output.base64)
-            .map_err(|_| error(ErrorKind::Integrity, "provider-output-base64"))?;
-        total = total
-            .checked_add(bytes.len() as u64)
-            .ok_or_else(|| error(ErrorKind::Budget, "provider-output-bytes"))?;
-        if bytes.len() as u64 > contract.max_bytes || total > 128 * 1024 * 1024 {
-            return Err(error(ErrorKind::Budget, "provider-output-bytes"));
-        }
-        files.insert(name, bytes);
-    }
+    files.append(&mut creative);
     let mut artifacts = BTreeMap::new();
     let packet = root.join("packet");
     match fs::create_dir(&packet) {
@@ -607,6 +716,9 @@ pub fn run_file(
             .outputs
             .get(name)
             .ok_or_else(|| error(ErrorKind::Invalid, "provider-output-contract"))?;
+        if bytes.len() as u64 > contract.max_bytes {
+            return Err(error(ErrorKind::Budget, "provider-output-bytes"));
+        }
         let artifact = Artifact {
             logical_id: format!(
                 "workflow/provider/{}/{}/{}",

@@ -52,10 +52,12 @@ directories; the native adapter must supply its guarded workspace/admission.
 
 HTTP statuses are returned as evidence, including redirects, rate limits and
 server errors. A bounded response is not provider success, a valid creative
-artifact, a retained task or an approval. Provider-specific request composition,
-model/account/voice admission, response normalization and native protected-job
-integration remain separate work. No real account, private media or voice was
-used in the loopback tests.
+artifact, a retained task or an approval. The
+[timed ElevenLabs adapter](../../docs/handoff/2026-11-19-elevenlabs-adapter.md)
+adds frozen source/model/scope checks and candidate WAV/alignment/timing outputs.
+`send_observed` offers a pre-body header callback for request/history identifiers.
+Real-account qualification and the built-in adapter's full native fixture remain
+open. No real account, private media or voice was used in the loopback tests.
 
 ```text
 cargo test --manifest-path crates/reel-workflow-http/Cargo.toml --locked --offline

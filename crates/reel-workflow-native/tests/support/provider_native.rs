@@ -88,6 +88,7 @@ fn proxy_dispatch_requires_declared_evidence_and_native_inputs_before_network_ef
             input_staging: stage(root.join("inputs")),
             worker_staging: None,
             provider: Some(provider::Config {
+                service: None,
                 schema: "reel.workflow-provider-proxy.v1".into(),
                 provider: "synthetic".into(),
                 model: "model".into(),
@@ -288,6 +289,7 @@ fn run_case(uncertain: bool) {
         input_staging: stage(root.join("inputs")),
         worker_staging: None,
         provider: Some(provider::Config {
+            service: None,
             schema: "reel.workflow-provider-proxy.v1".into(),
             provider: "synthetic-proxy".into(),
             model: "fixture-model".into(),

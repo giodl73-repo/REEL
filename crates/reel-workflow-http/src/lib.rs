@@ -1,5 +1,6 @@
 //! HTTP transport only. Callers own input admission, durable intent, response
 //! normalization/publication and uncertain-operation reconciliation.
+pub mod elevenlabs;
 use reel_workflow::{Error, ErrorKind, Result};
 use reqwest::{
     Url,
@@ -56,6 +57,15 @@ pub struct Response {
     pub content_type: Option<String>,
     pub body: Vec<u8>,
     pub body_sha256: String,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResponseHead {
+    pub schema: String,
+    pub status: u16,
+    pub content_type: Option<String>,
+    pub request_id: Option<String>,
+    pub history_item_id: Option<String>,
 }
 pub struct Prepared {
     client: Client,
@@ -184,6 +194,16 @@ impl Prepared {
     pub fn send_captured(
         self,
         record_intent: impl FnOnce(&Intent) -> Result<()>,
+        capture: impl FnMut(&[u8]) -> Result<()>,
+    ) -> Result<Response> {
+        self.send_observed(record_intent, |_| Ok(()), capture)
+    }
+    /// Record bounded response correlation headers before reading its body, so
+    /// a truncated reply can still be reconciled using the original service ID.
+    pub fn send_observed(
+        self,
+        record_intent: impl FnOnce(&Intent) -> Result<()>,
+        record_head: impl FnOnce(&ResponseHead) -> Result<()>,
         mut capture: impl FnMut(&[u8]) -> Result<()>,
     ) -> Result<Response> {
         record_intent(&self.intent)?;
@@ -198,6 +218,29 @@ impl Prepared {
             .and_then(|h| h.to_str().ok())
             .filter(|v| v.len() <= 128)
             .map(str::to_owned);
+        let header = |name: &str| {
+            response
+                .headers()
+                .get(name)
+                .and_then(|h| h.to_str().ok())
+                .filter(|s| {
+                    !s.is_empty() && s.len() <= 256 && s.bytes().all(|b| b.is_ascii_graphic())
+                })
+                .map(str::to_owned)
+        };
+        record_head(&ResponseHead {
+            schema: "reel.workflow-http-head.v1".into(),
+            status,
+            content_type: content_type.clone(),
+            request_id: header("request-id").or_else(|| header("x-request-id")),
+            history_item_id: header("history-item-id"),
+        })
+        .map_err(|_| {
+            error(
+                ErrorKind::NeedsRecovery,
+                "http-response-head-capture-uncertain",
+            )
+        })?;
         if response
             .content_length()
             .is_some_and(|n| n > self.response_limit)
