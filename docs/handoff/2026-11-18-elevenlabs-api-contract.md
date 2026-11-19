@@ -40,3 +40,29 @@ create a synthesis request. New synthesis remains a candidate operation with
 project voice/likeness consent and selection separate from technical validation.
 Direct API, proxy and manual response paths must converge on the same bounded
 response validation and native retention lifecycle.
+
+## Original-character conversion implemented
+
+`reel_assembly::speech_alignment::import_elevenlabs_characters` now converts a
+separately retained original `alignment` object, using `ProviderWordImport` with
+provider `elevenlabs-tts-character-alignment`. The exact alignment hash/length,
+source text hash and concatenated character text must match. It refuses missing
+or unequal arrays, non-scalar character entries, backward/non-finite/out-of-take
+clocks and invalid word spans. Bounds are 1 MiB and 32,768 character entries;
+these are local reader limits, not service/model capacity claims.
+
+The caller supplies explicit word and whitespace segments in the language's
+source text. No tokenizer, Unicode normalization or normalized-text substitution
+is implicit. Spanish/English tests resolve different trigger words to different
+sample positions through existing `spoken_phrase_sample`; a Chinese fixture
+checks explicitly supplied word boundaries. That conversion fixture does not
+qualify all languages' downstream phrase tokenization.
+
+All 54 `reel-assembly` tests and strict Clippy pass. Sound/editing checks retain
+the selected-take sample clock; lyric/vocal checks preserve exact wording and
+language-local segmentation; rights/provenance checks keep take verification,
+performance listening, consent, selection and release separate. These are
+producer-applied role checklists, not independent approval. No service call,
+audio decoding, recording or retained workflow dispatch is added by this pure
+conversion. Its input artifact is the isolated original alignment object;
+retaining/extracting that object alongside the full response remains adapter work.

@@ -354,23 +354,35 @@ pub struct ProviderWordImport {
 }
 
 #[derive(Deserialize)]
-struct ProviderAlignmentOutput {
-    words: Vec<ProviderAlignedWord>,
+pub(crate) struct ProviderAlignmentOutput {
+    pub(crate) words: Vec<ProviderAlignedWord>,
 }
 
 #[derive(Deserialize)]
-struct ProviderAlignedWord {
-    text: String,
-    start: f64,
-    end: f64,
+pub(crate) struct ProviderAlignedWord {
+    pub(crate) text: String,
+    pub(crate) start: f64,
+    pub(crate) end: f64,
 }
 
 /// Convert provider seconds to the exact selected-take sample clock. The
 /// response must reproduce the source text byte-for-byte, including spaces,
 /// so an unrelated transcript cannot silently drive scene events.
 pub fn import_provider_words(json: &[u8], spec: &ProviderWordImport) -> Result<WordTimingEvidence> {
+    import_aligned_words(
+        serde_json::from_slice(json)?,
+        spec,
+        "elevenlabs-forced-alignment",
+    )
+}
+
+pub(crate) fn import_aligned_words(
+    output: ProviderAlignmentOutput,
+    spec: &ProviderWordImport,
+    provider: &str,
+) -> Result<WordTimingEvidence> {
     if spec.schema != PROVIDER_WORD_IMPORT_SCHEMA
-        || spec.provider != "elevenlabs-forced-alignment"
+        || spec.provider != provider
         || spec.language.trim().is_empty()
         || spec.cue_id.trim().is_empty()
         || spec.sample_rate == 0
@@ -387,7 +399,6 @@ pub fn import_provider_words(json: &[u8], spec: &ProviderWordImport) -> Result<W
     if text_sha != spec.spoken_text_sha256 {
         bail!("provider word import spoken text hash differs");
     }
-    let output: ProviderAlignmentOutput = serde_json::from_slice(json)?;
     if output.words.is_empty()
         || output
             .words

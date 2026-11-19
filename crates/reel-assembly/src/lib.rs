@@ -20,6 +20,7 @@ pub const EVENT_BINDING_REQUEST_SCHEMA: &str = "reel.semantic-event-binding-requ
 pub const CACHE_PREFIX: &str = "cache://sha256/";
 pub mod motioncraft;
 pub mod scene_authoring;
+pub mod speech_alignment;
 pub mod template_presentation;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
