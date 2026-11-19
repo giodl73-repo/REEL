@@ -2,7 +2,7 @@
 use crate::{
     NativeProfile, admission,
     advancement::{self, persist, raw},
-    error, expansion, graph, handoff, io_error, staging,
+    dispatch, error, expansion, graph, handoff, io_error, staging,
 };
 use reel_workflow::{
     ErrorKind, Plan, Result,
@@ -18,6 +18,8 @@ pub struct Step {
     pub admission: admission::Profile,
     pub attempt_id: String,
     pub handoff: advancement::Config,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution: Option<dispatch::Config>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -39,6 +41,7 @@ struct State {
 pub struct Summary {
     pub schema: String,
     pub advanced: Vec<String>,
+    pub dispatched: Vec<dispatch::Summary>,
     pub checkpoint: usize,
     pub schedule: Schedule,
 }
@@ -101,7 +104,18 @@ pub fn advance(
         .ok_or_else(|| error(ErrorKind::Invalid, "runner-output-name"))?;
     let root = parent.path().join(name);
     let mut operations = std::collections::BTreeSet::new();
-    for step in config.steps.values() {
+    for (id, step) in &config.steps {
+        if let Some(execution) = &step.execution {
+            let authored = recipe
+                .steps
+                .iter()
+                .find(|s| &s.id == id)
+                .ok_or_else(|| error(ErrorKind::Invalid, "runner-configuration"))?;
+            execution.check_operation(
+                authored.operation,
+                authored.tool.as_ref().map(|t| t.capability),
+            )?;
+        }
         if step.source.snapshot.upstream.is_some()
             || step.source.snapshot.schema != "reel.workflow-native-snapshot.v1"
             || step.source.snapshot.commit != base.source_commit
@@ -238,6 +252,37 @@ pub fn advance(
         state = next;
         state_raw = bytes;
     }
+    let mut dispatched = Vec::new();
+    let mut resumed = 0usize;
+    for sequence in 1..=state.sequence {
+        if resumed >= limit {
+            break;
+        }
+        let frozen: expansion::Frozen =
+            reel_workflow::decode(&read(&pending_path(root, sequence))?)?;
+        let id = &frozen.expansion.packet.task.id;
+        let Some(execution) = config.steps.get(id).and_then(|s| s.execution.as_ref()) else {
+            continue;
+        };
+        let folder = capsule(root, sequence);
+        let prior = reel_workflow::handoff::Journal::open(&folder.join("journal"))?.state();
+        if matches!(
+            prior,
+            reel_workflow::handoff::State::Retained | reel_workflow::handoff::State::Cancelled
+        ) || (prior == reel_workflow::handoff::State::ImportPending
+            && execution.worker_staging.is_none())
+        {
+            continue;
+        }
+        let plan: Plan = reel_workflow::decode(&read(&folder.join("plan.json"))?)?;
+        let bindings: graph::Bindings =
+            reel_workflow::decode(&read(&folder.join("bindings.json"))?)?;
+        let result = dispatch::run(&plan, &bindings, id, execution, &folder.join("execution"))?;
+        if !result.already_ready || execution.worker_staging.is_some() {
+            resumed += 1;
+        }
+        dispatched.push(result);
+    }
     let mut advanced = Vec::new();
     for _ in 0..limit {
         let sequence = state.sequence + 1;
@@ -301,6 +346,9 @@ pub fn advance(
             return Err(error(ErrorKind::Conflict, "runner-pending-template"));
         }
         let folder = capsule(root, sequence);
+        if total + reel_workflow::MAX_CONTROL_BYTES > 32 * 1024 * 1024 {
+            return Err(error(ErrorKind::Budget, "runner-history-next-checkpoint"));
+        }
         advancement::advance(&state.plan, &frozen, &step.handoff, &folder)?;
         let next = State {
             schema: state.schema.clone(),
@@ -312,7 +360,17 @@ pub fn advance(
         };
         let bytes = raw(&next)?;
         persist(&state_path(root, sequence), &bytes)?;
+        if let Some(execution) = &step.execution {
+            dispatched.push(dispatch::run(
+                &next.plan,
+                &next.bindings,
+                &frozen.expansion.packet.task.id,
+                execution,
+                &folder.join("execution"),
+            )?);
+        }
         advanced.push(frozen.expansion.packet.task.id);
+        total += bytes.len();
         state = next;
         state_raw = bytes;
     }
@@ -320,6 +378,7 @@ pub fn advance(
     Ok(Summary {
         schema: "reel.workflow-recipe-runner-summary.v1".into(),
         advanced,
+        dispatched,
         checkpoint: state.sequence,
         schedule,
     })

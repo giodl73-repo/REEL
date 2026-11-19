@@ -15,6 +15,7 @@ pub mod admission;
 pub mod advancement;
 pub mod closing;
 mod comic;
+pub mod dispatch;
 pub mod expansion;
 pub mod graph;
 pub mod handoff;

@@ -14,6 +14,14 @@ fn run(executable: &Path, args: &[&std::ffi::OsStr]) -> serde_json::Value {
 #[test]
 #[ignore = "Explicit existing native pool: runner waves, staged prompt batch, synthetic retained response and newly unlocked dependent; preserves roots"]
 fn recipe_runner_unlocks_a_new_wave_after_retained_return_and_preserves_other_waiting_jobs() {
+    runner_case(false);
+}
+#[test]
+#[ignore = "Existing declared native pool: automatic runner staging, retained manual return and next-wave protected handoff; preserves roots"]
+fn recipe_runner_automatically_stages_handoffs_and_the_unlocked_next_wave() {
+    runner_case(true);
+}
+fn runner_case(automatic: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -64,8 +72,29 @@ fn recipe_runner_unlocks_a_new_wave_after_retained_return_and_preserves_other_wa
         },
         target: retained_target(),
     };
-    let (recipe, config, bindings) =
+    let (recipe, mut config, bindings) =
         frozen_expansion::runner_configuration(&fixture, &case, &handoff);
+    if automatic {
+        let parent = root.join("automatic-inputs");
+        fs::create_dir(&parent).unwrap();
+        for step in config.steps.values_mut() {
+            step.execution = Some(reel_workflow_native::dispatch::Config {
+                schema: "reel.workflow-dispatch.v1".into(),
+                input_staging: staging::Profile {
+                    schema: "reel.workflow-staging.v1".into(),
+                    parent: parent.clone(),
+                    maximum_bytes: 8 * 1024 * 1024,
+                    capacity_policy: reel_assets::admission::Policy {
+                        minimum_free_bytes: 65536,
+                        minimum_free_basis_points: 0,
+                        max_object_bytes: 512 * 1024 * 1024,
+                        ..Default::default()
+                    },
+                },
+                worker_staging: None,
+            });
+        }
+    }
     for (name, bytes) in [
         ("recipe.json", serde_json::to_vec(&recipe).unwrap()),
         ("base.json", serde_json::to_vec(&recipe.base).unwrap()),
@@ -92,6 +121,11 @@ fn recipe_runner_unlocks_a_new_wave_after_retained_return_and_preserves_other_wa
     };
     let first = invoke();
     assert_eq!(first["summary"]["advanced"], json!(["one", "two"]));
+    if automatic {
+        assert_eq!(first["summary"]["dispatched"].as_array().unwrap().len(), 2);
+        assert!(runner.join("task-001/execution/ready.json").is_file());
+        assert!(runner.join("task-002/execution/ready.json").is_file());
+    }
     let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
     assert_eq!(invoke()["summary"]["advanced"], json!([]));
     assert_eq!(
@@ -158,14 +192,24 @@ fn recipe_runner_unlocks_a_new_wave_after_retained_return_and_preserves_other_wa
     let returns_path = root.join("returns.json");
     fs::write(&result_path, serde_json::to_vec(&result).unwrap()).unwrap();
     fs::write(&returns_path, serde_json::to_vec(&returns).unwrap()).unwrap();
+    let (import_plan, import_bindings, import_batch) = if automatic {
+        let directory = runner.join("task-001/execution");
+        (
+            directory.join("plan.json"),
+            directory.join("bindings.json"),
+            directory.join("ready.json"),
+        )
+    } else {
+        (plan_path.clone(), bindings_path.clone(), batch.clone())
+    };
     run(
         &executable,
         &[
             "import-ready".as_ref(),
-            plan_path.as_os_str(),
-            bindings_path.as_os_str(),
-            batch.as_os_str(),
-            digest(&fs::read(&batch).unwrap()).as_ref(),
+            import_plan.as_os_str(),
+            import_bindings.as_os_str(),
+            import_batch.as_os_str(),
+            digest(&fs::read(&import_batch).unwrap()).as_ref(),
             "one".as_ref(),
             result_path.as_os_str(),
             returns_path.as_os_str(),
@@ -181,6 +225,9 @@ fn recipe_runner_unlocks_a_new_wave_after_retained_return_and_preserves_other_wa
     let second = invoke();
     assert_eq!(second["summary"]["advanced"], json!(["after-one"]));
     assert_eq!(second["summary"]["checkpoint"], 3);
+    if automatic {
+        assert!(runner.join("task-003/execution/ready.json").is_file());
+    }
     assert_eq!(
         reel_workflow::handoff::Journal::open(&bindings.tasks["two"].journal)
             .unwrap()
@@ -194,6 +241,6 @@ fn recipe_runner_unlocks_a_new_wave_after_retained_return_and_preserves_other_wa
         fs::read(case.profile.index_root.join("claims.json")).unwrap()
     );
     if let Some(directory) = evidence {
-        fs::write(directory.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"first_wave":first,"second_wave":second,"protected_batch_tasks":2,"retained_parent":"one","other_waiting_job_preserved":true,"unchanged_claims_on_noop":true,"real_provider_invoked":false,"scratch_retired":false})).unwrap()).unwrap();
+        fs::write(directory.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"first_wave":first,"second_wave":second,"automatic_staging":automatic,"protected_batch_tasks":2,"retained_parent":"one","other_waiting_job_preserved":true,"unchanged_claims_on_noop":true,"real_provider_invoked":false,"scratch_retired":false})).unwrap()).unwrap();
     }
 }

@@ -154,6 +154,125 @@ fn advance_config() -> reel_workflow_native::advancement::Config {
     }
 }
 
+fn dispatch_config(root: &Path) -> reel_workflow_native::dispatch::Config {
+    let parent = root.join("dispatch-inputs");
+    fs::create_dir(&parent).unwrap();
+    reel_workflow_native::dispatch::Config {
+        schema: "reel.workflow-dispatch.v1".into(),
+        input_staging: reel_workflow_native::staging::Profile {
+            schema: "reel.workflow-staging.v1".into(),
+            parent,
+            maximum_bytes: 8 * 1024 * 1024,
+            capacity_policy: reel_assets::admission::Policy {
+                minimum_free_bytes: 65536,
+                minimum_free_basis_points: 0,
+                max_object_bytes: 512 * 1024 * 1024,
+                ..Default::default()
+            },
+        },
+        worker_staging: None,
+    }
+}
+
+#[test]
+fn dispatch_missing_native_bytes_preserves_original_ticket_claims_and_partial_controls() {
+    use reel_workflow_native::{advancement, dispatch};
+    let (_fixture, case, base, frozen) = prepare();
+    let adopted = case.temp.path().join("adopted");
+    advancement::advance(&base, &frozen, &advance_config(), &adopted).unwrap();
+    let plan: Plan = serde_json::from_slice(&fs::read(adopted.join("plan.json")).unwrap()).unwrap();
+    let bindings =
+        serde_json::from_slice(&fs::read(adopted.join("bindings.json")).unwrap()).unwrap();
+    let mut config = dispatch_config(case.temp.path());
+    let root = case.temp.path().join("dispatch");
+    let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+    assert!(dispatch::run(&plan, &bindings, "expanded", &config, &root).is_err());
+    let original = fs::read(root.join("input-ticket.json")).unwrap();
+    assert!(!original.is_empty());
+    assert!(!root.join("ready.json").exists());
+    assert!(dispatch::run(&plan, &bindings, "expanded", &config, &root).is_err());
+    assert_eq!(original, fs::read(root.join("input-ticket.json")).unwrap());
+    assert_eq!(
+        header,
+        fs::read(case.profile.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        fs::read_dir(&config.input_staging.parent).unwrap().count(),
+        1
+    );
+    config.input_staging.maximum_bytes += 1;
+    assert_eq!(
+        dispatch::run(&plan, &bindings, "expanded", &config, &root)
+            .err()
+            .unwrap()
+            .code,
+        "advance-immutable-control"
+    );
+    config.input_staging.maximum_bytes -= 1;
+    fs::rename(
+        root.join("input-ticket.json"),
+        root.join("preserved-input-ticket.json"),
+    )
+    .unwrap();
+    fs::write(root.join("input-ticket.json"), b"partial").unwrap();
+    assert_eq!(
+        dispatch::run(&plan, &bindings, "expanded", &config, &root)
+            .err()
+            .unwrap()
+            .code,
+        "advance-immutable-control"
+    );
+    assert_eq!(
+        fs::read(root.join("input-ticket.json")).unwrap(),
+        b"partial"
+    );
+    config.worker_staging = Some(config.input_staging.clone());
+    assert_eq!(
+        dispatch::run(
+            &plan,
+            &bindings,
+            "expanded",
+            &config,
+            &case.temp.path().join("wrong-mode")
+        )
+        .err()
+        .unwrap()
+        .code,
+        "dispatch-operation-mode"
+    );
+    assert_eq!(
+        header,
+        fs::read(case.profile.index_root.join("claims.json")).unwrap()
+    );
+}
+
+#[test]
+fn recipe_execution_failure_resumes_the_original_checkpoint_and_staging_ticket() {
+    let (_fixture, case, recipe, mut config, bindings) = runner_case();
+    config.steps.get_mut("one").unwrap().execution = Some(dispatch_config(case.temp.path()));
+    let root = case.temp.path().join("runner-dispatch");
+    assert!(
+        reel_workflow_native::runner::advance(&recipe, &recipe.base, &bindings, &config, &root, 1)
+            .is_err()
+    );
+    assert!(root.join("state-001.json").exists());
+    let original = fs::read(root.join("task-001/execution/input-ticket.json")).unwrap();
+    let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+    assert!(
+        reel_workflow_native::runner::advance(&recipe, &recipe.base, &bindings, &config, &root, 1)
+            .is_err()
+    );
+    assert_eq!(
+        header,
+        fs::read(case.profile.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        original,
+        fs::read(root.join("task-001/execution/input-ticket.json")).unwrap()
+    );
+    assert!(!root.join("pending-002.json").exists());
+}
+
 fn runner_case() -> (
     Fixture,
     AdmissionCase,
@@ -210,6 +329,7 @@ pub(super) fn runner_configuration(
         configs.insert(
             id.into(),
             reel_workflow_native::runner::Step {
+                execution: None,
                 source: serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap(),
                 admission,
                 attempt_id: "attempt-1".into(),

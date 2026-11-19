@@ -12,6 +12,9 @@ use std::{
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 #[cfg(windows)]
+#[path = "support/automatic_dispatch.rs"]
+mod automatic_dispatch;
+#[cfg(windows)]
 #[path = "support/close_native.rs"]
 mod close_native;
 #[cfg(windows)]
@@ -3117,7 +3120,16 @@ fn composite_comic_worker_replays_and_restores_after_source_actor_coverage_is_lo
     comic_native_case(true, true, true);
 }
 #[cfg(windows)]
+#[cfg(windows)]
+#[test]
+#[ignore = "Existing declared native pool: automatic protected comic dispatch, retention and editable historical recovery; preserves controller roots"]
+fn automatic_comic_dispatch_stages_runs_retains_and_reopens_editable_history() {
+    comic_native_case_mode(false, true, false, true);
+}
 fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
+    comic_native_case_mode(partitioned, dispatch, composite, false);
+}
+fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, automatic: bool) {
     use reel_publication::{
         ComicPage, Content, Edition, PageKind, Publication, ReadingDirection,
         comic_source::{
@@ -3136,8 +3148,12 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
         serde_json::from_value(value["source"].clone()).unwrap();
     let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
     let mut fixture = Fixture::new();
-    let raw_source = tempfile::tempdir().unwrap();
-    let executable = PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native"));
+    fixture.temp.disable_cleanup(automatic);
+    let mut raw_source = tempfile::tempdir().unwrap();
+    raw_source.disable_cleanup(automatic);
+    let executable = std::env::var_os("REEL_NATIVE_HANDOFF_TOOL")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native")));
     let worker_bytes = fs::read(&executable).unwrap();
     let worker = Artifact {
         logical_id: "tool/native-comic".into(),
@@ -3443,6 +3459,7 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
     } else {
         AdmissionCase::with_store(&fixture, native.store.clone())
     };
+    case.temp.disable_cleanup(automatic);
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
         snapshot: fixture.profile.clone(),
@@ -3707,7 +3724,24 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
     } else {
         admission
     };
-    let output_owner = tempfile::tempdir_in(case.temp.path()).unwrap();
+    case.temp.disable_cleanup(automatic);
+    if automatic {
+        eprintln!(
+            "Automatic comic controller: {}; source: {}",
+            case.temp.path().display(),
+            fixture.temp.path().display()
+        );
+        if let Some(directory) = std::env::var_os("REEL_COMIC_AUTO_EVIDENCE_DIRECTORY") {
+            fs::write(
+                PathBuf::from(directory).join("original-operation-roots.json"),
+                serde_json::to_vec(&json!({"root":case.temp.path(),"source":fixture.temp.path()}))
+                    .unwrap(),
+            )
+            .unwrap();
+        }
+    }
+    let mut output_owner = tempfile::tempdir_in(case.temp.path()).unwrap();
+    output_owner.disable_cleanup(automatic);
     let output = output_owner.path().join("rendered");
     let rendered = Command::new(&executable)
         .arg("comic-render")
@@ -3840,7 +3874,18 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
         String::from_utf8_lossy(&created.stdout)
     );
     let mut worker_controls = Vec::new();
-    let completed = if dispatch {
+    let completed = if automatic {
+        automatic_dispatch::run_comic(
+            &case,
+            &fixture.packet,
+            &profile,
+            &journal,
+            &profile_path,
+            &executable,
+            &result_path,
+            &mut worker_controls,
+        )
+    } else if dispatch {
         use reel_workflow_native::{graph, staging, worker};
         let (plan, bindings, batch_path) = exercise_waiting_graph(
             &case,
@@ -4437,7 +4482,9 @@ fn comic_native_case(partitioned: bool, dispatch: bool, composite: bool) {
     if let Some(unselected) = unselected {
         assert!(case.protected(&unselected).is_empty());
     }
-    if let Some(directory) = std::env::var_os(if composite {
+    if let Some(directory) = std::env::var_os(if automatic {
+        "REEL_COMIC_AUTO_EVIDENCE_DIRECTORY"
+    } else if composite {
         "REEL_COMPOSITE_COMIC_EVIDENCE_DIRECTORY"
     } else if dispatch {
         "REEL_COMIC_WORKER_NATIVE_EVIDENCE_DIRECTORY"
