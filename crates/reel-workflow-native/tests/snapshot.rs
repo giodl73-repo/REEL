@@ -12,6 +12,9 @@ use std::{
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 #[cfg(windows)]
+#[path = "support/frozen_expansion.rs"]
+mod frozen_expansion;
+#[cfg(windows)]
 #[path = "support/issue_native.rs"]
 mod issue_native;
 

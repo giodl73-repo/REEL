@@ -65,6 +65,48 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
         [
             command,
+            plan,
+            bindings,
+            template,
+            source,
+            admission,
+            attempt,
+            output,
+            apply,
+        ] if command == "prepare-expanded" && apply == "--apply" => {
+            let frozen = reel_workflow_native::expansion::prepare(
+                &read_control(Path::new(plan))?,
+                &read_control(Path::new(bindings))?,
+                &read_control(Path::new(template))?,
+                read_control(Path::new(source))?,
+                read_control(Path::new(admission))?,
+                attempt,
+            )?;
+            frozen.export(Path::new(output))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-frozen-expansion","frozen_sha256":reel_workflow::canonical_digest(&frozen)?,"source_metadata_checked":true,"preview":frozen.preview,
+                "production_admitted":false,"provider_invoked":false,"task_completed":false,"selected":false}),
+            )
+        }
+        [command, plan, frozen, pin, output, apply]
+            if (command == "accept-expanded" || command == "recover-expanded")
+                && apply == "--apply" =>
+        {
+            let base = read_control(Path::new(plan))?;
+            let (frozen, _frozen_pin) =
+                reel_workflow_native::expansion::read_pinned(Path::new(frozen), pin)?;
+            if command == "accept-expanded" {
+                frozen.accept_to(&base, Path::new(output))?;
+            } else {
+                frozen.recover_to(&base, Path::new(output))?;
+            }
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-expanded-input-admission","durable_input_claims_verified":true,
+                "original_operation_recovered":command=="recover-expanded","provider_invoked":false,"task_completed":false,"selected":false,"input_claims_released":false}),
+            )
+        }
+        [
+            command,
             packet,
             source,
             profile,
@@ -660,6 +702,9 @@ fn main() -> ExitCode {
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
             "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
+            "reel-workflow-native prepare-expanded PLAN RUN_BINDINGS TEMPLATE SOURCE ADMISSION ATTEMPT NEW_FROZEN --apply\n",
+            "reel-workflow-native accept-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
+            "reel-workflow-native recover-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply\n",
             "reel-workflow-native accept-upstream PACKET SOURCE ADMISSION ATTEMPT PARENTS NEW_RECEIPT --apply\n",
             "reel-workflow-native recover-admission PACKET SOURCE ADMISSION ATTEMPT NEW_RECEIPT --apply\n",

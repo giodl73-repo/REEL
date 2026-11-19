@@ -66,7 +66,8 @@ pub struct Receipt {
     pub index_checkpoint: source_claims::Checkpoint,
     pub metadata_checkpoint: metadata::Checkpoint,
 }
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Preview {
     pub declared_objects: usize,
     pub logical_bytes: u64,

@@ -47,7 +47,8 @@ pub struct Template {
     pub base_plan_sha256: String,
     pub task: TaskTemplate,
 }
-#[derive(Serialize)]
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct Expansion {
     pub schema: String,
     pub base_plan_sha256: String,

@@ -118,6 +118,72 @@ pub fn inspect(plan: &Plan, bindings: &Bindings) -> Result<graph::Frontier> {
     graph::inspect(plan, &mut observer(plan, bindings)?)
 }
 
+pub(crate) fn expansion_parents(
+    plan: &Plan,
+    bindings: &Bindings,
+    template: &reel_workflow::expansion::Template,
+) -> Result<(
+    reel_workflow::expansion::Expansion,
+    Option<crate::upstream::Parents>,
+)> {
+    let mut observer = observer(plan, bindings)?;
+    let expansion = reel_workflow::expansion::prepare(plan, template, &mut observer)?;
+    let mut parents = BTreeMap::new();
+    if let Some(upstream) = &expansion.upstream {
+        let ids: BTreeSet<_> = upstream.inputs.values().map(|r| &r.task_id).collect();
+        for id in ids {
+            let observed = observer
+                .observe(id)?
+                .ok_or_else(|| error(ErrorKind::Missing, "expansion-parent-control"))?;
+            let result = observed
+                .result
+                .as_ref()
+                .ok_or_else(|| error(ErrorKind::Missing, "expansion-parent-result"))?;
+            let expected = &expansion.packet.dependencies[id];
+            if observed.state != reel_workflow::handoff::State::Retained
+                || reel_workflow::canonical_digest(result)? != expected.result_sha256
+                || result.artifacts != expected.artifacts
+            {
+                return Err(error(ErrorKind::Stale, "expansion-original-parent-result"));
+            }
+            observer.verify(&observed)?;
+            let loaded = &observer.loaded[id];
+            let path = loaded.profile.acknowledgements.join(format!(
+                "retained-{}-{}.json",
+                observed.ticket.packet.task_key, observed.ticket.attempt_id
+            ));
+            let (raw, _held) = staging::read_held(&path, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+            let acknowledgement: crate::retention::Acknowledgement = reel_workflow::decode(&raw)?;
+            if acknowledgement.canonical_bytes()? != raw
+                || Some(acknowledgement.artifact()?) != observed.acknowledgement
+            {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "expansion-parent-acknowledgement",
+                ));
+            }
+            let profile_raw = serde_json::to_vec(&loaded.profile)
+                .map_err(|_| error(ErrorKind::Invalid, "expansion-parent-profile"))?;
+            parents.insert(
+                id.clone(),
+                crate::upstream::ParentControl {
+                    packet: observed.ticket.packet,
+                    result: result.clone(),
+                    profile: reel_workflow::decode(&profile_raw)?,
+                    acknowledgement,
+                },
+            );
+        }
+    }
+    Ok((
+        expansion,
+        (!parents.is_empty()).then_some(crate::upstream::Parents {
+            schema: "reel.workflow-native-parents.v1".into(),
+            parents,
+        }),
+    ))
+}
+
 /// A new private planning artifact, not child admission or a durable custody
 /// handoff. Actual parent proofs are checked again when admitting the child.
 pub fn export_expansion(
