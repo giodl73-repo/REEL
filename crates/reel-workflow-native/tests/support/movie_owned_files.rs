@@ -151,6 +151,33 @@ fn file_backed_movie_adopts_completed_render_and_retains_without_rerender() {
             "--apply".as_ref(),
         ],
     );
+    let input_parent = root.join("input-staging");
+    fs::create_dir(&input_parent).unwrap();
+    let input_stage = staging::Profile {
+        schema: "reel.workflow-staging.v1".into(),
+        parent: input_parent,
+        maximum_bytes: 64 * 1024 * 1024,
+        capacity_policy: reel_assets::admission::Policy {
+            minimum_free_bytes: 100 * 1024 * 1024,
+            minimum_free_basis_points: 0,
+            ..Default::default()
+        },
+    };
+    let input_stage_path = root.join("input-profile.json");
+    save(&input_stage_path, &input_stage);
+    let input_ticket = root.join("input-ticket.json");
+    run(
+        &exe,
+        &[
+            "prepare-stage".as_ref(),
+            root.join("packet.json").as_os_str(),
+            root.join("source.json").as_os_str(),
+            root.join("admission.json").as_os_str(),
+            root.join("receipt.json").as_os_str(),
+            input_stage_path.as_os_str(),
+            input_ticket.as_os_str(),
+        ],
+    );
     let bindings = graph::Bindings {
         schema: "reel.workflow-run-bindings.v1".into(),
         tasks: BTreeMap::from([(
@@ -161,7 +188,10 @@ fn file_backed_movie_adopts_completed_render_and_retains_without_rerender() {
                     path: profile_path,
                     sha256: digest(&fs::read(root.join("profile.json")).unwrap()),
                 },
-                staging_ticket: None,
+                staging_ticket: Some(graph::PinnedFile {
+                    path: input_ticket.clone(),
+                    sha256: digest(&fs::read(input_ticket).unwrap()),
+                }),
             },
         )]),
     };

@@ -42,8 +42,11 @@ identities fixed the harness without relaxing ownership checks.
 
 The bounded native fixture uses existing synthetic movie inputs and explicitly
 closes the retained automatic-resolution source slot into retained coverage,
-then reuses the same Index/slot for a distinct new movie task/runtime. It creates
-an owned worker ticket and renders once through `generate_files`. At a deliberate
+then reuses the same Index/slot for a distinct new movie task/runtime. The v1
+ready-batch protocol still requires its original bounded input-staging ticket;
+this small fixture stages its inputs and does not qualify a large-input borrowed
+dispatch mode. It creates an owned worker ticket and renders once through
+`generate_files`. At a deliberate
 controller boundary, render request/outcome exist but worker receipt/completion
 do not. A separate original-ticket worker process must adopt those exact completed
 outputs, retain/reopen them and replay without render-control/timestamp or claim
