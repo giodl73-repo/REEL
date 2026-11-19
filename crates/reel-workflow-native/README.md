@@ -629,3 +629,36 @@ limits do not guarantee native result admission: the actual distinct resources
 must still fit the existing close bound. Explicitly partition larger editions;
 materialized outputs and original claims remain preserved if result admission
 refuses.
+
+## Retained dependency input reads
+
+The additive task `upstream_inputs` pin identifies exact canonical
+`reel.workflow-upstream-inputs.v1` controls. Each input logical identity maps to
+a parent task and an explicit `output { name }` or `worker-receipt` selector.
+The parent packet/result must match the child's project, source commit,
+dependency result digest and complete artifact set. Identical payload bytes do
+not permit changing the parent, output, attempt or logical identity. Changing
+the binding pin changes the child task key. Absent pins preserve existing v2
+packet bytes and fingerprints.
+
+The library `upstream::BorrowedInputs` implements `InputReader`. Opening it
+verifies actual original native work, retained-owner coverage, complete result
+bytes and comic replay for every named parent. Parents sharing an exact
+controller/retained actor reuse one live fence. Full parent proofs release their
+object gates before another proof opens, and selected input reads then share a
+bounded physical byte cache only after each logical binding has been checked.
+Tool pins and retained-owner fences outlive selected read gates.
+
+The current reader requires one exact declared native reader configuration for
+the batch. There is no implicit multi-pool lookup, latest fallback, Git record
+registration, external upload or selection. Named input bytes are bounded to
+64 MiB, parent packet/result evidence to 32 MiB and read calls to 256. Binding
+controls remain within the existing 1 MiB control limit.
+
+This is live borrowed custody. It is **not durable child admission**, waiting
+protection, task completion or permission to release parent history. The current
+Git-only admission path explicitly refuses tasks with upstream bindings until
+the composite source archive and child-owned claims are connected. No ready
+export or worker command silently bypasses that boundary. Comic assembly must
+still use its master/part plan for reading order; input-map ordering is not page
+ordering.

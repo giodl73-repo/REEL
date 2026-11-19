@@ -181,6 +181,7 @@ fn build() -> (Plan, Memory, Receipt) {
         ("pages/page01.json".into(), page.logical_id.clone()),
     ]);
     let task = Task {
+        upstream_inputs: None,
         native_inputs: None,
         id: "render".into(),
         operation: Operation::DeterministicTool,

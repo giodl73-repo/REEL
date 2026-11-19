@@ -10,6 +10,7 @@ fn plan() -> Plan {
         .into_iter()
         .map(|id| Task {
             id: id.into(),
+            upstream_inputs: None,
             native_inputs: None,
             operation: Operation::TextProposal,
             tool: None,

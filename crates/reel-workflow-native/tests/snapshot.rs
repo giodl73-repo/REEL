@@ -124,6 +124,7 @@ impl Fixture {
         };
         let task = Task {
             id: "review".into(),
+            upstream_inputs: None,
             native_inputs: Some(Self::declaration(&profile)),
             operation: Operation::ReviewFinding,
             tool: None,
@@ -2242,6 +2243,149 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
             tig_store::Key::parse("slot2").unwrap()
         ]
     );
+    // Two retained results share both an actor fence and identical native bytes.
+    // Each logical origin must still bind independently before physical reuse.
+    let mut retained = Vec::new();
+    for (index, task) in plan.tasks.iter().enumerate() {
+        let packet = reel_workflow::make_packet(&plan, &task.id, BTreeMap::new()).unwrap();
+        let binding = &bindings.tasks[&task.id];
+        let profile: reel_workflow_native::handoff::Profile =
+            serde_json::from_slice(&fs::read(&binding.profile.path).unwrap()).unwrap();
+        let (mut result, returns) = response_fixture(
+            &packet,
+            &case.temp.path().join(format!("upstream-return-{index}")),
+        );
+        result.artifacts.get_mut("note").unwrap().logical_id = format!("candidate/note-{index}");
+        let result_path = case
+            .temp
+            .path()
+            .join(format!("upstream-result-{index}.json"));
+        let returns_path = case
+            .temp
+            .path()
+            .join(format!("upstream-returns-{index}.json"));
+        fs::write(&result_path, serde_json::to_vec(&result).unwrap()).unwrap();
+        fs::write(&returns_path, serde_json::to_vec(&returns).unwrap()).unwrap();
+        let imported = Command::new(&executable)
+            .arg("import-handoff")
+            .arg(&binding.journal)
+            .arg(&binding.profile.path)
+            .arg(&result_path)
+            .arg(&returns_path)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(
+            imported.status.success(),
+            "{}",
+            String::from_utf8_lossy(&imported.stdout)
+        );
+        let path = profile.acknowledgements.join(format!(
+            "retained-{}-{}.json",
+            packet.task_key, result.attempt_id
+        ));
+        let ack: reel_workflow_native::retention::Acknowledgement =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        retained.push((packet, profile, result, ack));
+    }
+    use reel_workflow::{
+        publication::InputReader,
+        upstream::{Bindings as InputBindings, Reference, Selector},
+    };
+    let input_bindings = InputBindings {
+        schema: "reel.workflow-upstream-inputs.v1".into(),
+        inputs: retained
+            .iter()
+            .map(|(p, _, r, _)| {
+                (
+                    r.artifacts["note"].logical_id.clone(),
+                    Reference {
+                        task_id: p.task.id.clone(),
+                        artifact: Selector::Output {
+                            name: "note".into(),
+                        },
+                    },
+                )
+            })
+            .collect(),
+    };
+    let raw = input_bindings.canonical_bytes().unwrap();
+    let mut child = fixture.packet.task.clone();
+    child.id = "consumer".into();
+    child.native_inputs = None;
+    child.inputs = retained
+        .iter()
+        .map(|(_, _, r, _)| r.artifacts["note"].clone())
+        .collect();
+    child.depends_on = selected.clone();
+    child.upstream_inputs = Some(Artifact {
+        logical_id: "workflow/upstream".into(),
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+        media_type: "application/json".into(),
+    });
+    let mut child_plan = plan.clone();
+    child_plan.tasks.push(child);
+    let child = reel_workflow::make_packet(
+        &child_plan,
+        "consumer",
+        retained
+            .iter()
+            .map(|(p, _, r, _)| {
+                (
+                    p.task.id.clone(),
+                    DependencyResult {
+                        result_sha256: canonical_digest(r).unwrap(),
+                        artifacts: r.artifacts.clone(),
+                    },
+                )
+            })
+            .collect(),
+    )
+    .unwrap();
+    assert_eq!(
+        reel_workflow_native::SnapshotInputs::open(&child, &case.source.snapshot)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Unsupported
+    );
+    let parents = retained
+        .iter()
+        .map(|(packet, profile, result, ack)| {
+            (
+                packet.task.id.clone(),
+                reel_workflow_native::upstream::Parent {
+                    packet,
+                    result,
+                    source: &profile.source,
+                    admission: &profile.admission,
+                    receipt: &profile.binding.admission,
+                    acknowledgement: ack,
+                },
+            )
+        })
+        .collect();
+    let mut reader =
+        reel_workflow_native::upstream::BorrowedInputs::open(&child, &input_bindings, parents)
+            .unwrap();
+    for asset in &child.task.inputs {
+        assert_eq!(
+            reader.read(asset, asset.bytes).unwrap(),
+            b"synthetic response"
+        );
+    }
+    let mut wrong = child.task.inputs[0].clone();
+    wrong.logical_id = "candidate/unrelated".into();
+    assert_eq!(
+        reader.read(&wrong, wrong.bytes).unwrap_err().kind,
+        ErrorKind::Conflict
+    );
+    assert_eq!(
+        reader.read(&child.task.inputs[0], 0).unwrap_err().kind,
+        ErrorKind::Budget
+    );
+    drop(reader);
     if let Some(directory) = std::env::var_os("REEL_GRAPH_BATCH_EVIDENCE_DIRECTORY") {
         use std::io::Write;
         let directory = PathBuf::from(directory);
@@ -2249,6 +2393,8 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
             ("plan.json", serde_json::to_vec(&plan).unwrap()),
             ("bindings.json", serde_json::to_vec(&bindings).unwrap()),
             ("batch.json", fs::read(output).unwrap()),
+            ("consumer-packet.json", serde_json::to_vec(&child).unwrap()),
+            ("upstream-inputs.json", raw),
         ] {
             let mut file = fs::OpenOptions::new()
                 .write(true)
@@ -2659,6 +2805,7 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
     };
     let task = Task {
         id: "comic-render".into(),
+        upstream_inputs: None,
         native_inputs: Some(Fixture::declaration(&fixture.profile)),
         operation: Operation::DeterministicTool,
         tool: Some(ToolContract {
@@ -3104,6 +3251,94 @@ fn comic_native_case(partitioned: bool, dispatch: bool) {
     ));
     let ack: reel_workflow_native::retention::Acknowledgement =
         serde_json::from_slice(&fs::read(&ack_path).unwrap()).unwrap();
+    if partitioned && !dispatch {
+        use reel_workflow::{
+            publication::InputReader,
+            upstream::{Bindings, Reference, Selector},
+        };
+        let receipt = result.worker_receipt.as_ref().unwrap();
+        let (name, pdf) = result
+            .artifacts
+            .iter()
+            .find(|(name, _)| name.ends_with("reading.pdf"))
+            .unwrap();
+        let upstream = Bindings {
+            schema: "reel.workflow-upstream-inputs.v1".into(),
+            inputs: BTreeMap::from([
+                (
+                    receipt.logical_id.clone(),
+                    Reference {
+                        task_id: fixture.packet.task.id.clone(),
+                        artifact: Selector::WorkerReceipt,
+                    },
+                ),
+                (
+                    pdf.logical_id.clone(),
+                    Reference {
+                        task_id: fixture.packet.task.id.clone(),
+                        artifact: Selector::Output { name: name.clone() },
+                    },
+                ),
+            ]),
+        };
+        let raw = upstream.canonical_bytes().unwrap();
+        let mut child = fixture.packet.task.clone();
+        child.id = "comic-input-consumer".into();
+        child.operation = Operation::TextProposal;
+        child.tool = None;
+        child.prompt = "Synthetic retained comic input check.".into();
+        child.native_inputs = None;
+        child.inputs = vec![receipt.clone(), pdf.clone()];
+        child.depends_on = vec![fixture.packet.task.id.clone()];
+        child.upstream_inputs = Some(Artifact {
+            logical_id: "workflow/comic-inputs".into(),
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+            media_type: "application/json".into(),
+        });
+        let plan = Plan {
+            schema: PLAN_SCHEMA.into(),
+            project: fixture.packet.project.clone(),
+            source_commit: fixture.packet.source_commit.clone(),
+            tasks: vec![fixture.packet.task.clone(), child],
+        };
+        let child = make_packet(
+            &plan,
+            "comic-input-consumer",
+            BTreeMap::from([(
+                fixture.packet.task.id.clone(),
+                DependencyResult {
+                    result_sha256: canonical_digest(&result).unwrap(),
+                    artifacts: result.artifacts.clone(),
+                },
+            )]),
+        )
+        .unwrap();
+        let parents = BTreeMap::from([(
+            fixture.packet.task.id.clone(),
+            reel_workflow_native::upstream::Parent {
+                packet: &fixture.packet,
+                result: &result,
+                source: &profile.source,
+                admission: &profile.admission,
+                receipt: &profile.binding.admission,
+                acknowledgement: &ack,
+            },
+        )]);
+        let mut reader =
+            reel_workflow_native::upstream::BorrowedInputs::open(&child, &upstream, parents)
+                .unwrap();
+        assert_eq!(reader.read(receipt, receipt.bytes).unwrap(), receipt_raw);
+        let bytes = reader.read(pdf, pdf.bytes).unwrap();
+        assert_eq!(digest(&bytes), pdf.sha256);
+        worker_controls.extend([
+            (
+                "upstream-consumer-packet.json",
+                serde_json::to_vec(&child).unwrap(),
+            ),
+            ("upstream-inputs.json", raw),
+        ]);
+    }
     let parent = case.temp.path().join("export-scratch");
     fs::create_dir(&parent).unwrap();
     let staging = staging::Profile {

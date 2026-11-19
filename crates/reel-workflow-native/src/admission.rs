@@ -95,6 +95,12 @@ pub(crate) struct RecoveryGuard {
     _fences: Vec<reel_assets::admission::MetadataLock>,
     _prepared: Prepared,
 }
+/// One live retained-owner fence per exact controller/actor in a read session.
+#[derive(Default)]
+pub(crate) struct RetainedFences {
+    identities: Vec<(Digest, PathBuf, Key)>,
+    locks: Vec<reel_assets::admission::MetadataLock>,
+}
 pub(crate) fn limits() -> projection::Limits {
     projection::Limits {
         objects: 512,
@@ -163,6 +169,9 @@ fn put(memory: &mut MemoryNodes, raw: &[u8]) -> Result<Object> {
         .map_err(|_| error(ErrorKind::Integrity, "admission-memory-node"))
 }
 impl Prepared {
+    pub(crate) fn into_git_guard(self) -> std::fs::File {
+        self.snapshot._git_guard
+    }
     /// Metadata only. Caller-supplied operational store/controller enrollment is
     /// trusted admission, as in the native SDK; no store discovery or creation.
     pub fn open(

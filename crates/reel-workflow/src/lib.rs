@@ -8,6 +8,7 @@ use std::fmt;
 pub mod graph;
 pub mod handoff;
 pub mod publication;
+pub mod upstream;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
 pub const PACKET_SCHEMA: &str = "reel.workflow-packet.v2";
@@ -115,6 +116,9 @@ pub struct Task {
     /// Optional exact canonical native record-to-annex input declaration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native_inputs: Option<Artifact>,
+    /// Exact portable dependency-to-input mapping; not a custody acknowledgement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_inputs: Option<Artifact>,
     pub operation: Operation,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<ToolContract>,
@@ -280,6 +284,15 @@ fn task(value: &Task) -> Result<()> {
         artifact(binding)?;
         if binding.media_type != "application/json" || binding.bytes > MAX_CONTROL_BYTES as u64 {
             return fail(ErrorKind::Invalid, "native-input-declaration");
+        }
+    }
+    if let Some(binding) = &value.upstream_inputs {
+        artifact(binding)?;
+        if binding.media_type != "application/json"
+            || binding.bytes > MAX_CONTROL_BYTES as u64
+            || value.depends_on.is_empty()
+        {
+            return fail(ErrorKind::Invalid, "upstream-input-declaration");
         }
     }
     let mut inputs = BTreeSet::new();

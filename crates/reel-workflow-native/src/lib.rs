@@ -19,6 +19,7 @@ mod qualified;
 pub mod response;
 pub mod retention;
 pub mod staging;
+pub mod upstream;
 pub use staging::comic_export;
 pub use staging::worker;
 use tig_git::{
@@ -185,6 +186,12 @@ pub struct SnapshotInputs {
 impl SnapshotInputs {
     pub fn open(packet: &Packet, profile: &SnapshotProfile) -> Result<Self> {
         reel_workflow::check_packet(packet)?;
+        if packet.task.upstream_inputs.is_some() {
+            return Err(error(
+                ErrorKind::Unsupported,
+                "native-upstream-child-admission-not-connected",
+            ));
+        }
         if profile.schema != "reel.workflow-native-snapshot.v1"
             || profile.commit != packet.source_commit
         {

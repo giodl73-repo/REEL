@@ -63,6 +63,41 @@ pub struct RetainedGuard {
     _outputs: Vec<reader::VerifiedRead>,
     _comic: Option<crate::comic::Proof>,
 }
+pub(crate) struct ReadPin {
+    _git: File,
+    _annex: File,
+}
+/// Verify every parent's complete result before any selected output read gates
+/// are held. Shared retained actors use one session-owned fence, not reentrancy.
+pub(crate) fn pin_for_read(
+    parent: &crate::upstream::Parent<'_>,
+    session: &mut admission::RetainedFences,
+) -> Result<ReadPin> {
+    check(parent.packet, parent.receipt, parent.result)?;
+    let annex = hold_tool(&parent.source.annex)?;
+    let prepared = Prepared::open(
+        parent.packet,
+        parent.source,
+        parent.admission,
+        &parent.receipt.attempt_id,
+    )?;
+    prepared.verify_retained_in(
+        parent.receipt,
+        parent.result,
+        parent.acknowledgement,
+        session,
+    )?;
+    drop(outputs(parent.source, parent.result)?);
+    drop(crate::comic::check_native(
+        parent.packet,
+        parent.source,
+        parent.result,
+    )?);
+    Ok(ReadPin {
+        _git: prepared.into_git_guard(),
+        _annex: annex,
+    })
+}
 impl RetainedGuard {
     pub(crate) fn comic_files(&self) -> Result<&std::collections::BTreeMap<String, Vec<u8>>> {
         self._comic

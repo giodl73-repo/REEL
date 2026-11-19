@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 
 fn task(id: &str) -> Task {
     Task {
+        upstream_inputs: None,
         native_inputs: None,
         id: id.into(),
         operation: Operation::TextProposal,

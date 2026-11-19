@@ -274,23 +274,42 @@ impl Prepared {
         result: &reel_workflow::ReturnedResult,
         acknowledgement: &Acknowledgement,
     ) -> Result<Vec<reel_assets::admission::MetadataLock>> {
+        let mut session = RetainedFences::default();
+        self.verify_retained_in(receipt, result, acknowledgement, &mut session)?;
+        Ok(session.locks)
+    }
+    pub(crate) fn verify_retained_in(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        acknowledgement: &Acknowledgement,
+        session: &mut RetainedFences,
+    ) -> Result<()> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
         self.retained_scope(&index, &acknowledgement.target)?;
-        let fences = vec![
-            qualified::prepublication::actor_fence(
+        let identity = (
+            index.identity().clone(),
+            std::fs::canonicalize(&self.profile.scope.coordination_root)
+                .map_err(crate::io_error)?,
+            acknowledgement.target.actor.clone(),
+        );
+        if !session.identities.contains(&identity) {
+            let fence = qualified::prepublication::actor_fence(
                 index.identity(),
                 &self.profile.scope.coordination_root,
                 &acknowledgement.target.actor,
             )
-            .map_err(native_error)?,
-        ];
+            .map_err(native_error)?;
+            session.locks.push(fence);
+            session.identities.push(identity);
+        }
         let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
         if candidate != acknowledgement.candidate {
             return Err(error(ErrorKind::Conflict, "retention-candidate-binding"));
         }
         self.verify_ack(receipt, acknowledgement, &mut index, &mut nodes)?;
-        Ok(fences)
+        Ok(())
     }
     fn verify_ack(
         &self,
