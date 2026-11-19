@@ -7,6 +7,59 @@ use reel_workflow::{Mode, Operation, Provenance, ReturnedResult, handoff::State}
 const REQUEST: &str = "provider-request.json";
 const RESPONSE: &str = "provider-response.json";
 const CONFIG: &str = "provider-config.json";
+fn proxy_request(
+    op: &str,
+    provider: &str,
+    model: &str,
+    task: serde_json::Value,
+    inputs: serde_json::Value,
+    brief: Option<serde_json::Value>,
+) -> Result<Vec<u8>> {
+    let mut body = serde_json::json!({"schema":"reel.workflow-proxy-request.v1","operation_id":op,"provider":provider,"model":model,"task":task,"inputs":inputs});
+    if let Some(brief) = brief {
+        body["schema"] = serde_json::json!("reel.workflow-proxy-request.v2");
+        body["review_brief"] = brief;
+    }
+    serde_json::to_vec(&body).map_err(|_| error(ErrorKind::Invalid, "provider-request-json"))
+}
+#[cfg(test)]
+mod review_wire_tests {
+    use super::*;
+    #[test]
+    fn legacy_proxy_bytes_stay_v1_and_review_extension_uses_v2() {
+        let task = serde_json::json!({"id":"synthetic","operation":"text-proposal"});
+        let inputs = serde_json::json!([]);
+        let legacy=serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-proxy-request.v1","operation_id":"original","provider":"proxy","model":"declared","task":task,"inputs":inputs})).unwrap();
+        assert_eq!(
+            proxy_request(
+                "original",
+                "proxy",
+                "declared",
+                task.clone(),
+                inputs.clone(),
+                None
+            )
+            .unwrap(),
+            legacy
+        );
+        let brief = serde_json::json!({"schema":"reel.workflow-review-brief.v1","return_schema":{"type":"object"}});
+        let body: serde_json::Value = serde_json::from_slice(
+            &proxy_request(
+                "original",
+                "proxy",
+                "declared",
+                task,
+                inputs,
+                Some(brief.clone()),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["schema"], "reel.workflow-proxy-request.v2");
+        assert_eq!(body["review_brief"], brief);
+        assert_eq!(body["operation_id"], "original");
+    }
+}
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -461,6 +514,15 @@ pub fn run_file(
         .reopen(&ticket.admission)?;
         let mut native =
             NativeInputs::from_claims(&ticket.packet, &selected.profile.source, claims)?;
+        let review_brief = if ticket.packet.task.operation == Operation::ReviewReport {
+            let bound = reel_workflow::review::bind(&ticket.packet, &mut native)?;
+            Some(bound.brief(
+                &ticket.admission.attempt_id,
+                &ticket.config.send_inputs.iter().cloned().collect(),
+            )?)
+        } else {
+            None
+        };
         let mut buffers = BTreeMap::new();
         let mut raw_inputs = BTreeMap::new();
         let mut total = 0u64;
@@ -520,8 +582,18 @@ pub fn run_file(
                 .iter()
                 .filter(|(n, _)| ![REQUEST, RESPONSE, CONFIG].contains(&n.as_str()))
                 .collect();
-            serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-proxy-request.v1","operation_id":op,"provider":ticket.config.provider,"model":ticket.config.model,
-            "task":{"id":ticket.packet.task.id,"task_key":ticket.packet.task_key,"attempt_id":ticket.admission.attempt_id,"operation":ticket.packet.task.operation,"language":ticket.packet.task.language,"prompt":ticket.packet.task.prompt,"outputs":outputs},"inputs":inputs})).map_err(|_|error(ErrorKind::Invalid,"provider-request-json"))?
+            proxy_request(
+                &op,
+                &ticket.config.provider,
+                &ticket.config.model,
+                serde_json::json!({"id":ticket.packet.task.id,"task_key":ticket.packet.task_key,"attempt_id":ticket.admission.attempt_id,"operation":ticket.packet.task.operation,"language":ticket.packet.task.language,"prompt":ticket.packet.task.prompt,"outputs":outputs}),
+                serde_json::json!(inputs),
+                review_brief
+                    .as_ref()
+                    .map(serde_json::to_value)
+                    .transpose()
+                    .map_err(|_| error(ErrorKind::Invalid, "provider-review-brief-json"))?,
+            )?
         };
         let prepared = ticket
             .config

@@ -15,6 +15,23 @@ pub struct Bound {
     request: Request,
     copy_bytes: Vec<u8>,
 }
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Brief {
+    pub schema: String,
+    pub task_id: String,
+    pub task_key: String,
+    pub attempt_id: String,
+    pub language: String,
+    pub production_commit: String,
+    pub review_artifact: Artifact,
+    pub report_output: String,
+    pub instructions: String,
+    pub return_schema: serde_json::Value,
+    pub empty_report: Report,
+    pub units: BTreeMap<String, Unit>,
+    pub evidence: Vec<Artifact>,
+}
 impl Bound {
     pub fn report_output(&self) -> &str {
         &self.request.report_output
@@ -29,6 +46,121 @@ impl Bound {
             report,
             &self.request.production_commit,
         )
+    }
+    /// Instructions are private context, not a record of viewing or approval.
+    /// A proxy passes only its explicitly allowed inputs; manual callers may
+    /// name the complete staged closure. Hidden descriptors are not emitted.
+    pub fn brief(&self, attempt: &str, visible: &BTreeSet<String>) -> Result<Brief> {
+        if !token(attempt) {
+            return fail(ErrorKind::Invalid, "review-brief-attempt");
+        }
+        let copy: Copy = decode(&self.copy_bytes)?;
+        for id in visible {
+            if !self.packet.task.inputs.iter().any(|a| &a.logical_id == id) {
+                return fail(ErrorKind::Missing, "review-brief-visible-input");
+            }
+        }
+        if ![
+            REQUEST_ID,
+            &self.request.copy_input,
+            &copy.review.logical_id,
+        ]
+        .iter()
+        .all(|id| visible.contains(*id))
+        {
+            return fail(ErrorKind::Denied, "review-brief-required-input-egress");
+        }
+        let evidence: Vec<_> = self
+            .packet
+            .task
+            .inputs
+            .iter()
+            .filter(|a| visible.contains(&a.logical_id))
+            .cloned()
+            .collect();
+        let modalities = match &copy.format {
+            Format::Film { .. } => vec!["visual", "audio", "audiovisual", "text"],
+            Format::Comic { .. } => vec!["visual", "text", "layout"],
+        };
+        let frames = match &copy.format {
+            Format::Comic { .. } => serde_json::json!({"type":"null"}),
+            Format::Film { .. } => {
+                serde_json::json!({"anyOf":[{"type":"null"},{"type":"object","additionalProperties":false,"required":["start","end"],"properties":{"start":{"type":"integer","minimum":0},"end":{"type":"integer","minimum":1}}}]})
+            }
+        };
+        let empty_report = Report {
+            schema: "reel.workflow-review-report.v1".into(),
+            copy_sha256: canonical_digest(&copy)?,
+            findings: vec![],
+        };
+        let return_schema = serde_json::json!({"type":"object","additionalProperties":false,"required":["schema","copy_sha256","findings"],"properties":{
+        "schema":{"const":"reel.workflow-review-report.v1"},"copy_sha256":{"const":empty_report.copy_sha256},
+        "findings":{"type":"array","maxItems":128,"items":{"type":"object","additionalProperties":false,
+            "required":["code","unit","frames","modality","route","requested_change","evidence"],"properties":{
+            "code":{"type":"string","minLength":1,"maxLength":128,"pattern":"^[A-Za-z0-9_.-]+$","not":{"enum":[".",".."]}},
+            "unit":{"enum":copy.units.keys().collect::<Vec<_>>()},
+            "frames":frames,
+            "modality":{"enum":modalities},"route":{"enum":["project","reel","tig"]},
+            "requested_change":{"type":"string","minLength":1,"maxLength":4096},
+            "evidence":{"type":"array","minItems":1,"maxItems":16,"uniqueItems":true,"items":{"enum":evidence}}
+        }}}}});
+        let instructions = format!(
+            "{}\n\nReturn only one JSON review report for the named output. Use the exact copy fingerprint and unit keys supplied here. Copy evidence descriptors exactly from the allowed list; do not invent hashes. Frame ranges are half-open and must stay inside the selected film unit; use null for comic frames. Report only modalities you actually inspected; do not claim unheard audio or unseen images. Keep source language and wording unchanged. Empty findings are valid when no supported finding is made; the empty template is not proof of viewing. Do not emit approval, release, selection, issue-delivery or repair claims. The adapter owns the returned-result envelope and artifact hashing.",
+            self.packet.task.prompt
+        );
+        let brief = Brief {
+            schema: "reel.workflow-review-brief.v1".into(),
+            task_id: self.packet.task.id.clone(),
+            task_key: self.packet.task_key.clone(),
+            attempt_id: attempt.into(),
+            language: copy.language.clone(),
+            production_commit: self.request.production_commit.clone(),
+            review_artifact: copy.review.clone(),
+            report_output: self.request.report_output.clone(),
+            instructions,
+            return_schema,
+            empty_report,
+            units: copy.units,
+            evidence,
+        };
+        canonical_digest(&brief)?;
+        Ok(brief)
+    }
+    /// Pack an exact candidate body; this never registers, retains or completes it.
+    pub fn pack_handoff(&self, attempt: &str, raw: &[u8]) -> Result<ReturnedResult> {
+        if !token(attempt) {
+            return fail(ErrorKind::Invalid, "review-brief-attempt");
+        }
+        if raw.len() > MAX_CONTROL_BYTES {
+            return fail(ErrorKind::Budget, "review-task-control-bytes");
+        }
+        let result = ReturnedResult {
+            schema: RESULT_SCHEMA.into(),
+            task_id: self.packet.task.id.clone(),
+            task_key: self.packet.task_key.clone(),
+            attempt_id: attempt.into(),
+            artifacts: BTreeMap::from([(
+                self.request.report_output.clone(),
+                Artifact {
+                    logical_id: format!(
+                        "workflow/review/{}/{attempt}/report",
+                        self.packet.task_key
+                    ),
+                    sha256: digest(raw),
+                    bytes: raw.len() as u64,
+                    media_type: "application/json".into(),
+                },
+            )]),
+            provenance: Provenance {
+                mode: Mode::Handoff,
+                provider: None,
+                model: None,
+                executable: None,
+            },
+            worker_receipt: None,
+        };
+        self.check(&result, raw)?;
+        Ok(result)
     }
 }
 /// Frozen structured-review input checks, before a provider or manual export.

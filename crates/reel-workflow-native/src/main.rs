@@ -63,6 +63,76 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, packet, source, profile, receipt, output, apply]
+            if command == "export-review-brief" && apply == "--apply" =>
+        {
+            use std::io::Write;
+            let packet: reel_workflow::Packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt: reel_workflow_native::admission::Receipt =
+                read_control(Path::new(receipt))?;
+            let mut native = NativeInputs::open_admitted(&packet, &source, &profile, &receipt)?;
+            let bound = reel_workflow::review::bind(&packet, &mut native)?;
+            let brief = bound.brief(
+                &receipt.attempt_id,
+                &packet
+                    .task
+                    .inputs
+                    .iter()
+                    .map(|a| a.logical_id.clone())
+                    .collect(),
+            )?;
+            let raw = serde_json::to_vec(&brief).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "review-brief-json".into(),
+            })?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "review-brief-write-preserve-partial".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-protected-review-brief","units":brief.units.len(),"task_completed":false,"provider_called":false,"approved":false}),
+            )
+        }
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            report,
+            output,
+            apply,
+        ] if command == "pack-review-result" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt: reel_workflow_native::admission::Receipt =
+                read_control(Path::new(receipt))?;
+            let mut native = NativeInputs::open_admitted(&packet, &source, &profile, &receipt)?;
+            let bound = reel_workflow::review::bind(&packet, &mut native)?;
+            let (raw, _guard) = reel_workflow_native::read_candidate_control(Path::new(report))?;
+            let result = bound.pack_handoff(&receipt.attempt_id, &raw)?;
+            let raw = serde_json::to_vec(&result).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "review-result-json".into(),
+            })?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "review-result-write-preserve-partial".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"protected-review-candidate-envelope","task_completed":false,"retained_owner_acknowledged":false,"approved":false}),
+            )
+        }
         [
             command,
             packet,
@@ -915,6 +985,8 @@ fn main() -> ExitCode {
             "reel-workflow-native stage-retention PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native retain-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
+            "reel-workflow-native export-review-brief PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT NEW_BRIEF --apply\n",
+            "reel-workflow-native pack-review-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT REPORT NEW_RESULT --apply\n",
             "reel-workflow-native export-review-copy PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK NEW_COPY [NEW_COMIC_MANIFEST] --apply\n",
             "reel-workflow-native create-handoff PACKET HANDOFF_PROFILE NEW_JOURNAL --apply\n",
             "reel-workflow-native import-handoff JOURNAL HANDOFF_PROFILE RESULT RETURNS --apply\n",

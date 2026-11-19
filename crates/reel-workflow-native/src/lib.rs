@@ -566,3 +566,8 @@ pub fn read_control<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
         .map_err(io_error)?;
     reel_workflow::decode(&raw)
 }
+/// Read an ordinary caller-selected control with a mutation guard and a fixed
+/// 1 MiB bound. This supplies no admission, custody, execution or approval.
+pub fn read_candidate_control(path: &Path) -> Result<(Vec<u8>, File)> {
+    staging::read_held(path, reel_workflow::MAX_CONTROL_BYTES as u64)
+}

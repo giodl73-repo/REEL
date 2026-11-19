@@ -98,6 +98,99 @@ fn structured_review_binds_before_dispatch_and_checks_returned_semantics() {
         .insert("report".into(), pin("candidate/report", b"{}"));
     assert!(bound.check(&bad_result, b"{}").is_err());
 }
+
+#[test]
+fn model_brief_freezes_unit_and_copy_keys_and_omits_hidden_evidence() {
+    let (plan, mut memory, _, _) = structured();
+    let packet = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    let bound = bind(&packet, &mut memory).unwrap();
+    let visible = std::collections::BTreeSet::from([
+        REQUEST_ID.into(),
+        "control/copy".into(),
+        "review/copy".into(),
+    ]);
+    let brief = bound.brief("attempt-1", &visible).unwrap();
+    assert_eq!(brief.task_key, packet.task_key);
+    assert_eq!(brief.task_id, packet.task.id);
+    assert_eq!(brief.language, "es");
+    assert_ne!(brief.production_commit, packet.source_commit);
+    assert_eq!(brief.evidence.len(), 3);
+    assert!(
+        !serde_json::to_string(&brief)
+            .unwrap()
+            .contains("evidence/text")
+    );
+    assert_eq!(
+        brief.return_schema["properties"]["copy_sha256"]["const"],
+        brief.empty_report.copy_sha256
+    );
+    let properties = &brief.return_schema["properties"]["findings"]["items"]["properties"];
+    assert_eq!(
+        properties["unit"]["enum"],
+        serde_json::json!(["stable-unit"])
+    );
+    assert_eq!(properties["frames"], serde_json::json!({"type":"null"}));
+    assert_eq!(
+        properties["modality"]["enum"],
+        serde_json::json!(["visual", "text", "layout"])
+    );
+    let raw = serde_json::to_vec(&brief.empty_report).unwrap();
+    bound.pack_handoff("attempt-1", &raw).unwrap();
+    let mut denied = visible.clone();
+    denied.remove(REQUEST_ID);
+    assert_eq!(
+        bound.brief("attempt-1", &denied).unwrap_err().kind,
+        ErrorKind::Denied
+    );
+    denied.insert("undeclared/private".into());
+    assert_eq!(
+        bound.brief("attempt-1", &denied).unwrap_err().kind,
+        ErrorKind::Missing
+    );
+}
+#[test]
+fn handoff_packer_checks_semantics_and_hashes_exact_pretty_bytes() {
+    let (plan, mut memory, _, raw) = structured();
+    let packet = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    let bound = bind(&packet, &mut memory).unwrap();
+    let report: Report = decode(&raw).unwrap();
+    let mut pretty = serde_json::to_vec_pretty(&report).unwrap();
+    pretty.push(b'\n');
+    let result = bound.pack_handoff("attempt-1", &pretty).unwrap();
+    assert_eq!(result.provenance.mode, Mode::Handoff);
+    assert_eq!(result.artifacts["report"].sha256, digest(&pretty));
+    assert_eq!(result.artifacts["report"].bytes, pretty.len() as u64);
+    assert_ne!(digest(&raw), digest(&pretty));
+    assert!(bound.pack_handoff("../other", &pretty).is_err());
+    let mut invalid = report;
+    invalid.copy_sha256 = "b".repeat(64);
+    assert_eq!(
+        bound
+            .pack_handoff("attempt-1", &serde_json::to_vec(&invalid).unwrap())
+            .unwrap_err()
+            .kind,
+        ErrorKind::Stale
+    );
+    assert!(bound.pack_handoff("attempt-1", b"{}").is_err());
+}
+#[test]
+fn handoff_packer_never_discards_required_companion_outputs() {
+    let (mut plan, mut memory, _, raw) = structured();
+    plan.tasks[0].outputs.insert(
+        "evidence".into(),
+        OutputContract {
+            media_type: "text/plain".into(),
+            max_bytes: 100,
+            required: true,
+        },
+    );
+    let packet = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    let bound = bind(&packet, &mut memory).unwrap();
+    assert_eq!(
+        bound.pack_handoff("attempt-1", &raw).unwrap_err().kind,
+        ErrorKind::Missing
+    );
+}
 #[test]
 fn structured_request_is_explicit_bounded_and_cannot_retarget_outputs_or_language() {
     let (mut plan, mut memory, _, _) = structured();
