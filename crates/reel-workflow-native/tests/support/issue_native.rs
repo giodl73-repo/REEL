@@ -533,6 +533,7 @@ fn complete_issue(derived_control: bool) {
     for (index, (task, receipt, worker_receipt, files)) in part_data.iter().enumerate() {
         let packet = make_packet(&parent_plan, &task.id, BTreeMap::new()).unwrap();
         let source = NativeProfile {
+            movie_verifier: None,
             snapshot: assets.snapshot(&fixture, &task.inputs),
             annex: annex.clone(),
             source: pool.clone(),
@@ -734,6 +735,7 @@ fn complete_issue(derived_control: bool) {
             .collect();
         let packet = make_packet(&parent_plan, "issue-control", dependencies).unwrap();
         let source = NativeProfile {
+            movie_verifier: None,
             snapshot,
             annex: annex.clone(),
             source: pool.clone(),
@@ -981,6 +983,7 @@ fn complete_issue(derived_control: bool) {
     )
     .unwrap();
     let source = NativeProfile {
+        movie_verifier: None,
         snapshot,
         annex,
         source: pool,

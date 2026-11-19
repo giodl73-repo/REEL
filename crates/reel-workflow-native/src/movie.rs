@@ -144,6 +144,199 @@ pub struct Checked {
     _files: Vec<File>,
     _directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
 }
+impl Checked {
+    pub(crate) fn into_return_guards(
+        self,
+    ) -> (Vec<File>, Vec<reel_assets::jobs::WorkspaceDirectory>) {
+        (self._files, self._directories)
+    }
+}
+fn validate_candidate(
+    packet: &Packet,
+    bound: &film_render::Bound,
+    result: &ReturnedResult,
+    buffers: &BTreeMap<String, Vec<u8>>,
+    wrapper: &[u8],
+) -> Result<()> {
+    let expected = film_render::capture_outputs(packet, bound, buffers)?;
+    if serde_json::to_vec(&expected)
+        .map_err(|_| error(ErrorKind::Invalid, "movie-return-receipt-json"))?
+        != wrapper
+        || expected.outputs != result.artifacts
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "movie-return-receipt-correspondence",
+        ));
+    }
+    film_process::check_render_evidence(
+        packet,
+        bound,
+        &buffers["render-request.json"],
+        &buffers["render-result.json"],
+    )
+}
+
+pub(crate) struct Proof {
+    _inputs: Inputs,
+    pub(crate) files: Option<BTreeMap<String, Vec<u8>>>,
+}
+pub(crate) fn native_proof(
+    packet: &Packet,
+    source: &crate::NativeProfile,
+    result: &ReturnedResult,
+    capture: bool,
+    permit: crate::admission::InputPermit,
+) -> Result<Proof> {
+    reel_workflow::check_result(packet, result)?;
+    let config = source
+        .movie_verifier
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Unsupported, "movie-verifier-profile-required"))?;
+    let mut native = NativeInputs::from_permit(packet, source, permit)?;
+    let (admission, attempt) = native.movie_authority()?;
+    if attempt != result.attempt_id {
+        return Err(error(ErrorKind::Conflict, "movie-original-result-attempt"));
+    }
+    let admission = admission.clone();
+    let bound = film_render::bind(packet, &mut native)?;
+    crate::worker::validate_programs(packet, &config.auxiliary_programs)?;
+    let mut inputs = Inputs::prepare(
+        packet,
+        native,
+        bound.aliases(),
+        Programs {
+            ffmpeg: config.auxiliary_programs["ffmpeg"].clone(),
+            ffprobe: config.auxiliary_programs["ffprobe"].clone(),
+        },
+    )?;
+    let worker = result
+        .worker_receipt
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Missing, "movie-worker-receipt-required"))?;
+    let artifacts = result
+        .artifacts
+        .iter()
+        .map(|(name, a)| (bound.request().output_paths[name].clone(), a.clone()))
+        .chain(std::iter::once(("receipt.json".into(), worker.clone())))
+        .collect();
+    let paths = inputs.returned_paths(&artifacts)?;
+    let mut buffers = BTreeMap::new();
+    let mut outputs = BTreeMap::new();
+    let mut wrapper = Vec::new();
+    for (name, pin) in &paths {
+        let (raw, _guard) = crate::staging::read_held(&pin.path, pin.bytes)?;
+        if raw.len() as u64 != pin.bytes || reel_workflow::digest(&raw) != pin.sha256 {
+            return Err(error(ErrorKind::Integrity, "movie-native-candidate-pin"));
+        }
+        if name == "receipt.json" {
+            wrapper = raw;
+        } else {
+            buffers.insert(name.clone(), raw);
+        }
+        if let Some(virtual_name) = name.strip_prefix("delivery/") {
+            outputs.insert(virtual_name.to_owned(), pin.clone());
+        }
+    }
+    validate_candidate(packet, &bound, result, &buffers, &wrapper)?;
+    let required = bound
+        .request()
+        .limits
+        .workspace_bytes
+        .checked_add(10 * reel_workflow::MAX_CONTROL_BYTES as u64)
+        .ok_or_else(|| error(ErrorKind::Budget, "movie-verification-reservation"))?;
+    if required > config.staging.maximum_bytes {
+        return Err(error(ErrorKind::Budget, "movie-verification-reservation"));
+    }
+    let context = serde_json::json!({"schema":"reel.workflow-native-movie-check.v1","packet":packet,"result":result,
+        "inputs":inputs.process_files()?,"outputs":outputs,"verifier":config});
+    crate::staging::movie_verification::run(
+        &config.staging,
+        source,
+        &admission,
+        &context,
+        |workspace| {
+            film_process::verify(
+                &inputs,
+                &reference(&bound.request().job_path, bound.job()),
+                &reference(&bound.request().production_path, bound.production()),
+                &outputs,
+                workspace,
+                &config.runtime,
+                &bound.request().limits,
+            )
+        },
+    )?;
+    if capture {
+        buffers.insert("receipt.json".into(), wrapper);
+    }
+    Ok(Proof {
+        _inputs: inputs,
+        files: capture.then_some(buffers),
+    })
+}
+
+pub(crate) fn check_returned_owned(
+    packet: &Packet,
+    source: &crate::NativeProfile,
+    mut native: NativeInputs,
+    result: &ReturnedResult,
+    root: &Path,
+    paths: &BTreeMap<String, String>,
+) -> Result<(Vec<File>, Vec<reel_assets::jobs::WorkspaceDirectory>)> {
+    let config = source
+        .movie_verifier
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Unsupported, "movie-verifier-profile-required"))?;
+    let (admission, _) = native.movie_authority()?;
+    let admission = admission.clone();
+    let bound = film_render::bind(packet, &mut native)?;
+    let required = bound
+        .request()
+        .limits
+        .workspace_bytes
+        .checked_add(10 * reel_workflow::MAX_CONTROL_BYTES as u64)
+        .ok_or_else(|| error(ErrorKind::Budget, "movie-verification-reservation"))?;
+    if required > config.staging.maximum_bytes {
+        return Err(error(ErrorKind::Budget, "movie-verification-reservation"));
+    }
+    let parent = config
+        .staging
+        .parent
+        .canonicalize()
+        .map_err(crate::io_error)?;
+    if parent.starts_with(root) || root.starts_with(&parent) {
+        return Err(error(
+            ErrorKind::Denied,
+            "movie-return-verification-parent-overlap",
+        ));
+    }
+    let context = serde_json::json!({"schema":"reel.workflow-return-movie-check.v1","packet":packet,"result":result,"source":source,
+        "root":root,"paths":paths,"verifier":config});
+    let returns = crate::response::Returns {
+        schema: "reel.workflow-returns.v1".into(),
+        root: root.into(),
+        files: paths.clone(),
+    };
+    crate::staging::movie_verification::run(
+        &config.staging,
+        source,
+        &admission,
+        &context,
+        |workspace| {
+            check_returned(
+                packet,
+                native,
+                result,
+                &returns,
+                &config.auxiliary_programs,
+                &config.runtime,
+                workspace,
+            )
+            .map(Checked::into_return_guards)
+        },
+    )
+}
 /// Verify external/scattered candidate files against exact task inputs. The
 /// separate verifier runtime is explicitly pinned; it need not be the historic
 /// producer executable. Caller admits an empty owned verification workspace.
@@ -263,23 +456,7 @@ pub fn check_returned(
         buffers.insert(nominal.clone(), raw);
     }
     crate::output_layout::check(&result.artifacts, worker, &returns.files, &identities)?;
-    let expected = film_render::capture_outputs(packet, &bound, &buffers)?;
-    if serde_json::to_vec(&expected)
-        .map_err(|_| error(ErrorKind::Invalid, "movie-return-receipt-json"))?
-        != wrapper
-        || expected.outputs != result.artifacts
-    {
-        return Err(error(
-            ErrorKind::Conflict,
-            "movie-return-receipt-correspondence",
-        ));
-    }
-    film_process::check_render_evidence(
-        packet,
-        &bound,
-        &buffers["render-request.json"],
-        &buffers["render-result.json"],
-    )?;
+    validate_candidate(packet, &bound, result, &buffers, &wrapper)?;
     let inputs = Inputs::prepare(
         packet,
         native,

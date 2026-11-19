@@ -311,6 +311,7 @@ fn run(movie: bool) {
     case.temp.disable_cleanup(true);
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         source: native,
         annex: serde_json::from_value(value["annex"].clone()).unwrap(),

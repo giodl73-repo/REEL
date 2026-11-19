@@ -126,7 +126,8 @@ fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<
     Ok(())
 }
 fn outputs(source: &NativeProfile, result: &ReturnedResult) -> Result<Vec<reader::VerifiedRead>> {
-    // Comic proof owns its source/output gates and performs full replay.
+    // Deterministic producer proof owns its source/output gates and performs
+    // capability-specific replay or independent media/primary verification.
     if result.provenance.mode == reel_workflow::Mode::Tool {
         return Ok(Vec::new());
     }

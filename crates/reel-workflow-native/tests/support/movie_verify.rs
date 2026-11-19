@@ -6,7 +6,7 @@ use reel_workflow_native::{
 };
 use std::{fs::File, io::Write};
 
-struct Metadata<'a>(&'a Path);
+pub(super) struct Metadata<'a>(pub(super) &'a Path);
 impl publication::InputReader for Metadata<'_> {
     fn read(&mut self, a: &Artifact, max: u64) -> Result<Vec<u8>> {
         let index = a
@@ -28,7 +28,7 @@ fn held(path: &Path) -> File {
         .open(path)
         .unwrap()
 }
-fn tool(path: PathBuf) -> Tool {
+pub(super) fn tool(path: PathBuf) -> Tool {
     let raw = fs::read(&path).unwrap();
     Tool {
         path,
@@ -39,7 +39,7 @@ fn tool(path: PathBuf) -> Tool {
 fn ref_value(path: &Path, raw: &[u8]) -> serde_json::Value {
     json!({"path":path,"sha256":digest(raw),"bytes":raw.len()})
 }
-fn package(
+pub(super) fn package(
     packet: &Packet,
     bound: &film_render::Bound,
     files: &BTreeMap<String, Vec<u8>>,

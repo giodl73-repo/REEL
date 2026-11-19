@@ -257,30 +257,37 @@ fn launch(request: &Request, name: &str) -> Result<()> {
         return Err(error(ErrorKind::Budget, "film-process-request-bytes"));
     }
     let path = request.workspace.join(name);
-    // An existing launch is never reissued. Its exact request and scratch survive.
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-        .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
+    // Render/effect launches never repeat. A complete read-only Verify may rerun
+    // the exact original request; it cannot replace its prior outcome bytes.
+    match OpenOptions::new().write(true).create_new(true).open(&path) {
+        Ok(mut file) => file
+            .write_all(&raw)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| {
                 error(
                     ErrorKind::NeedsRecovery,
-                    "film-process-original-launch-exists",
+                    "film-process-request-write-preserve",
                 )
-            } else {
-                io_error(e)
+            })?,
+        Err(e)
+            if e.kind() == std::io::ErrorKind::AlreadyExists
+                && request.action == Action::Verify =>
+        {
+            if crate::staging::read_held(&path, reel_workflow::MAX_CONTROL_BYTES as u64)?.0 != raw {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "film-verification-original-request",
+                ));
             }
-        })?;
-    file.write_all(&raw)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| {
-            error(
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(error(
                 ErrorKind::NeedsRecovery,
-                "film-process-request-write-preserve",
-            )
-        })?;
-    drop(file);
+                "film-process-original-launch-exists",
+            ));
+        }
+        Err(e) => return Err(io_error(e)),
+    }
     let (_, _request_guard) =
         crate::staging::read_held(&path, reel_workflow::MAX_CONTROL_BYTES as u64)?;
     let args = vec![
@@ -428,15 +435,37 @@ pub(crate) fn verify(
     limits: &Limits,
 ) -> Result<()> {
     let directory = directory(workspace)?;
-    if fs::read_dir(directory.path())
+    let entries = fs::read_dir(directory.path())
         .map_err(io_error)?
-        .next()
-        .is_some()
-    {
-        return Err(error(
-            ErrorKind::NeedsRecovery,
-            "film-verification-original-workspace-exists",
-        ));
+        .map(|e| e.map(|e| e.file_name()).map_err(io_error))
+        .collect::<Result<Vec<_>>>()?;
+    if !entries.is_empty() {
+        if entries.len() != 2
+            || entries
+                .iter()
+                .any(|name| name != "verify-request.json" && name != "verify-result.json")
+        {
+            return Err(error(
+                ErrorKind::NeedsRecovery,
+                "film-verification-original-workspace-exists",
+            ));
+        }
+        let (raw, _held) =
+            crate::staging::read_held(&directory.path().join("verify-result.json"), 65536)?;
+        let outcome: Outcome = reel_workflow::decode(&raw)?;
+        let (original, _request) = crate::staging::read_held(
+            &directory.path().join("verify-request.json"),
+            reel_workflow::MAX_CONTROL_BYTES as u64,
+        )?;
+        if outcome.schema != "reel.workflow-film-process-outcome.v1"
+            || outcome.error.is_some()
+            || outcome.request_sha256 != reel_workflow::digest(&original)
+        {
+            return Err(error(
+                ErrorKind::NeedsRecovery,
+                "film-verification-original-outcome-required",
+            ));
+        }
     }
     let mut request = request(
         inputs,
@@ -573,21 +602,35 @@ pub fn child(path: &Path, pin: &str) -> Result<()> {
         Action::Check => "check-result.json",
         Action::Verify => "verify-result.json",
     };
-    let mut file = OpenOptions::new()
+    let raw = serde_json::to_vec(&outcome)
+        .map_err(|_| error(ErrorKind::Invalid, "film-process-outcome-json"))?;
+    match OpenOptions::new()
         .write(true)
         .create_new(true)
         .open(_directory.path().join(outcome_name))
-        .map_err(io_error)?;
-    let raw = serde_json::to_vec(&outcome)
-        .map_err(|_| error(ErrorKind::Invalid, "film-process-outcome-json"))?;
-    file.write_all(&raw)
-        .and_then(|_| file.sync_all())
-        .map_err(|_| {
-            error(
-                ErrorKind::NeedsRecovery,
-                "film-process-outcome-write-preserve",
-            )
-        })?;
+    {
+        Ok(mut file) => file
+            .write_all(&raw)
+            .and_then(|_| file.sync_all())
+            .map_err(|_| {
+                error(
+                    ErrorKind::NeedsRecovery,
+                    "film-process-outcome-write-preserve",
+                )
+            })?,
+        Err(e)
+            if e.kind() == std::io::ErrorKind::AlreadyExists
+                && request.action == Action::Verify =>
+        {
+            if crate::staging::read_held(&_directory.path().join(outcome_name), 65536)?.0 != raw {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "film-verification-original-outcome",
+                ));
+            }
+        }
+        Err(e) => return Err(io_error(e)),
+    }
     result
 }
 fn perform(request: &Request) -> Result<()> {

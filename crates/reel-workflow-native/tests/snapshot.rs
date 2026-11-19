@@ -34,6 +34,9 @@ mod film_process;
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
 #[cfg(all(windows, feature = "film"))]
+#[path = "support/movie_native.rs"]
+mod movie_native;
+#[cfg(all(windows, feature = "film"))]
 #[path = "support/movie_verify.rs"]
 mod movie_verify;
 #[cfg(windows)]
@@ -426,6 +429,7 @@ fn existing_native_store_reads_exact_committed_input_with_guards_and_no_publicat
     let annex: Tool = serde_json::from_value(value["annex"].clone()).unwrap();
     let fixture = Fixture::with_object(object);
     let profile = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         source,
         annex,
@@ -817,6 +821,7 @@ fn external_response_native_ingress_reopens_and_replays_across_cli_restart() {
     let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         annex,
         source: native,
@@ -1206,6 +1211,7 @@ fn retained_native_acknowledgement_replays_and_survives_source_advance_but_not_l
     let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         annex,
         source: native,
@@ -1841,6 +1847,7 @@ fn native_handoff_lifecycle(close_slot: bool) {
     }
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         annex,
         source: native,
@@ -2254,6 +2261,7 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
     let mut case = AdmissionCase::with_extra_slot(&fixture, native.store.clone(), None, true);
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         annex,
         source: native,
@@ -3482,6 +3490,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
     case.temp.disable_cleanup(automatic);
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         annex,
         source: native,
@@ -4793,6 +4802,7 @@ impl AdmissionCase {
             bytes: 23,
         };
         let source = reel_workflow_native::NativeProfile {
+            movie_verifier: None,
             snapshot: fixture.profile.clone(),
             annex: annex.clone(),
             source: tig_git::annex::workflow::reader::Profile {
@@ -5304,6 +5314,7 @@ fn accepted_claims_native_bytes_and_pinned_workspace_stage_together_across_cli_r
     let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
     let control = case.source.source.pool.control.clone();
     case.source = NativeProfile {
+        movie_verifier: None,
         snapshot: fixture.profile.clone(),
         annex,
         source: native,

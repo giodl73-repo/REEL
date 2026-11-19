@@ -102,6 +102,17 @@ pub struct NativeProfile {
     pub annex: Tool,
     /// Qualified SDK scope: exactly one explicitly declared native store.
     pub source: reader::Profile,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub movie_verifier: Option<MovieVerifier>,
+}
+/// Explicit read-only verification installation and existing scratch admission.
+/// These machine locators never retarget a producer's frozen worker ticket.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MovieVerifier {
+    pub runtime: Tool,
+    pub auxiliary_programs: BTreeMap<String, Tool>,
+    pub staging: staging::Profile,
 }
 fn error(kind: ErrorKind, code: &str) -> Error {
     Error {

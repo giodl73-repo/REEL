@@ -24,6 +24,9 @@ const MAX_ENTRIES: usize = 2048;
 const ATTEMPTS: usize = 4;
 #[path = "comic_export.rs"]
 pub mod comic_export;
+#[cfg(all(windows, feature = "film"))]
+#[path = "movie_verification.rs"]
+pub(crate) mod movie_verification;
 #[path = "provider.rs"]
 pub mod provider;
 #[path = "worker.rs"]
@@ -430,17 +433,7 @@ fn prepare_owned(
     coordination: &Path,
     plan: &Plan,
 ) -> Result<(Profile, Reservation, Owner)> {
-    let parent = open_workspace_directory(&profile.parent).map_err(scoped_error)?;
-    let mut profile = profile.clone();
-    if let Some(minimum) = profile
-        .capacity_policy
-        .tier_minimum_free_bytes
-        .get(&profile.parent)
-    {
-        profile.capacity_policy.minimum_free_bytes =
-            profile.capacity_policy.minimum_free_bytes.max(*minimum);
-    }
-    profile.parent = parent.path().into();
+    let (profile, parent) = normalize_profile(profile)?;
     let config = configuration(&profile, coordination)?;
     checked_budget(&profile, plan)?;
     if fs::symlink_metadata(
@@ -474,6 +467,20 @@ fn prepare_owned(
     });
     reservation.retain_for_recovery();
     result
+}
+fn normalize_profile(profile: &Profile) -> Result<(Profile, WorkspaceDirectory)> {
+    let parent = open_workspace_directory(&profile.parent).map_err(scoped_error)?;
+    let mut profile = profile.clone();
+    if let Some(minimum) = profile
+        .capacity_policy
+        .tier_minimum_free_bytes
+        .get(&profile.parent)
+    {
+        profile.capacity_policy.minimum_free_bytes =
+            profile.capacity_policy.minimum_free_bytes.max(*minimum);
+    }
+    profile.parent = parent.path().into();
+    Ok((profile, parent))
 }
 struct View {
     _parent: WorkspaceDirectory,

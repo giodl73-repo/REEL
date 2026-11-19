@@ -101,16 +101,27 @@ pub(crate) fn generate(packet: &Packet, inputs: NativeInputs) -> Result<Generate
 }
 pub(crate) fn check_returned(
     packet: &Packet,
+    source: &NativeProfile,
     inputs: NativeInputs,
     result: &ReturnedResult,
     root: &Path,
     paths: &BTreeMap<String, String>,
 ) -> Result<(Vec<File>, Vec<reel_assets::jobs::WorkspaceDirectory>)> {
     match capability(packet)? {
-        ToolCapability::FilmRender => Err(crate::error(
-            ErrorKind::Unsupported,
-            "film-independent-return-check-required",
-        )),
+        ToolCapability::FilmRender => {
+            #[cfg(all(windows, feature = "film"))]
+            {
+                crate::movie::check_returned_owned(packet, source, inputs, result, root, paths)
+            }
+            #[cfg(not(all(windows, feature = "film")))]
+            {
+                let _ = source;
+                Err(crate::error(
+                    ErrorKind::Unsupported,
+                    "film-feature-required",
+                ))
+            }
+        }
         ToolCapability::ComicRender => {
             crate::comic::check_returned(packet, inputs, result, root, paths)
         }
@@ -122,12 +133,16 @@ pub(crate) fn check_returned(
     }
 }
 pub(crate) enum Proof {
+    #[cfg(all(windows, feature = "film"))]
+    Movie(Box<crate::movie::Proof>),
     Comic(Box<crate::comic::Proof>),
     Issue(Box<crate::issue::Proof>),
 }
 impl Proof {
     pub(crate) fn files(&self) -> Option<&BTreeMap<String, Vec<u8>>> {
         match self {
+            #[cfg(all(windows, feature = "film"))]
+            Self::Movie(p) => p.files.as_ref(),
             Self::Comic(p) => p.files.as_ref(),
             Self::Issue(p) => p.files.as_ref(),
         }
@@ -160,10 +175,20 @@ fn native(
         return Ok(None);
     }
     match capability(packet)? {
-        ToolCapability::FilmRender => Err(crate::error(
-            ErrorKind::Unsupported,
-            "film-native-media-proof-required",
-        )),
+        ToolCapability::FilmRender => {
+            #[cfg(all(windows, feature = "film"))]
+            {
+                crate::movie::native_proof(packet, source, result, capture, permit)
+                    .map(|p| Some(Proof::Movie(Box::new(p))))
+            }
+            #[cfg(not(all(windows, feature = "film")))]
+            {
+                Err(crate::error(
+                    ErrorKind::Unsupported,
+                    "film-feature-required",
+                ))
+            }
+        }
         ToolCapability::ComicRender => if capture {
             crate::comic::capture_native(packet, source, result, permit)
         } else {

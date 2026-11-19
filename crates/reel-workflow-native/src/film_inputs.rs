@@ -34,6 +34,7 @@ pub struct Inputs {
     _cache: ReadCache,
     files: BTreeMap<String, (tig_core::Object, usize)>,
     held: Vec<VerifiedRead>,
+    _by_object: BTreeMap<tig_core::Object, usize>,
     programs: Programs,
     _tools: Vec<File>,
     _tool_directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
@@ -194,6 +195,7 @@ impl Inputs {
             _cache: cache,
             files,
             held,
+            _by_object: by_object,
             programs,
             _tools: tools,
             _tool_directories: directories,
@@ -204,6 +206,90 @@ impl Inputs {
     }
     pub fn objects(&self) -> usize {
         self.held.len()
+    }
+    /// Exact response pins, under the caller's original candidate/retained
+    /// fences. Reuses the same qualified reader/cache and already held gates.
+    #[cfg(windows)]
+    pub(crate) fn returned_paths(
+        &mut self,
+        artifacts: &BTreeMap<String, reel_workflow::Artifact>,
+    ) -> Result<BTreeMap<String, FileRef>> {
+        if artifacts.len() > 128
+            || artifacts
+                .values()
+                .try_fold(0u64, |n, a| n.checked_add(a.bytes))
+                .is_none_or(|n| n > 128 * 1024 * 1024)
+        {
+            return Err(error(ErrorKind::Budget, "film-native-response-bound"));
+        }
+        let runner = Runner::new(self._native.source.pool.clone()).map_err(io_error)?;
+        let mut paths = BTreeMap::new();
+        for (name, artifact) in artifacts {
+            let object = tig_core::Object {
+                sha256: tig_core::Digest::parse(&artifact.sha256)
+                    .map_err(|_| error(ErrorKind::Invalid, "film-native-response-pin"))?,
+                bytes: artifact.bytes,
+            };
+            let index = if let Some(index) = self._by_object.get(&object) {
+                *index
+            } else {
+                if self._native.captured(&object).is_none() {
+                    self._native.held.push(
+                        tig_git::annex::workflow::reader::open(&self._native.source, &object)
+                            .map_err(io_error)?,
+                    );
+                }
+                let key = Key::from_object(&object);
+                let location = runner
+                    .run(Command::ContentLocation(&key))
+                    .map_err(io_error)?;
+                if !location.success {
+                    return Err(error(
+                        ErrorKind::NeedsRecovery,
+                        "film-native-response-location",
+                    ));
+                }
+                if location.stdout.len() > 4096 {
+                    return Err(error(
+                        ErrorKind::Budget,
+                        "film-native-response-location-bytes",
+                    ));
+                }
+                let suffix = std::str::from_utf8(&location.stdout)
+                    .map_err(|_| {
+                        error(
+                            ErrorKind::Integrity,
+                            "film-native-response-location-encoding",
+                        )
+                    })?
+                    .trim_end_matches(['\r', '\n'])
+                    .replace('\\', "/");
+                let suffix = ProviderPath::parse(suffix.strip_prefix("./").unwrap_or(&suffix))
+                    .map_err(|_| {
+                        error(ErrorKind::Integrity, "film-native-response-location-scope")
+                    })?;
+                let file = self
+                    ._cache
+                    .open_provider_file(&self._native.source.pool.repository, &suffix, &object)
+                    .map_err(path_error)?;
+                let index = self.held.len();
+                self.held.push(file);
+                self._by_object.insert(object.clone(), index);
+                index
+            };
+            let path = self.held[index]
+                .with_path(Path::to_path_buf)
+                .map_err(path_error)?;
+            paths.insert(
+                name.clone(),
+                FileRef {
+                    path,
+                    sha256: artifact.sha256.clone(),
+                    bytes: artifact.bytes,
+                },
+            );
+        }
+        Ok(paths)
     }
     /// Private child-process locators. The caller must keep this provider alive
     /// until every child exits; these paths do not carry independent authority.
