@@ -33,13 +33,26 @@ does not rerender or reapprove the original comic. Source/output byte gates drop
 before managed retention effects. Existing 16-actor, 128-path/input and 64 MiB
 snapshot/upstream limits remain admission limits; this adds no cache or allocator.
 
-Qualification is pending. The ignored existing-pool fixture explicitly closes
-the original retained comic slot, reuses it for automatic review-control dispatch
-and completion/replay, closes that slot, and independently admits/stages a
-structured review from retained control and reading-image dependencies. It leaves
-the review Waiting for intelligence. Original close tickets, work identities,
-activation generations, profiles, journals, reservations and scratch are kept.
+Qualification passed in 884.54 seconds at source `0331d3b`. The existing-pool
+fixture explicitly closes the original retained comic slot, reuses it for automatic
+review-control dispatch and completion/replay, closes that slot, and independently
+admits/stages a structured review from retained control and reading dependencies.
+The review remains Waiting for intelligence at `.tmp1KAuie/review`; its protected
+prompt batch is `dispatch/ready.json`. The original `.tmpgipRl8` producer and the
+derived-control source generations are closed. The review owns the reused slot.
+Original close tickets, work identities, activation generations, profiles,
+journals, reservations and scratch are kept. No production commit changes.
 If interrupted, reconcile those original controls rather than restart the fixture.
+
+All 83 workflow tests, 57 default native tests, the 247 SDK source pins and strict
+Clippy for workflow/native with and without `film` pass. Formatting and
+`git diff --check` pass. All 1,882 archived source files match. The fixture uses a
+32 MiB Rust test-thread stack and the existing bounded-stack native CLI. Exact
+tool/source, control and log pins are recorded by
+`F:/src/tig-dev-temp/reel-derived-comic-review-20261119-v1/qualified-tools.json`
+(SHA256 `1290904b7aa90b2215e85e3cad0c7648bac64a05c66745e7eea572358647ecbf`).
+The measured time includes repeated complete native parent/child proof; it is a
+correctness qualification, not a large-issue throughput claim.
 
 Producer-applied editor, comics editor and rights/provenance review preserves
 source wording, language/version isolation and full contextual review. Technical

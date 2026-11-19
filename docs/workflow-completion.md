@@ -176,6 +176,16 @@ tests, 247 SDK pins and strict Clippy pass. Exported controls still need explici
 admission/retention before use by another native task. Complete issue assembly
 review export, structured native report ingestion, tracker delivery, repair
 execution and evidenced closure remain open.
+The [derived comic review producer](handoff/2026-11-19-derived-comic-review.md)
+now connects exact retained ComicRender lineage to owned production, retention
+and completion of review copy/source/request controls. Its 884.54-second fixture
+closes/reuses both predecessor generations, then independently admits and stages
+a Waiting structured review using retained outputs without a new Git commit or
+manual control-record import. Replay leaves claims unchanged. All 83 workflow
+tests, 57 default native tests, 247 SDK pins and strict Clippy pass. This qualifies
+the bounded single-page comic lineage/staging path; film and complete issue
+lineage, composite-review return/completion, providers, larger-issue throughput,
+issue effects, repairs and evidenced closure remain open.
 The [protected structured review operation](handoff/2026-11-19-native-structured-review.md)
 now explicitly pins the reviewed production commit separately from the consumer
 admission snapshot. It validates request/copy metadata before dispatch and
