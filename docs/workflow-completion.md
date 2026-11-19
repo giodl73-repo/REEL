@@ -17,7 +17,7 @@ checked again before closing the objective.
 | Film production | Existing root producers; [deterministic film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) connects exact selected recordings, authored semantic triggers and candidate graph/pointer generation to owned native dispatch | Native scene-control retention/replay now passes. Connect actual audiovisual rendering and full film/review derivatives; controls alone are not a rendered film. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
-| Review copies with stable cel IDs | Existing root review/asset authority surfaces described in the orchestration plan | Connect generated review copies and exact frame/sample locations to findings, fixes and affected consumer invalidation. |
+| Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md) burns compiled cel/shot IDs into review MP4s, with an exact selected font and retained source/frame/sample map; synthetic render, master parity, borrowed inputs/scattered outputs and tamper rejection pass | Translate workflow film controls into the renderer, qualify the complete native movie worker, then connect findings, fixes and affected-consumer invalidation. |
 | Packaging, review, issue filing and fixes | Existing packaging/review checks; `ReviewFinding` task type; project/root role checklists | Machine-readable findings, issue dedup/routing and authorized issue adapter, scoped repairs, contextual review, closure evidence and dependency invalidation. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
 | Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan; owned exact-runtime comic dispatch and composite art dependency replay; bounded two-part retained issue assembly/history/export/edit test passes | Automatic derived controls, complete issue scheduling and larger/project qualification. |
@@ -79,8 +79,8 @@ candidate graph/pointer/event/alignment controls and a sample-bound review map.
 Its existing-pool fixture passes automatic staging, all five retained outputs,
 native deterministic replay and unchanged claims on redispatch. ES/EN component
 tests use different trigger words, cut samples and cue lengths. No movie is
-rendered by this capability; full audiovisual production and burned-in review
-IDs remain open.
+rendered by this capability. The root renderer now has a qualified review-ID
+overlay; full audiovisual workflow integration remains open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
