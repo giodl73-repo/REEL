@@ -422,6 +422,62 @@ pub fn recover(
     launch(&check, "check-request.json")?;
     Ok(rendered)
 }
+/// Adopt only a completed original render/response under identical frozen
+/// locators, tools and bounds. Missing/failed outcomes and partial staging stop.
+pub(crate) fn adopt_declared(
+    inputs: &Inputs,
+    job: &FileRef,
+    production: &FileRef,
+    workspace: &Path,
+    runtime: &Tool,
+    limits: &Limits,
+    expected_outputs: BTreeSet<String>,
+) -> Result<Rendered> {
+    let directory = directory(workspace)?;
+    let mut expected = request(
+        inputs,
+        job,
+        production,
+        directory.path(),
+        limits,
+        runtime,
+        Action::Render,
+    )?;
+    expected.expected_outputs = Some(expected_outputs);
+    let raw = serde_json::to_vec(&expected)
+        .map_err(|_| error(ErrorKind::Invalid, "film-process-request-json"))?;
+    let (actual, _request) = crate::staging::read_held(
+        &directory.path().join("render-request.json"),
+        reel_workflow::MAX_CONTROL_BYTES as u64,
+    )
+    .map_err(|_| {
+        error(
+            ErrorKind::NeedsRecovery,
+            "movie-original-render-request-required",
+        )
+    })?;
+    let (outcome, _outcome) =
+        crate::staging::read_held(&directory.path().join("render-result.json"), 65536).map_err(
+            |_| {
+                error(
+                    ErrorKind::NeedsRecovery,
+                    "movie-original-render-outcome-required",
+                )
+            },
+        )?;
+    let outcome: Outcome = reel_workflow::decode(&outcome)?;
+    if raw != actual
+        || outcome.schema != "reel.workflow-film-process-outcome.v1"
+        || outcome.request_sha256 != reel_workflow::digest(&actual)
+        || outcome.error.is_some()
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "movie-original-completed-render",
+        ));
+    }
+    collect(directory.path(), limits)
+}
 /// Independent check over caller-held exact output files; no rendered movie is
 /// produced and no original worker directory is required. The caller admits
 /// this separate empty scratch workspace and retains every supplied file guard.

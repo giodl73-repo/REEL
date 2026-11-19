@@ -36,10 +36,35 @@ fn reference(path: &str, artifact: &Artifact) -> FileRef {
 /// independent returned/native verification and retained recovery are connected.
 pub fn generate(
     packet: &Packet,
+    native: NativeInputs,
+    programs: &BTreeMap<String, Tool>,
+    runtime: &Tool,
+    workspace: &Path,
+) -> Result<Generated> {
+    produce(packet, native, programs, runtime, workspace, false)
+}
+pub(crate) fn generate_or_adopt(
+    packet: &Packet,
+    native: NativeInputs,
+    programs: &BTreeMap<String, Tool>,
+    runtime: &Tool,
+    workspace: &Path,
+) -> Result<Generated> {
+    let _namespace = reel_assets::jobs::open_workspace_directory(workspace)
+        .map_err(|_| error(ErrorKind::Denied, "movie-owned-packet-namespace"))?;
+    let existing = std::fs::read_dir(workspace)
+        .map_err(crate::io_error)?
+        .next()
+        .is_some();
+    produce(packet, native, programs, runtime, workspace, existing)
+}
+fn produce(
+    packet: &Packet,
     mut native: NativeInputs,
     programs: &BTreeMap<String, Tool>,
     runtime: &Tool,
     workspace: &Path,
+    adopt: bool,
 ) -> Result<Generated> {
     let bound = film_render::bind(packet, &mut native)?;
     crate::worker::validate_programs(packet, programs)?;
@@ -76,15 +101,46 @@ pub fn generate(
         .filter(|name| *name != "receipt.json")
         .map(str::to_owned)
         .collect();
-    let rendered = film_process::render_declared(
-        &inputs,
-        &reference(&bound.request().job_path, bound.job()),
-        &reference(&bound.request().production_path, bound.production()),
-        workspace,
-        runtime,
-        &bound.request().limits,
-        Some(expected_outputs),
-    )?;
+    if adopt {
+        for entry in std::fs::read_dir(workspace).map_err(crate::io_error)? {
+            let name = entry.map_err(crate::io_error)?.file_name();
+            if ![
+                "delivery",
+                "render-request.json",
+                "render-result.json",
+                "receipt.json",
+            ]
+            .iter()
+            .any(|allowed| name == *allowed)
+            {
+                return Err(error(
+                    ErrorKind::NeedsRecovery,
+                    "movie-original-packet-has-foreign-entry",
+                ));
+            }
+        }
+    }
+    let rendered = if adopt {
+        film_process::adopt_declared(
+            &inputs,
+            &reference(&bound.request().job_path, bound.job()),
+            &reference(&bound.request().production_path, bound.production()),
+            workspace,
+            runtime,
+            &bound.request().limits,
+            expected_outputs,
+        )?
+    } else {
+        film_process::render_declared(
+            &inputs,
+            &reference(&bound.request().job_path, bound.job()),
+            &reference(&bound.request().production_path, bound.production()),
+            workspace,
+            runtime,
+            &bound.request().limits,
+            Some(expected_outputs),
+        )?
+    };
     let mut files: BTreeMap<_, _> = rendered
         .files
         .iter()
@@ -102,6 +158,16 @@ pub fn generate(
     let receipt = film_render::capture_outputs(packet, &bound, &files)?;
     let receipt_raw = serde_json::to_vec(&receipt)
         .map_err(|_| error(ErrorKind::Invalid, "movie-receipt-json"))?;
+    if adopt && workspace.join("receipt.json").exists() {
+        let (old, held) = crate::staging::read_held(
+            &workspace.join("receipt.json"),
+            reel_workflow::MAX_CONTROL_BYTES as u64,
+        )?;
+        if old != receipt_raw {
+            return Err(error(ErrorKind::Integrity, "movie-original-worker-receipt"));
+        }
+        controls.push(held);
+    }
     files
         .values()
         .try_fold(receipt_raw.len() as u64, |n, raw| {

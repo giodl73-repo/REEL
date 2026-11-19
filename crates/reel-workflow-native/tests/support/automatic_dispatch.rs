@@ -40,7 +40,16 @@ pub(super) fn run_comic(
         staging::Profile {
             schema: "reel.workflow-staging.v1".into(),
             parent,
-            maximum_bytes: 64 * 1024 * 1024,
+            maximum_bytes: if packet
+                .task
+                .tool
+                .as_ref()
+                .is_some_and(|t| t.capability == ToolCapability::FilmRender)
+            {
+                256 * 1024 * 1024
+            } else {
+                64 * 1024 * 1024
+            },
             capacity_policy: reel_assets::admission::Policy {
                 minimum_free_bytes: 65536,
                 minimum_free_basis_points: 0,

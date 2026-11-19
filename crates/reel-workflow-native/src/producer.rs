@@ -46,12 +46,18 @@ pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> R
     }
 }
 pub(crate) enum Generated {
+    #[cfg(all(windows, feature = "film"))]
+    Movie(Box<crate::movie::Generated>),
     Comic(Box<crate::comic::Generated>),
     Issue(Box<crate::issue::Generated>),
 }
 impl Generated {
     pub(crate) fn paths(&self) -> Result<BTreeMap<String, String>> {
-        let paths = crate::output_layout::identity(self.outputs());
+        let paths = match self {
+            #[cfg(all(windows, feature = "film"))]
+            Self::Movie(g) => g.paths.clone(),
+            _ => crate::output_layout::identity(self.outputs()),
+        };
         let raw = self
             .files()
             .get("receipt.json")
@@ -72,23 +78,65 @@ impl Generated {
     }
     pub(crate) fn files(&self) -> &BTreeMap<String, Vec<u8>> {
         match self {
+            #[cfg(all(windows, feature = "film"))]
+            Self::Movie(g) => &g.files,
             Self::Comic(g) => &g.files,
             Self::Issue(g) => &g.files,
         }
     }
     pub(crate) fn outputs(&self) -> &ArtifactSet {
         match self {
+            #[cfg(all(windows, feature = "film"))]
+            Self::Movie(g) => &g.outputs,
             Self::Comic(g) => &g.receipt.outputs,
             Self::Issue(g) => &g.outputs,
         }
     }
 }
-pub(crate) fn generate(packet: &Packet, inputs: NativeInputs) -> Result<Generated> {
+pub(crate) fn reservation_budget(packet: &Packet, inputs: &mut impl InputReader) -> Result<u64> {
+    let output = output_budget(packet, inputs)?;
+    let scratch = if capability(packet)? == ToolCapability::FilmRender {
+        reel_workflow::film_render::bind(packet, inputs)?
+            .request()
+            .limits
+            .workspace_bytes
+    } else {
+        0
+    };
+    output
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(scratch))
+        .and_then(|n| n.checked_add(10 * reel_workflow::MAX_CONTROL_BYTES as u64))
+        .ok_or_else(|| crate::error(ErrorKind::Budget, "worker-reservation-overflow"))
+}
+pub(crate) fn generate(
+    packet: &Packet,
+    inputs: NativeInputs,
+    runtime: &crate::Tool,
+    programs: &BTreeMap<String, crate::Tool>,
+    workspace: &Path,
+) -> Result<Generated> {
     match capability(packet)? {
-        ToolCapability::FilmRender => Err(crate::error(
-            ErrorKind::Unsupported,
-            "film-owned-dispatch-not-integrated",
-        )),
+        ToolCapability::FilmRender => {
+            #[cfg(all(windows, feature = "film"))]
+            {
+                match std::fs::create_dir(workspace) {
+                    Ok(()) => (),
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                    Err(e) => return Err(crate::io_error(e)),
+                }
+                crate::movie::generate_or_adopt(packet, inputs, programs, runtime, workspace)
+                    .map(|g| Generated::Movie(Box::new(g)))
+            }
+            #[cfg(not(all(windows, feature = "film")))]
+            {
+                let _ = (runtime, programs, workspace);
+                Err(crate::error(
+                    ErrorKind::Unsupported,
+                    "film-feature-required",
+                ))
+            }
+        }
         ToolCapability::ComicRender => {
             crate::comic::generate(packet, inputs).map(|g| Generated::Comic(Box::new(g)))
         }

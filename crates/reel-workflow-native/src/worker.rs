@@ -92,13 +92,14 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
         .as_ref()
         .ok_or_else(|| error(ErrorKind::Unsupported, "worker-deterministic-tool-required"))?;
     if packet.task.operation != reel_workflow::Operation::DeterministicTool
-        || !matches!(
+        || !(matches!(
             tool.capability,
             ToolCapability::ComicRender
                 | ToolCapability::ComicIssueAssembly
                 | ToolCapability::ComicIssueControl
                 | ToolCapability::FilmSceneControl
-        )
+        ) || (cfg!(all(windows, feature = "film"))
+            && tool.capability == ToolCapability::FilmRender))
         || tool.executable.sha256 != selected.profile.runtime.sha256
         || tool.executable.bytes != selected.profile.runtime.bytes
     {
@@ -170,6 +171,29 @@ pub fn prepare_with_programs(
     context(&selected)?;
     let _runtime = handoff::runtime(&selected.profile.runtime)?;
     let _programs = hold_programs(&selected.task.ticket.packet, programs)?;
+    if selected
+        .task
+        .ticket
+        .packet
+        .task
+        .tool
+        .as_ref()
+        .is_some_and(|t| t.capability == ToolCapability::FilmRender)
+    {
+        let verifier = selected
+            .profile
+            .source
+            .movie_verifier
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Unsupported, "movie-verifier-profile-required"))?;
+        validate_programs(&selected.task.ticket.packet, &verifier.auxiliary_programs)?;
+        let _verifier = crate::hold_tool(&verifier.runtime)?;
+        check_parent(
+            &verifier.staging.parent,
+            &selected.profile.source,
+            &selected.profile.admission,
+        )?;
+    }
     if selected.observed.state != State::Waiting {
         return Err(error(
             ErrorKind::Conflict,
@@ -212,11 +236,7 @@ pub fn prepare_with_programs(
         &selected.profile.source,
         claims,
     )?;
-    let output_bytes = crate::producer::output_budget(&selected.task.ticket.packet, &mut inputs)?;
-    let required = output_bytes
-        .checked_mul(2)
-        .and_then(|n| n.checked_add(10 * reel_workflow::MAX_CONTROL_BYTES as u64))
-        .ok_or_else(|| error(ErrorKind::Budget, "worker-reservation-overflow"))?;
+    let required = crate::producer::reservation_budget(&selected.task.ticket.packet, &mut inputs)?;
     if required > profile.maximum_bytes {
         return Err(error(
             ErrorKind::Budget,
@@ -449,7 +469,41 @@ fn execute(
         )?
         .reopen(&ticket.admission)?;
         let native = NativeInputs::from_claims(&ticket.packet, &selected.profile.source, claims)?;
-        let generated = crate::producer::generate(&ticket.packet, native)?;
+        if tool.capability == ToolCapability::FilmRender {
+            for entry in fs::read_dir(view.root.path()).map_err(io_error)? {
+                let entry = entry.map_err(io_error)?;
+                let name = entry.file_name();
+                let directory = name == "packet" || name == "parts";
+                if ![
+                    "intent.json",
+                    "packet",
+                    "parts",
+                    "invocation.json",
+                    "result.json",
+                    "returns.json",
+                    "result-manifest.json",
+                ]
+                .iter()
+                .any(|allowed| name == *allowed)
+                    || !ordinary(
+                        &fs::symlink_metadata(entry.path()).map_err(io_error)?,
+                        directory,
+                    )
+                {
+                    return Err(error(
+                        ErrorKind::NeedsRecovery,
+                        "movie-original-worker-foreign-entry",
+                    ));
+                }
+            }
+        }
+        let generated = crate::producer::generate(
+            &ticket.packet,
+            native,
+            &selected.profile.runtime,
+            &ticket.auxiliary_programs,
+            &view.root.path().join("packet"),
+        )?;
         let receipt_raw = generated
             .files()
             .get("receipt.json")

@@ -36,12 +36,17 @@ fn renderer_file_bridge_refuses_unadmitted_reader_before_program_or_payload_acce
 #[test]
 #[ignore = "Explicit existing native pool and previously qualified synthetic film files; protected path/renderer bridge only, no output publication"]
 fn admitted_native_inputs_render_review_ids_without_staging_or_path_fallback() {
-    run(false);
+    run(false, false);
 }
 #[test]
 #[ignore = "Explicit existing native pool and synthetic film files; task-bound movie candidate packet only, preserves original admission and owned capacity"]
 fn movie_task_binds_native_controls_programs_and_complete_candidate_outputs() {
-    run(true);
+    run(true, false);
+}
+#[test]
+#[ignore = "Explicit existing native pool and synthetic movie inputs; complete owned render/verify/retain/journal/replay, preserves roots"]
+fn owned_movie_dispatch_renders_retains_completes_and_replays_without_rerender() {
+    run(true, true);
 }
 #[test]
 #[ignore = "Explicit original admitted movie failure and unchanged pinned runtime; resumes original owned capacity, never creates another job"]
@@ -117,7 +122,7 @@ fn original_movie_metadata_binding_failure_resumes_existing_custody_and_capacity
             "output_retained":false,"task_completed":false,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
     }
 }
-fn run(movie: bool) {
+fn run(movie: bool, automatic: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -318,6 +323,28 @@ fn run(movie: bool) {
     };
     case.source.source.pool.control = control;
     let root = case.temp.path();
+    if automatic {
+        let parent = root.join("movie-checks");
+        fs::create_dir(&parent).unwrap();
+        case.source.movie_verifier = Some(reel_workflow_native::MovieVerifier {
+            runtime: runtime.as_ref().unwrap().clone(),
+            auxiliary_programs: BTreeMap::from([
+                ("ffmpeg".into(), programs.ffmpeg.clone()),
+                ("ffprobe".into(), programs.ffprobe.clone()),
+            ]),
+            staging: reel_workflow_native::staging::Profile {
+                schema: "reel.workflow-staging.v1".into(),
+                parent,
+                maximum_bytes: 256 * 1024 * 1024,
+                capacity_policy: reel_assets::admission::Policy {
+                    minimum_free_bytes: 100 * 1024 * 1024,
+                    minimum_free_basis_points: 0,
+                    max_object_bytes: 512 * 1024 * 1024,
+                    ..Default::default()
+                },
+            },
+        });
+    }
     let evidence = std::env::var_os("REEL_FILM_EVIDENCE_DIRECTORY").map(PathBuf::from);
     eprintln!(
         "Native renderer input root: {}; source: {}",
@@ -371,6 +398,64 @@ fn run(movie: bool) {
             },
         )
         .unwrap();
+    }
+    if automatic {
+        let runtime = runtime.as_ref().unwrap();
+        let profile = handoff_profile(&case, receipt.clone(), runtime.path.clone());
+        let profile_path = root.join("profile.json");
+        fs::write(&profile_path, serde_json::to_vec(&profile).unwrap()).unwrap();
+        let journal = root.join("journal");
+        let created = Command::new(&runtime.path)
+            .arg("create-handoff")
+            .arg(root.join("packet.json"))
+            .arg(&profile_path)
+            .arg(&journal)
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(
+            created.status.success(),
+            "{}",
+            String::from_utf8_lossy(&created.stdout)
+        );
+        let mut controls = Vec::new();
+        let result_path = root.join("result.json");
+        automatic_dispatch::run_comic(
+            &case,
+            &fixture.packet,
+            &profile,
+            &journal,
+            &profile_path,
+            &runtime.path,
+            &result_path,
+            &mut controls,
+            &BTreeMap::from([
+                ("ffmpeg".into(), programs.ffmpeg.clone()),
+                ("ffprobe".into(), programs.ffprobe.clone()),
+            ]),
+        );
+        let result: ReturnedResult =
+            serde_json::from_slice(&fs::read(&result_path).unwrap()).unwrap();
+        assert_eq!(result.artifacts.len(), 12);
+        let ticket: reel_workflow_native::worker::Ticket = serde_json::from_slice(
+            &fs::read(root.join("automatic-dispatch/worker-ticket.json")).unwrap(),
+        )
+        .unwrap();
+        let packet_root = ticket.directory().join("packet");
+        let delivery: scene_delivery::Receipt =
+            serde_json::from_slice(&fs::read(packet_root.join("delivery/receipt.json")).unwrap())
+                .unwrap();
+        assert_eq!(delivery.delivery_frames, 48);
+        assert_eq!(delivery.plan.review_ids[1].start_frame, 24);
+        if let Some(e) = evidence {
+            for (name, raw) in controls {
+                fs::write(e.join(name), raw).unwrap();
+            }
+            fs::write(e.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":ticket.directory(),
+                "task_key":fixture.packet.task_key,"frames":48,"cut_frame":24,"outputs":12,"automatic_dispatch":true,"output_retained":true,
+                "task_completed":true,"replay_without_rerender":true,"claims_unchanged_on_replay":true,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
+        }
+        return;
     }
     let before = fs::read(case.profile.index_root.join("claims.json")).unwrap();
     if let Some(runtime) = runtime {

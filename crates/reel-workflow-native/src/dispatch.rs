@@ -32,13 +32,13 @@ impl Config {
             return Err(error(ErrorKind::Invalid, "dispatch-operation-mode"));
         }
         if capability.is_some_and(|c| {
-            !matches!(
+            !(matches!(
                 c,
                 ToolCapability::ComicRender
                     | ToolCapability::ComicIssueAssembly
                     | ToolCapability::ComicIssueControl
                     | ToolCapability::FilmSceneControl
-            )
+            ) || (cfg!(all(windows, feature = "film")) && c == ToolCapability::FilmRender))
         }) {
             return Err(error(
                 ErrorKind::Unsupported,
