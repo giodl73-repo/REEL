@@ -30,7 +30,7 @@ impl Programs {
     }
 }
 pub struct Inputs {
-    streaming: Option<reel_workflow::film_render::Streaming>,
+    streaming: Option<reel_workflow::film_render::Bound>,
     _native: NativeInputs,
     _cache: ReadCache,
     files: BTreeMap<String, (tig_core::Object, usize)>,
@@ -87,11 +87,12 @@ impl Inputs {
             return Err(error(ErrorKind::Conflict, "film-streaming-bound-task"));
         }
         bound.request().validate()?;
-        let streaming = bound
-            .request()
-            .streaming
-            .clone()
-            .ok_or_else(|| error(ErrorKind::Unsupported, "film-streaming-intent-required"))?;
+        if bound.request().streaming.is_none() {
+            return Err(error(
+                ErrorKind::Unsupported,
+                "film-streaming-intent-required",
+            ));
+        }
         crate::worker::validate_programs(
             packet,
             &BTreeMap::from([
@@ -99,14 +100,20 @@ impl Inputs {
                 ("ffprobe".into(), programs.ffprobe.clone()),
             ]),
         )?;
-        Self::prepare_inner(packet, native, bound.aliases(), programs, Some(streaming))
+        Self::prepare_inner(
+            packet,
+            native,
+            bound.aliases(),
+            programs,
+            Some(bound.clone()),
+        )
     }
     fn prepare_inner(
         packet: &Packet,
         mut native: NativeInputs,
         aliases: &BTreeMap<String, String>,
         programs: Programs,
-        streaming: Option<reel_workflow::film_render::Streaming>,
+        streaming: Option<reel_workflow::film_render::Bound>,
     ) -> Result<Self> {
         reel_workflow::check_packet(packet)?;
         if native.snapshot.packet != *packet
@@ -142,6 +149,7 @@ impl Inputs {
             .ok_or_else(|| error(ErrorKind::Budget, "film-input-byte-overflow"))?;
         let (object_bytes, total_bytes, verify_millis) = streaming
             .as_ref()
+            .and_then(|b| b.request().streaming.as_ref())
             .map(|s| (s.input_object_bytes, s.input_bytes, s.verify_millis))
             .unwrap_or((512 * 1024 * 1024, 512 * 1024 * 1024, 30_000));
         if total > total_bytes
@@ -251,6 +259,14 @@ impl Inputs {
         self.programs.fingerprint()
     }
     pub fn streaming_bounds(&self) -> Option<&reel_workflow::film_render::Streaming> {
+        self.streaming
+            .as_ref()
+            .and_then(|b| b.request().streaming.as_ref())
+    }
+    pub(crate) fn streaming_limits(&self) -> Option<&reel_workflow::film_render::Limits> {
+        self.streaming.as_ref().map(|b| &b.request().limits)
+    }
+    pub(crate) fn streaming_intent(&self) -> Option<&reel_workflow::film_render::Bound> {
         self.streaming.as_ref()
     }
     pub fn objects(&self) -> usize {

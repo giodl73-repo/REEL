@@ -49,15 +49,21 @@ Tig provider cache; it adds no new cache engine or fallback. The original
 `Inputs::prepare` retains its 512 MiB/30-second policy. Neither port grants
 execution, workspace capacity, output custody, retention or completion.
 
-Current owned production, candidate checking, retained movie verification and
-standalone contained-process request construction explicitly refuse v2 with
+Current owned production, candidate checking and retained movie verification
+explicitly refuse v2 with
 `Unsupported/film-streaming-native-not-qualified`. This is intentional pending
-the next required ports: versioned snapshot/projection admission, contained
-process requests and input hashing, workspace/capacity profiles, response and
+the remaining required ports: versioned snapshot/projection admission,
+workspace/capacity profiles, response and
 historical output budgets, bounded composition, and real-size interruption/
 retained-owner qualification. Provider-cache verification time does not by
 itself bound every earlier native reopen or the complete job. The v2 input port
 has authority/refusal tests, not multi-GB native-read qualification.
+
+The subsequent [contained-process port](2026-11-19-streaming-film-process.md)
+carries the envelope into versioned child requests, distinct input/output hash
+allowances and file-backed render/recovery APIs. It keeps the full workflow
+gate above in place; it does not qualify projection, capacity, returns, history
+or complete episode execution.
 
 Four new workflow tests cover the E7 numeric/declared-output envelope, unchanged
 legacy serialization/behavior, omitted/downgraded envelopes, input/output budget

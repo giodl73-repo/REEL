@@ -19,6 +19,25 @@ pub struct Limits {
     pub raw_rgb_bytes: u64,
 }
 impl Limits {
+    pub fn validate_streaming(&self) -> Result<()> {
+        if !(1..=18_000).contains(&self.timeout_seconds)
+            || !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&self.memory_bytes)
+            || !(2..=32).contains(&self.processes)
+            || self.output_bytes == 0
+            || self.output_bytes > 16 * 1024 * 1024 * 1024
+            || self.workspace_bytes < self.output_bytes
+            || self.workspace_bytes > 64 * 1024 * 1024 * 1024
+            || self.frames == 0
+            || self.frames > 1_000_000
+            || self.samples == 0
+            || self.samples > 384_000 * 18_000u64
+            || self.raw_rgb_bytes == 0
+            || self.raw_rgb_bytes > 1024 * 1024 * 1024 * 1024
+        {
+            return fail(ErrorKind::Budget, "film-streaming-process-bounds");
+        }
+        Ok(())
+    }
     pub fn validate(&self) -> Result<()> {
         if !(1..=3600).contains(&self.timeout_seconds)
             || !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&self.memory_bytes)
@@ -81,24 +100,7 @@ impl Request {
             ("reel.workflow-film-render.v1", None) => self.limits.validate(),
             ("reel.workflow-film-render.v2", Some(streaming)) => {
                 streaming.validate()?;
-                let l = &self.limits;
-                if !(1..=18_000).contains(&l.timeout_seconds)
-                    || !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&l.memory_bytes)
-                    || !(2..=32).contains(&l.processes)
-                    || l.output_bytes == 0
-                    || l.output_bytes > 16 * 1024 * 1024 * 1024
-                    || l.workspace_bytes < l.output_bytes
-                    || l.workspace_bytes > 64 * 1024 * 1024 * 1024
-                    || l.frames == 0
-                    || l.frames > 1_000_000
-                    || l.samples == 0
-                    || l.samples > 384_000 * 18_000u64
-                    || l.raw_rgb_bytes == 0
-                    || l.raw_rgb_bytes > 1024 * 1024 * 1024 * 1024
-                {
-                    return fail(ErrorKind::Budget, "film-streaming-process-bounds");
-                }
-                Ok(())
+                self.limits.validate_streaming()
             }
             _ => fail(ErrorKind::Invalid, "film-render-version-envelope"),
         }

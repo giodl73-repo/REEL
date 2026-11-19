@@ -15,7 +15,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -41,6 +41,49 @@ struct Request {
     expected_outputs: Option<BTreeSet<String>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     outputs: BTreeMap<String, FileRef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    streaming: Option<reel_workflow::film_render::Streaming>,
+}
+impl Request {
+    fn validate(&self) -> Result<()> {
+        match (self.schema.as_str(), &self.streaming) {
+            ("reel.workflow-film-process.v1", None) => self.limits.validate()?,
+            ("reel.workflow-film-process.v2", Some(s)) => {
+                s.validate()?;
+                self.limits.validate_streaming()?;
+                // Aliases can name the same file. The parent checks the full
+                // logical input set; the child independently bounds unique pins.
+                let pins: BTreeSet<_> = self
+                    .inputs
+                    .values()
+                    .map(|f| (&f.path, &f.sha256, f.bytes))
+                    .collect();
+                let total = pins.iter().try_fold(0u64, |n, (_, _, bytes)| {
+                    if *bytes > s.input_object_bytes {
+                        return None;
+                    }
+                    n.checked_add(*bytes)
+                });
+                if total.is_none_or(|n| n > s.input_bytes)
+                    || self
+                        .outputs
+                        .values()
+                        .try_fold(0u64, |n, f| n.checked_add(f.bytes))
+                        .is_none_or(|n| n > self.limits.output_bytes)
+                {
+                    return Err(error(
+                        ErrorKind::Budget,
+                        "film-process-streaming-file-bounds",
+                    ));
+                }
+            }
+            _ => return Err(error(ErrorKind::Invalid, "film-process-version-envelope")),
+        }
+        if !self.workspace.is_absolute() || self.inputs.is_empty() || self.inputs.len() > 256 {
+            return Err(error(ErrorKind::Invalid, "film-process-request"));
+        }
+        Ok(())
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -49,21 +92,71 @@ struct Outcome {
     request_sha256: String,
     error: Option<reel_workflow::Error>,
 }
-struct Files<'a>(&'a Request, &'a BTreeMap<String, FileRef>);
-fn hash_file(path: &Path, bytes: u64) -> anyhow::Result<String> {
-    anyhow::ensure!(bytes <= 512 * 1024 * 1024, "process input byte bound");
+struct Files<'a> {
+    request: &'a Request,
+    files: &'a BTreeMap<String, FileRef>,
+    maximum_bytes: u64,
+}
+impl<'a> Files<'a> {
+    fn inputs(request: &'a Request) -> Self {
+        Self {
+            request,
+            files: &request.inputs,
+            maximum_bytes: request
+                .streaming
+                .as_ref()
+                .map(|s| s.input_object_bytes)
+                .unwrap_or(512 * 1024 * 1024),
+        }
+    }
+    fn outputs(request: &'a Request) -> Self {
+        Self {
+            request,
+            files: &request.outputs,
+            maximum_bytes: if request.streaming.is_some() {
+                request.limits.output_bytes
+            } else {
+                512 * 1024 * 1024
+            },
+        }
+    }
+}
+fn hash_file(
+    path: &Path,
+    bytes: u64,
+    maximum: u64,
+    deadline: Option<Duration>,
+) -> anyhow::Result<String> {
+    anyhow::ensure!(bytes <= maximum, "process input byte bound");
+    let started = Instant::now();
+    anyhow::ensure!(
+        deadline.is_none_or(|d| started.elapsed() < d),
+        "process input verification deadline"
+    );
     let mut file = File::open(path)?.take(bytes + 1);
     let mut hash = Sha256::new();
     let mut buffer = [0; 65536];
     let mut length = 0;
     loop {
-        let count = file.read(&mut buffer)?;
+        anyhow::ensure!(
+            deadline.is_none_or(|d| started.elapsed() < d),
+            "process input verification deadline"
+        );
+        let count = match file.read(&mut buffer) {
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(e.into()),
+        };
         if count == 0 {
             break;
         }
         length += count as u64;
         hash.update(&buffer[..count]);
     }
+    anyhow::ensure!(
+        deadline.is_none_or(|d| started.elapsed() < d),
+        "process input verification deadline"
+    );
     anyhow::ensure!(length == bytes, "process input length");
     Ok(hash.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
@@ -78,7 +171,7 @@ impl InputFiles for Files<'_> {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("reference encoding"))?;
         let physical = self
-            .1
+            .files
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("undeclared process input"))?;
         anyhow::ensure!(
@@ -88,15 +181,23 @@ impl InputFiles for Files<'_> {
         anyhow::ensure!(
             physical.path.is_absolute()
                 && fs::metadata(&physical.path)?.len() == physical.bytes
-                && hash_file(&physical.path, physical.bytes)? == physical.sha256,
+                && hash_file(
+                    &physical.path,
+                    physical.bytes,
+                    self.maximum_bytes,
+                    self.request
+                        .streaming
+                        .as_ref()
+                        .map(|s| Duration::from_millis(s.verify_millis))
+                )? == physical.sha256,
             "process input bytes"
         );
         Ok(physical.path.clone())
     }
     fn media_program(&self, program: MediaProgram) -> anyhow::Result<PathBuf> {
         Ok(match program {
-            MediaProgram::Ffmpeg => &self.0.programs.ffmpeg.path,
-            MediaProgram::Ffprobe => &self.0.programs.ffprobe.path,
+            MediaProgram::Ffmpeg => &self.request.programs.ffmpeg.path,
+            MediaProgram::Ffprobe => &self.request.programs.ffprobe.path,
         }
         .clone())
     }
@@ -156,6 +257,9 @@ fn workspace_budget(workspace: &Path, maximum: u64) -> Result<()> {
     }
     Ok(())
 }
+fn reference_matches(file: &FileRef, path: &str, asset: &reel_workflow::Artifact) -> bool {
+    file.path == Path::new(path) && file.sha256 == asset.sha256 && file.bytes == asset.bytes
+}
 fn request(
     inputs: &Inputs,
     job: &FileRef,
@@ -165,19 +269,41 @@ fn request(
     runtime: &Tool,
     action: Action,
 ) -> Result<Request> {
-    if inputs.streaming_bounds().is_some() {
+    if let Some(expected) = inputs.streaming_limits() {
+        if limits != expected {
+            return Err(error(
+                ErrorKind::Conflict,
+                "film-process-original-streaming-limits",
+            ));
+        }
+        limits.validate_streaming()?;
+    } else {
+        limits.validate()?;
+    }
+    if let Some(bound) = inputs.streaming_intent()
+        && (!reference_matches(job, &bound.request().job_path, bound.job())
+            || !reference_matches(
+                production,
+                &bound.request().production_path,
+                bound.production(),
+            ))
+    {
         return Err(error(
-            ErrorKind::Unsupported,
-            "film-streaming-native-not-qualified",
+            ErrorKind::Conflict,
+            "film-process-original-streaming-controls",
         ));
     }
-    limits.validate()?;
     inputs
         .validate_reference_name(job)
         .and_then(|_| inputs.validate_reference_name(production))
         .map_err(|_| error(ErrorKind::Conflict, "film-process-control-binding"))?;
-    Ok(Request {
-        schema: "reel.workflow-film-process.v1".into(),
+    let request = Request {
+        schema: if inputs.streaming_bounds().is_some() {
+            "reel.workflow-film-process.v2"
+        } else {
+            "reel.workflow-film-process.v1"
+        }
+        .into(),
         action,
         job: job.clone(),
         production: production.clone(),
@@ -188,7 +314,10 @@ fn request(
         limits: limits.clone(),
         expected_outputs: None,
         outputs: BTreeMap::new(),
-    })
+        streaming: inputs.streaming_bounds().cloned(),
+    };
+    request.validate()?;
+    Ok(request)
 }
 /// Exact response and guards remain live until the caller finishes importing.
 pub struct Rendered {
@@ -198,7 +327,7 @@ pub struct Rendered {
     _directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
 }
 /// File-backed collection for the owned worker; no complete media buffers.
-pub(crate) struct Captured {
+pub struct Captured {
     pub receipt: scene_delivery::Receipt,
     pub files: BTreeMap<String, FileRef>,
     _files: Vec<File>,
@@ -285,6 +414,7 @@ fn collect_files(workspace: &Path, limits: &Limits) -> Result<Captured> {
     })
 }
 fn launch(request: &Request, name: &str) -> Result<()> {
+    request.validate()?;
     let runtime = &request.runtime;
     let _runtime = crate::hold_tool(runtime)?;
     let _namespace = directory(
@@ -396,6 +526,30 @@ pub fn render(
 ) -> Result<Rendered> {
     render_declared(inputs, job, production, workspace, runtime, limits, None)
 }
+/// File-backed producer port over live exact inputs. Caller must own and admit
+/// the empty workspace/capacity. This grants no publication or task completion.
+pub fn render_files(
+    inputs: &Inputs,
+    job: &FileRef,
+    production: &FileRef,
+    workspace: &Path,
+    runtime: &Tool,
+    limits: &Limits,
+) -> Result<Captured> {
+    let expected = inputs.streaming_intent().map(|bound| {
+        bound
+            .request()
+            .output_paths
+            .values()
+            .filter_map(|p| p.strip_prefix("delivery/"))
+            .filter(|p| *p != "receipt.json")
+            .map(str::to_owned)
+            .collect()
+    });
+    render_declared_files(
+        inputs, job, production, workspace, runtime, limits, expected,
+    )
+}
 pub(crate) fn render_declared(
     inputs: &Inputs,
     job: &FileRef,
@@ -405,6 +559,9 @@ pub(crate) fn render_declared(
     limits: &Limits,
     expected_outputs: Option<BTreeSet<String>>,
 ) -> Result<Rendered> {
+    if inputs.streaming_bounds().is_some() {
+        return Err(error(ErrorKind::Unsupported, "film-streaming-buffered-api"));
+    }
     // Explicit buffered compatibility API. The owned worker uses the file API.
     let captured = render_declared_files(
         inputs,
@@ -472,6 +629,9 @@ pub fn recover(
     runtime: &Tool,
     limits: &Limits,
 ) -> Result<Rendered> {
+    if inputs.streaming_bounds().is_some() {
+        return Err(error(ErrorKind::Unsupported, "film-streaming-buffered-api"));
+    }
     let directory = directory(workspace)?;
     let original = request(
         inputs,
@@ -519,10 +679,14 @@ pub(crate) fn adopt_declared(
         Action::Render,
     )?;
     expected.expected_outputs = Some(expected_outputs);
+    adopt_request(directory.path(), &expected)
+}
+fn adopt_request(workspace: &Path, expected: &Request) -> Result<Captured> {
+    expected.validate()?;
     let raw = serde_json::to_vec(&expected)
         .map_err(|_| error(ErrorKind::Invalid, "film-process-request-json"))?;
     let (actual, _request) = crate::staging::read_held(
-        &directory.path().join("render-request.json"),
+        &workspace.join("render-request.json"),
         reel_workflow::MAX_CONTROL_BYTES as u64,
     )
     .map_err(|_| {
@@ -532,14 +696,12 @@ pub(crate) fn adopt_declared(
         )
     })?;
     let (outcome, _outcome) =
-        crate::staging::read_held(&directory.path().join("render-result.json"), 65536).map_err(
-            |_| {
-                error(
-                    ErrorKind::NeedsRecovery,
-                    "movie-original-render-outcome-required",
-                )
-            },
-        )?;
+        crate::staging::read_held(&workspace.join("render-result.json"), 65536).map_err(|_| {
+            error(
+                ErrorKind::NeedsRecovery,
+                "movie-original-render-outcome-required",
+            )
+        })?;
     let outcome: Outcome = reel_workflow::decode(&outcome)?;
     if raw != actual
         || outcome.schema != "reel.workflow-film-process-outcome.v1"
@@ -551,7 +713,39 @@ pub(crate) fn adopt_declared(
             "movie-original-completed-render",
         ));
     }
-    collect_files(directory.path(), limits)
+    collect_files(workspace, &expected.limits)
+}
+/// Adopt an exact completed file-backed render. Missing/failed evidence refuses;
+/// this never launches the renderer or substitutes a fresh operation identity.
+pub fn recover_files(
+    inputs: &Inputs,
+    job: &FileRef,
+    production: &FileRef,
+    workspace: &Path,
+    runtime: &Tool,
+    limits: &Limits,
+) -> Result<Captured> {
+    let directory = directory(workspace)?;
+    let mut expected = request(
+        inputs,
+        job,
+        production,
+        directory.path(),
+        limits,
+        runtime,
+        Action::Render,
+    )?;
+    expected.expected_outputs = inputs.streaming_intent().map(|bound| {
+        bound
+            .request()
+            .output_paths
+            .values()
+            .filter_map(|p| p.strip_prefix("delivery/"))
+            .filter(|p| *p != "receipt.json")
+            .map(str::to_owned)
+            .collect()
+    });
+    adopt_request(directory.path(), &expected)
 }
 /// Independent check over caller-held exact output files; no rendered movie is
 /// produced and no original worker directory is required. The caller admits
@@ -632,9 +826,6 @@ pub(crate) fn check_render_evidence(
         .tool
         .as_ref()
         .ok_or_else(|| error(ErrorKind::Missing, "movie-tool"))?;
-    let reference_matches = |file: &FileRef, path: &str, asset: &reel_workflow::Artifact| {
-        file.path == Path::new(path) && file.sha256 == asset.sha256 && file.bytes == asset.bytes
-    };
     let expected: BTreeSet<_> = bound
         .request()
         .output_paths
@@ -643,7 +834,13 @@ pub(crate) fn check_render_evidence(
         .filter(|p| *p != "receipt.json")
         .map(str::to_owned)
         .collect();
-    if evidence.schema != "reel.workflow-film-process.v1"
+    let expected_schema = if bound.request().streaming.is_some() {
+        "reel.workflow-film-process.v2"
+    } else {
+        "reel.workflow-film-process.v1"
+    };
+    if evidence.schema != expected_schema
+        || evidence.streaming != bound.request().streaming
         || evidence.action != Action::Render
         || !reference_matches(&evidence.job, &bound.request().job_path, bound.job())
         || !reference_matches(
@@ -705,14 +902,7 @@ pub fn child(path: &Path, pin: &str) -> Result<()> {
         return Err(error(ErrorKind::Integrity, "film-process-request-pin"));
     }
     let request: Request = reel_workflow::decode(&raw)?;
-    request.limits.validate()?;
-    if request.schema != "reel.workflow-film-process.v1"
-        || !request.workspace.is_absolute()
-        || request.inputs.is_empty()
-        || request.inputs.len() > 256
-    {
-        return Err(error(ErrorKind::Invalid, "film-process-request"));
-    }
+    request.validate()?;
     let _directory = directory(&request.workspace)?;
     let request_name = match request.action {
         Action::Render => "render-request.json",
@@ -770,7 +960,7 @@ fn perform(request: &Request) -> Result<()> {
         crate::hold_tool(&request.programs.ffmpeg)?,
         crate::hold_tool(&request.programs.ffprobe)?,
     ];
-    let inputs = Files(request, &request.inputs);
+    let inputs = Files::inputs(request);
     let (job, plan) = scene_delivery::plan_with_control_files(
         &request.job,
         &request.production,
@@ -843,7 +1033,7 @@ fn perform(request: &Request) -> Result<()> {
             {
                 return Err(error(ErrorKind::Budget, "film-verification-output-closure"));
             }
-            let outputs = Files(request, &request.outputs);
+            let outputs = Files::outputs(request);
             let receipt = &request.outputs["receipt.json"];
             let receipt = FileRef {
                 path: "receipt.json".into(),
@@ -903,6 +1093,239 @@ fn perform(request: &Request) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn protocol(workspace: &Path, streamed: bool) -> Request {
+        let file = FileRef {
+            path: workspace.join("synthetic.bin"),
+            sha256: reel_workflow::digest(b"{}"),
+            bytes: 2,
+        };
+        let tool = Tool {
+            path: workspace.join("not-invoked.exe"),
+            sha256: reel_workflow::digest(b"tool"),
+            bytes: 4,
+        };
+        let mut bounds = limits();
+        if streamed {
+            bounds.timeout_seconds = 18000;
+            bounds.workspace_bytes = 32 * 1024 * 1024 * 1024;
+            bounds.output_bytes = 10 * 1024 * 1024 * 1024;
+        }
+        Request {
+            schema: if streamed {
+                "reel.workflow-film-process.v2"
+            } else {
+                "reel.workflow-film-process.v1"
+            }
+            .into(),
+            action: Action::Render,
+            job: file.clone(),
+            production: file.clone(),
+            inputs: BTreeMap::from([("job.json".into(), file)]),
+            programs: Programs {
+                ffmpeg: tool.clone(),
+                ffprobe: tool.clone(),
+            },
+            runtime: tool,
+            workspace: workspace.into(),
+            limits: bounds,
+            expected_outputs: None,
+            outputs: BTreeMap::new(),
+            streaming: streamed.then(|| reel_workflow::film_render::Streaming {
+                schema: "reel.workflow-film-streaming.v1".into(),
+                input_bytes: 8 * 1024 * 1024 * 1024,
+                input_object_bytes: 4 * 1024 * 1024 * 1024,
+                verify_millis: 300000,
+            }),
+        }
+    }
+    #[test]
+    fn process_versions_require_exact_envelopes_and_bound_unique_input_and_output_pins() {
+        let root = tempfile::tempdir().unwrap();
+        let legacy = protocol(root.path(), false);
+        legacy.validate().unwrap();
+        assert!(
+            serde_json::to_value(&legacy)
+                .unwrap()
+                .get("streaming")
+                .is_none()
+        );
+        let mut r = protocol(root.path(), true);
+        r.validate().unwrap();
+        r.inputs
+            .insert("alias.json".into(), r.inputs["job.json"].clone());
+        r.streaming.as_mut().unwrap().input_bytes = 2;
+        r.streaming.as_mut().unwrap().input_object_bytes = 2;
+        r.validate().unwrap();
+        r.inputs.get_mut("alias.json").unwrap().path = root.path().join("other.bin");
+        assert_eq!(r.validate().unwrap_err().kind, ErrorKind::Budget);
+        r = protocol(root.path(), true);
+        r.outputs.insert(
+            "master.mkv".into(),
+            FileRef {
+                path: root.path().join("master"),
+                sha256: reel_workflow::digest(b"unverified output"),
+                bytes: r.limits.output_bytes + 1,
+            },
+        );
+        assert_eq!(r.validate().unwrap_err().kind, ErrorKind::Budget);
+        r = protocol(root.path(), true);
+        r.schema = "reel.workflow-film-process.v1".into();
+        assert_eq!(r.validate().unwrap_err().kind, ErrorKind::Invalid);
+        r = protocol(root.path(), true);
+        r.streaming = None;
+        assert_eq!(r.validate().unwrap_err().kind, ErrorKind::Invalid);
+    }
+    #[test]
+    fn streamed_output_hashing_uses_output_allowance_and_checks_verification_deadline() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("media.bin");
+        fs::write(&path, b"exact media").unwrap();
+        let mut r = protocol(root.path(), true);
+        r.streaming.as_mut().unwrap().input_object_bytes = 2;
+        let pin = FileRef {
+            path: path.clone(),
+            sha256: reel_workflow::digest(b"exact media"),
+            bytes: 11,
+        };
+        r.inputs = BTreeMap::from([("media.bin".into(), pin.clone())]);
+        r.outputs = r.inputs.clone();
+        let reference = FileRef {
+            path: "media.bin".into(),
+            ..pin
+        };
+        assert!(Files::inputs(&r).verified_path(&reference).is_err());
+        assert_eq!(Files::outputs(&r).verified_path(&reference).unwrap(), path);
+        assert!(
+            hash_file(&root.path().join("missing"), 1, 1, Some(Duration::ZERO))
+                .unwrap_err()
+                .to_string()
+                .contains("deadline")
+        );
+    }
+    #[test]
+    fn completed_render_adoption_refuses_changed_streaming_parameters_without_launch_or_replacement()
+     {
+        let root = tempfile::tempdir().unwrap();
+        let mut r = protocol(root.path(), true);
+        let raw = serde_json::to_vec(&r).unwrap();
+        let outcome = serde_json::to_vec(&Outcome {
+            schema: "reel.workflow-film-process-outcome.v1".into(),
+            request_sha256: reel_workflow::digest(&raw),
+            error: None,
+        })
+        .unwrap();
+        fs::write(root.path().join("render-request.json"), &raw).unwrap();
+        fs::write(root.path().join("render-result.json"), &outcome).unwrap();
+        r.streaming.as_mut().unwrap().verify_millis -= 1;
+        assert_eq!(
+            adopt_request(root.path(), &r).err().unwrap().kind,
+            ErrorKind::Conflict
+        );
+        r = protocol(root.path(), true);
+        r.limits.timeout_seconds -= 1;
+        assert_eq!(
+            adopt_request(root.path(), &r).err().unwrap().kind,
+            ErrorKind::Conflict
+        );
+        assert_eq!(
+            fs::read(root.path().join("render-request.json")).unwrap(),
+            raw
+        );
+        assert_eq!(
+            fs::read(root.path().join("render-result.json")).unwrap(),
+            outcome
+        );
+        assert!(!root.path().join("delivery").exists());
+    }
+
+    #[test]
+    #[ignore = "Existing F-first capacity coordinator; preserves a 3.6 GB synthetic file and 4 GiB reservation; no native admission/render/publication"]
+    fn qualified_large_stream_hash_preserves_v1_request_bytes_and_uses_explicit_v2_bounds() {
+        let evidence = PathBuf::from(
+            std::env::var_os("REEL_LARGE_HASH_EVIDENCE").expect("Set evidence directory"),
+        );
+        let admission_path = PathBuf::from(
+            std::env::var_os("REEL_LARGE_HASH_ADMISSION")
+                .expect("Set existing admission profile for capacity coordinator"),
+        );
+        let old_request = PathBuf::from(
+            std::env::var_os("REEL_FILM_V1_REQUEST").expect("Set exact retained v1 render request"),
+        );
+        let (old_raw, _old) =
+            crate::staging::read_held(&old_request, reel_workflow::MAX_CONTROL_BYTES as u64)
+                .unwrap();
+        let decoded: Request = reel_workflow::decode(&old_raw).unwrap();
+        assert_eq!(decoded.schema, "reel.workflow-film-process.v1");
+        decoded.validate().unwrap();
+        assert_eq!(serde_json::to_vec(&decoded).unwrap(), old_raw);
+        let admission: crate::admission::Profile = crate::read_control(&admission_path).unwrap();
+        let mut temp = tempfile::tempdir().unwrap();
+        temp.disable_cleanup(true);
+        let root = temp.path();
+        let bytes = 3_600_000_001u64;
+        let marker = serde_json::json!({"root":root,"bytes":bytes,"reservation_bytes":4u64*1024*1024*1024,"old_request":old_request,"native_admission":false,"rendered":false});
+        let save = |path: &Path, value: &serde_json::Value| {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .unwrap();
+            file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
+            file.sync_all().unwrap();
+        };
+        save(&root.join("original-operation.json"), &marker);
+        save(&evidence.join("original-operation-roots.json"), &marker);
+        let config = reel_assets::Config {
+            cache_roots: vec![root.into()],
+            coordination_root: Some(admission.scope.coordination_root),
+            ..Default::default()
+        };
+        let reservation =
+            reel_assets::admission::reserve_on(root, &config, root, 4 * 1024 * 1024 * 1024)
+                .unwrap();
+        save(
+            &root.join("capacity-ticket.json"),
+            &serde_json::json!({"id":reservation.id,"volume":reservation.volume_id,"bytes":4u64*1024*1024*1024,"parent":root,"coordination":config.coordination_root}),
+        );
+        reservation.retain_for_recovery();
+        let _directory = directory(root).unwrap();
+        let path = root.join("synthetic-master.bin");
+        let file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        file.set_len(bytes).unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+        let _held = crate::staging::open_held(&path, bytes).unwrap();
+        let mut expected = Sha256::new();
+        let zeros = [0u8; 65536];
+        let mut remaining = bytes;
+        while remaining > 0 {
+            let n = remaining.min(zeros.len() as u64) as usize;
+            expected.update(&zeros[..n]);
+            remaining -= n as u64;
+        }
+        let expected: String = expected
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert!(hash_file(&path, bytes, 512 * 1024 * 1024, None).is_err());
+        let actual = hash_file(
+            &path,
+            bytes,
+            4 * 1024 * 1024 * 1024,
+            Some(Duration::from_secs(300)),
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        assert_eq!(fs::metadata(&path).unwrap().len(), bytes);
+        let result = serde_json::json!({"root":root,"bytes":bytes,"sha256":actual,"hash_buffer_bytes":65536,"legacy_limit_refused":true,"v1_request_bytes_preserved":true,"capacity_preserved":true,"scratch_preserved":true,"native_admission":false,"rendered":false,"published":false,"consumer_adopted":false});
+        save(&root.join("qualification-result.json"), &result);
+        save(&evidence.join("qualification-result.json"), &result);
+    }
     fn limits() -> Limits {
         Limits {
             timeout_seconds: 120,
@@ -944,9 +1367,9 @@ mod tests {
             ErrorKind::Budget
         );
         assert_eq!(
-            hash_file(&root.path().join("piece"), 5).unwrap(),
+            hash_file(&root.path().join("piece"), 5, 512 * 1024 * 1024, None).unwrap(),
             reel_workflow::digest(b"exact")
         );
-        assert!(hash_file(&root.path().join("piece"), 4).is_err());
+        assert!(hash_file(&root.path().join("piece"), 4, 512 * 1024 * 1024, None).is_err());
     }
 }
