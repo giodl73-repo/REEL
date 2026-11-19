@@ -33,6 +33,9 @@ mod film_process;
 #[cfg(windows)]
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
+#[cfg(windows)]
+#[path = "support/image_handoff.rs"]
+mod image_handoff_native;
 #[cfg(all(windows, feature = "film"))]
 #[path = "support/movie_close.rs"]
 mod movie_close;

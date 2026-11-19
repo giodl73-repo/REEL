@@ -4,16 +4,13 @@ use crate::{Config, error};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use reel_workflow::{Artifact, ErrorKind, Result};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io::Cursor,
-};
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const OUTPUTS: [(&str, &str); 2] = [
     ("candidate.png", "image/png"),
     ("image.json", "application/json"),
 ];
-const MAX_IMAGE: u64 = 64 * 1024 * 1024;
+use crate::raster::{MAX_IMAGE, inspect_png as png_image};
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Spec {
@@ -27,63 +24,6 @@ pub struct Spec {
 pub struct Input<'a> {
     pub artifact: &'a Artifact,
     pub bytes: &'a [u8],
-}
-struct Image {
-    width: u32,
-    height: u32,
-    alpha: bool,
-    transparent: bool,
-}
-fn png_image(raw: &[u8]) -> Result<Image> {
-    if raw.len() as u64 > MAX_IMAGE {
-        return Err(error(ErrorKind::Budget, "openai-image-png-bytes"));
-    }
-    let mut decoder = png::Decoder::new(Cursor::new(raw));
-    decoder.set_limits(png::Limits {
-        bytes: MAX_IMAGE as usize,
-    });
-    decoder.set_transformations(png::Transformations::EXPAND);
-    let mut reader = decoder
-        .read_info()
-        .map_err(|_| error(ErrorKind::Integrity, "openai-image-png-header"))?;
-    let info = reader.info();
-    if info.animation_control.is_some()
-        || info.width == 0
-        || info.height == 0
-        || u64::from(info.width) * u64::from(info.height) > 16_777_216
-        || reader.output_buffer_size() > MAX_IMAGE as usize
-    {
-        return Err(error(ErrorKind::Budget, "openai-image-png-layout"));
-    }
-    let mut pixels = vec![0; reader.output_buffer_size()];
-    let output = reader
-        .next_frame(&mut pixels)
-        .map_err(|_| error(ErrorKind::Integrity, "openai-image-png-decode"))?;
-    reader
-        .finish()
-        .map_err(|_| error(ErrorKind::Integrity, "openai-image-png-end"))?;
-    let channels = match output.color_type {
-        png::ColorType::Rgba => Some(4),
-        png::ColorType::GrayscaleAlpha => Some(2),
-        _ => None,
-    };
-    let transparent = channels.is_some_and(|n| {
-        let sample_bytes = if output.bit_depth == png::BitDepth::Sixteen {
-            2
-        } else {
-            1
-        };
-        let stride = n * sample_bytes;
-        pixels[..output.buffer_size()]
-            .chunks_exact(stride)
-            .any(|p| p[stride - sample_bytes..].iter().any(|v| *v != 255))
-    });
-    Ok(Image {
-        width: output.width,
-        height: output.height,
-        alpha: channels.is_some(),
-        transparent,
-    })
 }
 impl Spec {
     pub fn egress_inputs(&self) -> BTreeSet<String> {

@@ -144,10 +144,14 @@ fn outputs(
         return Ok(Vec::new());
     }
     let mut seen = std::collections::BTreeSet::new();
-    response::artifacts(result)
+    let mut pins: Vec<_> = response::artifacts(result).collect();
+    let image = packet.task.operation == reel_workflow::Operation::ImageCandidate;
+    // Inspect a PNG before any differently typed alias can deduplicate its gate.
+    pins.sort_by_key(|a| !(image && a.media_type == "image/png"));
+    pins.into_iter()
         .filter(|a| seen.insert((a.sha256.clone(), a.bytes)))
         .map(|a| {
-            reader::open(
+            let mut held = reader::open(
                 &source.source,
                 &Object {
                     sha256: tig_core::Digest::parse(&a.sha256)
@@ -155,7 +159,23 @@ fn outputs(
                     bytes: a.bytes,
                 },
             )
-            .map_err(io_error)
+            .map_err(io_error)?;
+            if image && a.media_type == "image/png" {
+                use std::io::Read;
+                if a.bytes > reel_workflow_http::raster::MAX_IMAGE {
+                    return Err(error(ErrorKind::Budget, "retained-image-png-bytes"));
+                }
+                let mut raw = Vec::new();
+                Read::by_ref(&mut held)
+                    .take(a.bytes + 1)
+                    .read_to_end(&mut raw)
+                    .map_err(io_error)?;
+                if raw.len() as u64 != a.bytes || reel_workflow::digest(&raw) != a.sha256 {
+                    return Err(error(ErrorKind::Integrity, "retained-image-content"));
+                }
+                reel_workflow_http::raster::inspect_png(&raw)?;
+            }
+            Ok(held)
         })
         .collect()
 }

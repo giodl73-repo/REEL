@@ -123,6 +123,12 @@ fn verify(
             return Err(error(ErrorKind::Conflict, "response-file-alias"));
         }
         let artifact = &result.artifacts[name];
+        if packet.task.operation == reel_workflow::Operation::ImageCandidate
+            && artifact.media_type == "image/png"
+            && artifact.bytes > reel_workflow_http::raster::MAX_IMAGE
+        {
+            return Err(error(ErrorKind::Budget, "image-return-png-bytes"));
+        }
         total = total
             .checked_add(artifact.bytes)
             .filter(|n| *n <= MAX_BYTES)
@@ -134,6 +140,11 @@ fn verify(
         );
         let (raw, held) = crate::staging::read_held(&path, artifact.bytes.min(MAX_BYTES))?;
         reel_workflow::check_output(packet, result, name, &raw)?;
+        if packet.task.operation == reel_workflow::Operation::ImageCandidate
+            && artifact.media_type == "image/png"
+        {
+            reel_workflow_http::raster::inspect_png(&raw)?;
+        }
         if review
             .as_ref()
             .is_some_and(|(_, bound)| bound.report_output() == name)

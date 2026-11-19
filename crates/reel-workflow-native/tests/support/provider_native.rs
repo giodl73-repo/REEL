@@ -160,7 +160,7 @@ fn protected_openai_image_edit_retains_candidate_and_replays_without_another_cal
 fn protected_openai_image_uncertainty_preserves_original_call_without_reissue() {
     run_case(true, false, true);
 }
-fn image_png(size: u32, blue: bool) -> Vec<u8> {
+pub(super) fn image_png(size: u32, blue: bool) -> Vec<u8> {
     let mut pix = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
     pix.fill(if blue {
         resvg::tiny_skia::Color::from_rgba8(0, 0, 255, 255)
@@ -169,7 +169,7 @@ fn image_png(size: u32, blue: bool) -> Vec<u8> {
     });
     pix.encode_png().unwrap()
 }
-fn image_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
+pub(super) fn image_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
     let bytes = image_png(16, false);
     let object = Object::from_bytes(&bytes);
     let root = fixture.temp.path();

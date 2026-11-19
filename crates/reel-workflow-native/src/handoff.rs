@@ -551,7 +551,10 @@ pub fn import(
         let _guard = adapter.reopen(journal.ticket())?;
     }
     if journal.state() == State::Waiting
-        && journal.ticket().packet.task.operation == reel_workflow::Operation::ReviewReport
+        && matches!(
+            journal.ticket().packet.task.operation,
+            reel_workflow::Operation::ReviewReport | reel_workflow::Operation::ImageCandidate
+        )
     {
         response::preflight(
             &journal.ticket().packet,

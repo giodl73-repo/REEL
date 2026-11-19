@@ -63,6 +63,49 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            returns,
+            output,
+            apply,
+        ] if command == "pack-image-result" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let receipt: reel_workflow_native::admission::Receipt =
+                read_control(Path::new(receipt))?;
+            let _inputs = NativeInputs::open_admitted(&packet, &source, &profile, &receipt)?;
+            let packed = reel_workflow_native::image::pack_files(
+                &packet,
+                &receipt.attempt_id,
+                &read_control(Path::new(returns))?,
+            )?;
+            let raw = serde_json::to_vec(&packed.result).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "image-result-json".into(),
+            })?;
+            if raw.len() > reel_workflow::MAX_CONTROL_BYTES {
+                return Err(reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Budget,
+                    code: "image-result-control-bytes".into(),
+                });
+            }
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "image-result-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-png-handoff-result","images":packed.result.artifacts.len(),"registered":false,"native_retained":false,"task_completed":false,"approved":false}),
+            )
+        }
         [command, packet, source] if command == "preview-film-direction" => {
             let packet = read_control(Path::new(packet))?;
             let source = read_control(Path::new(source))?;
@@ -1090,6 +1133,7 @@ fn main() -> ExitCode {
             "reel-workflow-native check-publication-native PACKET PROFILE\n",
             "reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\n",
             "reel-workflow-native preview-film-direction PACKET NATIVE_PROFILE\n",
+            "reel-workflow-native pack-image-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RETURNS NEW_RESULT --apply\n",
             "reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT\n",
             "reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET\n",

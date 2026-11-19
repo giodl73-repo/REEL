@@ -23,6 +23,7 @@ pub mod film_inputs;
 pub mod film_process;
 pub mod graph;
 pub mod handoff;
+pub mod image;
 mod issue;
 #[cfg(all(windows, feature = "film"))]
 pub mod movie;
