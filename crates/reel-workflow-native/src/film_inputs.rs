@@ -30,6 +30,7 @@ impl Programs {
     }
 }
 pub struct Inputs {
+    streaming: Option<reel_workflow::film_render::Streaming>,
     _native: NativeInputs,
     _cache: ReadCache,
     files: BTreeMap<String, (tig_core::Object, usize)>,
@@ -66,9 +67,46 @@ impl Inputs {
     /// construct this bridge.
     pub fn prepare(
         packet: &Packet,
+        native: NativeInputs,
+        aliases: &BTreeMap<String, String>,
+        programs: Programs,
+    ) -> Result<Self> {
+        Self::prepare_inner(packet, native, aliases, programs, None)
+    }
+    /// V2 borrowed-file input port. Requires a checked task-bound streaming
+    /// intent and live native authority. It grants no process execution, output
+    /// custody, capacity, retention or completion; native v2 execution is gated.
+    pub fn prepare_streamed(
+        packet: &Packet,
+        native: NativeInputs,
+        bound: &reel_workflow::film_render::Bound,
+        programs: Programs,
+    ) -> Result<Self> {
+        reel_workflow::check_packet(packet)?;
+        if bound.task_key() != packet.task_key {
+            return Err(error(ErrorKind::Conflict, "film-streaming-bound-task"));
+        }
+        bound.request().validate()?;
+        let streaming = bound
+            .request()
+            .streaming
+            .clone()
+            .ok_or_else(|| error(ErrorKind::Unsupported, "film-streaming-intent-required"))?;
+        crate::worker::validate_programs(
+            packet,
+            &BTreeMap::from([
+                ("ffmpeg".into(), programs.ffmpeg.clone()),
+                ("ffprobe".into(), programs.ffprobe.clone()),
+            ]),
+        )?;
+        Self::prepare_inner(packet, native, bound.aliases(), programs, Some(streaming))
+    }
+    fn prepare_inner(
+        packet: &Packet,
         mut native: NativeInputs,
         aliases: &BTreeMap<String, String>,
         programs: Programs,
+        streaming: Option<reel_workflow::film_render::Streaming>,
     ) -> Result<Self> {
         reel_workflow::check_packet(packet)?;
         if native.snapshot.packet != *packet
@@ -102,7 +140,14 @@ impl Inputs {
             .iter()
             .try_fold(0u64, |n, a| n.checked_add(a.bytes))
             .ok_or_else(|| error(ErrorKind::Budget, "film-input-byte-overflow"))?;
-        if total > 512 * 1024 * 1024 || packet.task.inputs.len() > 128 {
+        let (object_bytes, total_bytes, verify_millis) = streaming
+            .as_ref()
+            .map(|s| (s.input_object_bytes, s.input_bytes, s.verify_millis))
+            .unwrap_or((512 * 1024 * 1024, 512 * 1024 * 1024, 30_000));
+        if total > total_bytes
+            || packet.task.inputs.iter().any(|a| a.bytes > object_bytes)
+            || packet.task.inputs.len() > 128
+        {
             return Err(error(ErrorKind::Budget, "film-input-byte-bound"));
         }
         let mut directories = Vec::new();
@@ -122,11 +167,11 @@ impl Inputs {
         let mut cache = ReadCache::provider(
             RequiredProtection::PreventMutation,
             Limits {
-                object_bytes: 512 * 1024 * 1024,
-                total_bytes: 512 * 1024 * 1024,
+                object_bytes,
+                total_bytes,
                 requests: 128,
                 live_readers: 128,
-                verify_millis: 30000,
+                verify_millis,
             },
         )
         .map_err(path_error)?;
@@ -191,6 +236,7 @@ impl Inputs {
             .map(|(name, id)| (name.clone(), by_id[id.as_str()].clone()))
             .collect();
         Ok(Self {
+            streaming,
             _native: native,
             _cache: cache,
             files,
@@ -203,6 +249,9 @@ impl Inputs {
     }
     pub fn program_fingerprint(&self) -> Result<String> {
         self.programs.fingerprint()
+    }
+    pub fn streaming_bounds(&self) -> Option<&reel_workflow::film_render::Streaming> {
+        self.streaming.as_ref()
     }
     pub fn objects(&self) -> usize {
         self.held.len()

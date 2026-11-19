@@ -12,7 +12,15 @@ Build/check this separate workspace explicitly:
 
 Optional feature `film` adds a
 [guarded native-file provider for the existing renderer](../../docs/handoff/2026-11-19-native-renderer-inputs.md).
-It does not yet add movie dispatch, output retention or task completion.
+The [owned v1 movie worker](../../docs/handoff/2026-11-19-owned-movie-dispatch.md)
+adds bounded dispatch, retained proof and technical completion; the
+[file-backed capture fixture](../../docs/handoff/2026-11-19-file-backed-movie-capture.md)
+qualifies completed-render adoption within its synthetic Windows scope.
+The new [v2 streaming intent](../../docs/handoff/2026-11-19-streaming-film-intent.md)
+is metadata-only for execution: current native production explicitly refuses it
+pending the remaining large-process, capacity, admission and recovery ports.
+`reel-workflow check-film-intent PACKET CONTROL_BINDINGS` inspects its named
+controls without opening media or invoking tools.
 
 ```text
 cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked

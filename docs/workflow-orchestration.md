@@ -35,6 +35,12 @@ advances only the rebuild closure; upstream-inputs v2 binds exact results across
 snapshots. Packets/results remain v2 and legacy plan/repair serialization stays
 unchanged. Native project adoption and rollback remain qualification gates.
 
+The [streaming film intent v2](handoff/2026-11-19-streaming-film-intent.md) adds
+explicit larger budget envelopes and `check-film-intent` metadata inspection.
+It has a preparatory task-bound native input port. Native v2 production remains
+explicitly unsupported until the process/admission/capacity/return/history and
+recovery boundaries are ported and qualified. Existing v1 jobs keep their limits.
+
 No API/proxy, ElevenLabs recording, image-generation, GitHub issue,
 selection application or
 scratch retirement adapter is installed. `check-result` never marks a task

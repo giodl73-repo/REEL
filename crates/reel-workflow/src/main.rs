@@ -275,6 +275,38 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"candidate-bytes-checked","retention_acknowledged":false,"task_completed":false,"selected":false}),
             )
         }
+        [command, packet, bindings] if command == "check-film-intent" => {
+            let packet: Packet = control(packet)?;
+            let paths: BTreeMap<String, String> = control(bindings)?;
+            if paths.len() > 3 {
+                return Err(error(ErrorKind::Conflict, "film-control-binding-set"));
+            }
+            let mut reader = LocalInputs {
+                paths,
+                guards: Vec::new(),
+            };
+            let bound = reel_workflow::film_render::bind(&packet, &mut reader)?;
+            let expected = std::collections::BTreeSet::from([
+                &bound.job().logical_id,
+                &bound.production().logical_id,
+                &packet.task.tool.as_ref().unwrap().request.logical_id,
+            ]);
+            if reader
+                .paths
+                .keys()
+                .collect::<std::collections::BTreeSet<_>>()
+                != expected
+            {
+                return Err(error(ErrorKind::Conflict, "film-control-binding-set"));
+            }
+            Ok(
+                serde_json::json!({"ok":true,"scope":"film-intent-metadata-only",
+                "intent_schema":bound.request().schema,"limits":bound.request().limits,
+                "streaming":bound.request().streaming,"declared_inputs":packet.task.inputs.len(),
+                "media_bytes_verified":false,"tool_executed":false,"snapshot_binding_verified":false,
+                "production_admitted":false,"native_v2_execution_qualified":false}),
+            )
+        }
         [command, packet, bindings, tool] if command == "check-publication-task" => {
             let packet: Packet = control(packet)?;
             let (bound, _guards) = publication_inputs(&packet, control(bindings)?, tool)?;
@@ -314,6 +346,7 @@ Usage: reel-workflow check-plan PLAN\n\
        reel-workflow revise-repair PLAN COPY REPORT REPAIR REVISION NEW_CANDIDATE\n\
        reel-workflow export-task PLAN TASK NEW_PACKET [DEPENDENCY_DESCRIPTORS]\n\
        reel-workflow check-result PACKET RESULT PAYLOAD_BINDINGS\n\
+       reel-workflow check-film-intent PACKET CONTROL_BINDINGS\n\
        reel-workflow check-handoff DIRECTORY\n\
        reel-workflow cancel-handoff DIRECTORY\n\
        reel-workflow check-publication-task PACKET INPUT_BINDINGS TOOL\n\

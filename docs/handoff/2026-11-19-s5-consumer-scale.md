@@ -68,6 +68,14 @@ of those states and does not adopt an S4 or S5 job.
 
 ### Required qualification
 
+The [v2 film intent](2026-11-19-streaming-film-intent.md) now supports the numeric
+input/output/time/workspace envelope as authored intent, enforces total declared
+output ceilings and offers metadata-only inspection. Current native execution
+explicitly refuses v2; the production limits in the table above still describe
+the qualified executable path. A preparatory bounded input port is implemented,
+but native multi-GB/projection, process, capacity/return/history and recovery
+qualification remain open.
+
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
 recovery, native gates, tickets and claims. Its ten-input movie fixture passes

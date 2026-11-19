@@ -48,6 +48,61 @@ pub struct Request {
     /// Artifact name -> portable path under the owned packet directory.
     pub output_paths: BTreeMap<String, String>,
     pub limits: Limits,
+    /// V2 only. A declared streaming envelope, not native execution authority.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<Streaming>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Streaming {
+    pub schema: String,
+    pub input_bytes: u64,
+    pub input_object_bytes: u64,
+    pub verify_millis: u64,
+}
+impl Streaming {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema != "reel.workflow-film-streaming.v1" {
+            return fail(ErrorKind::Invalid, "film-streaming-version");
+        }
+        if self.input_object_bytes == 0
+            || self.input_object_bytes > self.input_bytes
+            || self.input_bytes > 64 * 1024 * 1024 * 1024
+            || !(1..=300_000).contains(&self.verify_millis)
+        {
+            return fail(ErrorKind::Budget, "film-streaming-input-bounds");
+        }
+        Ok(())
+    }
+}
+impl Request {
+    pub fn validate(&self) -> Result<()> {
+        match (self.schema.as_str(), &self.streaming) {
+            ("reel.workflow-film-render.v1", None) => self.limits.validate(),
+            ("reel.workflow-film-render.v2", Some(streaming)) => {
+                streaming.validate()?;
+                let l = &self.limits;
+                if !(1..=18_000).contains(&l.timeout_seconds)
+                    || !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&l.memory_bytes)
+                    || !(2..=32).contains(&l.processes)
+                    || l.output_bytes == 0
+                    || l.output_bytes > 16 * 1024 * 1024 * 1024
+                    || l.workspace_bytes < l.output_bytes
+                    || l.workspace_bytes > 64 * 1024 * 1024 * 1024
+                    || l.frames == 0
+                    || l.frames > 1_000_000
+                    || l.samples == 0
+                    || l.samples > 384_000 * 18_000u64
+                    || l.raw_rgb_bytes == 0
+                    || l.raw_rgb_bytes > 1024 * 1024 * 1024 * 1024
+                {
+                    return fail(ErrorKind::Budget, "film-streaming-process-bounds");
+                }
+                Ok(())
+            }
+            _ => fail(ErrorKind::Invalid, "film-render-version-envelope"),
+        }
+    }
 }
 #[derive(Clone, Debug)]
 pub struct Bound {
@@ -58,6 +113,20 @@ pub struct Bound {
     task_key: String,
 }
 impl Bound {
+    pub fn task_key(&self) -> &str {
+        &self.task_key
+    }
+    /// Current native producers retain their qualified v1 execution contract.
+    /// V2 is authored intent until every native budget/recovery boundary is ported.
+    pub fn require_native_v1(&self) -> Result<()> {
+        if self.request.schema != "reel.workflow-film-render.v1" {
+            return fail(
+                ErrorKind::Unsupported,
+                "film-streaming-native-not-qualified",
+            );
+        }
+        Ok(())
+    }
     pub fn request(&self) -> &Request {
         &self.request
     }
@@ -112,9 +181,34 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<Bound> {
         return fail(ErrorKind::Conflict, "film-render-media-programs");
     }
     let request: Request = decode(&checked(reader, &tool.request)?)?;
-    request.limits.validate()?;
-    if request.schema != "reel.workflow-film-render.v1"
-        || !portable_source(&request.job_path)
+    request.validate()?;
+    if let Some(streaming) = &request.streaming {
+        let bytes = packet.task.inputs.iter().try_fold(0u64, |n, a| {
+            if a.bytes > streaming.input_object_bytes {
+                return fail(ErrorKind::Budget, "film-streaming-input-object");
+            }
+            n.checked_add(a.bytes).ok_or_else(|| crate::Error {
+                kind: ErrorKind::Budget,
+                code: "film-streaming-input-overflow".into(),
+            })
+        })?;
+        if bytes > streaming.input_bytes {
+            return fail(ErrorKind::Budget, "film-streaming-input-total");
+        }
+        let outputs = packet
+            .task
+            .outputs
+            .values()
+            .try_fold(0u64, |n, c| n.checked_add(c.max_bytes))
+            .ok_or_else(|| crate::Error {
+                kind: ErrorKind::Budget,
+                code: "film-streaming-output-overflow".into(),
+            })?;
+        if outputs > request.limits.output_bytes {
+            return fail(ErrorKind::Budget, "film-streaming-output-ceilings");
+        }
+    }
+    if !portable_source(&request.job_path)
         || !portable_source(&request.production_path)
         || request.job_path == request.production_path
         || request.job_path == "request.json"

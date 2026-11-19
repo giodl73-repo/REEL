@@ -14,6 +14,15 @@ return and native admission bounds do not qualify that consumer. Streamed
 composition, complete bilingual content/delivery and original-operation recovery
 at that scale remain required; small comic/movie fixtures cannot close them.
 
+The [v2 streaming film intent](handoff/2026-11-19-streaming-film-intent.md) now
+declares larger input/output/workspace/time envelopes and checks declared input
+and output ceilings without changing v1 behavior. `check-film-intent` inspects
+only pinned controls; its reports explicitly grant no production authority.
+A task-bound preparatory input port forwards declared reader limits, but current
+native production/verification/process construction refuses v2 explicitly.
+The contained process, projection/admission, workspace/return/history budgets,
+composition and real-size recovery must still be ported and qualified.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial

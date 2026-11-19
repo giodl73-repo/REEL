@@ -6,6 +6,149 @@ use reel_workflow_native::{
     admission::Prepared,
     film_inputs::{Inputs, Programs},
 };
+
+#[test]
+fn streamed_intent_cannot_retarget_an_unadmitted_reader_or_access_unbound_programs() {
+    use reel_workflow::{film_render, publication::InputReader};
+    let fixture = Fixture::new();
+    let mut case = AdmissionCase::new(&fixture);
+    case.source.annex = fixture.profile.git.clone();
+    case.source.source.pool.executable = case.source.annex.path.clone();
+    let asset = |id: &str, raw: &[u8], media: &str| Artifact {
+        logical_id: id.into(),
+        sha256: digest(raw),
+        bytes: raw.len() as u64,
+        media_type: media.into(),
+    };
+    let program = Tool {
+        path: PathBuf::from("missing-program.exe"),
+        ..fixture.profile.git.clone()
+    };
+    let installed = Artifact {
+        logical_id: "tool/media".into(),
+        sha256: program.sha256.clone(),
+        bytes: program.bytes,
+        media_type: "application/octet-stream".into(),
+    };
+    let job = asset("film/job", b"{}", "application/json");
+    let production = asset("film/production", b"{}", "application/json");
+    let request = film_render::Request {
+        schema: "reel.workflow-film-render.v2".into(),
+        job_path: "job.json".into(),
+        production_path: "production.json".into(),
+        output_paths: BTreeMap::from([
+            ("execution-request".into(), "render-request.json".into()),
+            ("execution-result".into(), "render-result.json".into()),
+            ("delivery-receipt".into(), "delivery/receipt.json".into()),
+        ]),
+        limits: film_render::Limits {
+            timeout_seconds: 18000,
+            memory_bytes: 1024 * 1024 * 1024,
+            processes: 2,
+            workspace_bytes: 32 * 1024 * 1024 * 1024,
+            output_bytes: 1024 * 1024,
+            frames: 1,
+            samples: 1,
+            raw_rgb_bytes: 1,
+        },
+        streaming: Some(film_render::Streaming {
+            schema: "reel.workflow-film-streaming.v1".into(),
+            input_bytes: 1024 * 1024,
+            input_object_bytes: 1024 * 1024,
+            verify_millis: 30000,
+        }),
+    };
+    let raw = serde_json::to_vec(&request).unwrap();
+    let request_pin = asset("film/request", &raw, "application/json");
+    let task = Task {
+        id: "streamed".into(),
+        native_inputs: None,
+        upstream_inputs: None,
+        operation: Operation::DeterministicTool,
+        language: Some("es".into()),
+        prompt: String::new(),
+        depends_on: vec![],
+        inputs: vec![job.clone(), production.clone(), request_pin.clone()],
+        tool: Some(ToolContract {
+            schema: "reel.workflow-tool.v1".into(),
+            capability: ToolCapability::FilmRender,
+            executable: installed.clone(),
+            auxiliary_executables: BTreeMap::from([
+                ("ffmpeg".into(), installed.clone()),
+                ("ffprobe".into(), installed),
+            ]),
+            publication: job,
+            edition_id: "es".into(),
+            request: request_pin,
+            source_bindings: BTreeMap::from([
+                ("job.json".into(), "film/job".into()),
+                ("production.json".into(), "film/production".into()),
+            ]),
+            part: None,
+        }),
+        outputs: request
+            .output_paths
+            .keys()
+            .map(|name| {
+                (
+                    name.clone(),
+                    OutputContract {
+                        media_type: "application/json".into(),
+                        max_bytes: 1024,
+                        required: true,
+                    },
+                )
+            })
+            .collect(),
+    };
+    let packet = make_packet(
+        &Plan {
+            schema: PLAN_SCHEMA.into(),
+            task_snapshots: BTreeMap::new(),
+            project: fixture.packet.project.clone(),
+            source_commit: fixture.packet.source_commit.clone(),
+            tasks: vec![task],
+        },
+        "streamed",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    struct Metadata(BTreeMap<String, Vec<u8>>);
+    impl InputReader for Metadata {
+        fn read(&mut self, a: &Artifact, _: u64) -> Result<Vec<u8>> {
+            Ok(self.0[&a.logical_id].clone())
+        }
+    }
+    let mut metadata = Metadata(BTreeMap::from([
+        ("film/job".into(), b"{}".to_vec()),
+        ("film/production".into(), b"{}".to_vec()),
+        ("film/request".into(), raw),
+    ]));
+    let bound = film_render::bind(&packet, &mut metadata).unwrap();
+    for retarget in [false, true] {
+        let native = NativeInputs::open(&fixture.packet, &case.source).unwrap();
+        let supplied = if retarget { &fixture.packet } else { &packet };
+        let error = Inputs::prepare_streamed(
+            supplied,
+            native,
+            &bound,
+            Programs {
+                ffmpeg: program.clone(),
+                ffprobe: program.clone(),
+            },
+        )
+        .err()
+        .unwrap();
+        assert_eq!(
+            error.kind,
+            if retarget {
+                ErrorKind::Conflict
+            } else {
+                ErrorKind::Denied
+            }
+        );
+    }
+}
 #[test]
 fn renderer_file_bridge_refuses_unadmitted_reader_before_program_or_payload_access() {
     let fixture = Fixture::new();
@@ -150,6 +293,7 @@ fn run(movie: bool, automatic: bool) {
     let mut refs = BTreeMap::new();
     let mut items = source_value["files"].as_array().unwrap().clone();
     let request = reel_workflow::film_render::Request {
+        streaming: None,
         schema: "reel.workflow-film-render.v1".into(),
         job_path: "job.json".into(),
         production_path: "production.json".into(),

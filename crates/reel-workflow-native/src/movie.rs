@@ -105,6 +105,7 @@ fn produce(
     adopt: bool,
 ) -> Result<FileGenerated> {
     let bound = film_render::bind(packet, &mut native)?;
+    bound.require_native_v1()?;
     crate::worker::validate_programs(packet, programs)?;
     let tool = packet
         .task
@@ -449,6 +450,7 @@ pub(crate) fn native_proof(
     }
     let admission = admission.clone();
     let bound = film_render::bind(packet, &mut native)?;
+    bound.require_native_v1()?;
     crate::worker::validate_programs(packet, &config.auxiliary_programs)?;
     let mut inputs = Inputs::prepare(
         packet,
@@ -557,6 +559,7 @@ pub(crate) fn check_returned_owned(
     let (admission, _) = native.movie_authority()?;
     let admission = admission.clone();
     let bound = film_render::bind(packet, &mut native)?;
+    bound.require_native_v1()?;
     let required = bound
         .request()
         .limits
@@ -660,6 +663,7 @@ pub fn check_returned(
         }
     }
     let bound = film_render::bind(packet, &mut native)?;
+    bound.require_native_v1()?;
     crate::worker::validate_programs(packet, programs)?;
     let worker = result
         .worker_receipt

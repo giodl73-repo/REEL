@@ -165,6 +165,12 @@ fn request(
     runtime: &Tool,
     action: Action,
 ) -> Result<Request> {
+    if inputs.streaming_bounds().is_some() {
+        return Err(error(
+            ErrorKind::Unsupported,
+            "film-streaming-native-not-qualified",
+        ));
+    }
     limits.validate()?;
     inputs
         .validate_reference_name(job)
