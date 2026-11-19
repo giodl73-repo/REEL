@@ -117,6 +117,77 @@ fn observer<'a>(plan: &Plan, bindings: &'a Bindings) -> Result<NativeObserver<'a
 pub fn inspect(plan: &Plan, bindings: &Bindings) -> Result<graph::Frontier> {
     graph::inspect(plan, &mut observer(plan, bindings)?)
 }
+
+/// A new private planning artifact, not child admission or a durable custody
+/// handoff. Actual parent proofs are checked again when admitting the child.
+pub fn export_expansion(
+    plan: &Plan,
+    bindings: &Bindings,
+    template: &reel_workflow::expansion::Template,
+    output: &Path,
+) -> Result<usize> {
+    if !output.is_absolute()
+        || output
+            .components()
+            .any(|p| matches!(p, std::path::Component::ParentDir))
+    {
+        return Err(error(ErrorKind::Invalid, "expansion-explicit-output-path"));
+    }
+    let parent = reel_assets::jobs::open_workspace_directory(
+        output
+            .parent()
+            .ok_or_else(|| error(ErrorKind::Invalid, "expansion-output-parent"))?,
+    )
+    .map_err(|_| error(ErrorKind::Denied, "expansion-output-namespace"))?;
+    let name = output
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| staging::portable(n))
+        .ok_or_else(|| error(ErrorKind::Invalid, "expansion-output-name"))?;
+    let output = parent.path().join(name);
+    if std::fs::symlink_metadata(&output).is_ok() {
+        return Err(error(ErrorKind::Conflict, "expansion-existing-output"));
+    }
+    let mut observer = observer(plan, bindings)?;
+    let expansion = reel_workflow::expansion::prepare(plan, template, &mut observer)?;
+    for job in observer.loaded.values() {
+        staging::check_parent(parent.path(), &job.profile.source, &job.profile.admission)?;
+        for root in [
+            &job.binding.journal,
+            &job.profile.acknowledgements,
+            &job.profile.source.snapshot.repository,
+        ] {
+            if parent
+                .path()
+                .starts_with(root.canonicalize().map_err(io_error)?)
+            {
+                return Err(error(
+                    ErrorKind::Denied,
+                    "expansion-output-overlaps-control",
+                ));
+            }
+        }
+    }
+    let raw = serde_json::to_vec(&expansion)
+        .map_err(|_| error(ErrorKind::Invalid, "expansion-output-json"))?;
+    if raw.len() > reel_workflow::MAX_CONTROL_BYTES {
+        return Err(error(ErrorKind::Budget, "expansion-output-bytes"));
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&output)
+        .map_err(io_error)?;
+    file.write_all(&raw)
+        .and_then(|_| file.sync_all())
+        .map_err(|_| error(ErrorKind::NeedsRecovery, "expansion-write-preserve-partial"))?;
+    drop(file);
+    let (written, _held) = staging::read_held(&output, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+    if written != raw {
+        return Err(error(ErrorKind::Integrity, "expansion-output-readback"));
+    }
+    Ok(expansion.packet.task.inputs.len())
+}
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReadyTask {

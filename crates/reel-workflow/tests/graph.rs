@@ -97,6 +97,258 @@ impl Observer for Fixture {
         }
     }
 }
+
+fn expansion_template(plan: &Plan) -> expansion::Template {
+    expansion::Template {
+        schema: "reel.workflow-expansion-template.v1".into(),
+        base_plan_sha256: canonical_digest(plan).unwrap(),
+        task: expansion::TaskTemplate {
+            id: "late-child".into(),
+            operation: Operation::TextProposal,
+            language: Some("es".into()),
+            prompt: "Use the exact retained parent input.".into(),
+            depends_on: vec!["a".into()],
+            inputs: vec![expansion::Input::Parent {
+                reference: upstream::Reference {
+                    task_id: "a".into(),
+                    artifact: upstream::Selector::Output {
+                        name: "note".into(),
+                    },
+                },
+            }],
+            outputs: plan.tasks[0].outputs.clone(),
+            tool: None,
+        },
+    }
+}
+#[test]
+fn expansion_uses_exact_verified_parent_outputs_and_preserves_existing_tasks() {
+    let plan = plan();
+    let template = expansion_template(&plan);
+    let mut fixture = Fixture::default();
+    let parent = job(
+        make_packet(&plan, "a", BTreeMap::new()).unwrap(),
+        State::Retained,
+    );
+    let result = parent.result.as_ref().unwrap().clone();
+    fixture.jobs.insert("a".into(), parent);
+    let expanded = expansion::prepare(&plan, &template, &mut fixture).unwrap();
+    assert_eq!(
+        &expanded.plan.tasks[..plan.tasks.len()],
+        plan.tasks.as_slice()
+    );
+    assert_eq!(
+        expanded.packet.task.inputs,
+        [result.artifacts["note"].clone()]
+    );
+    assert_eq!(
+        expanded.packet.dependencies["a"].result_sha256,
+        canonical_digest(&result).unwrap()
+    );
+    assert_eq!(
+        expanded.upstream.as_ref().unwrap().inputs["candidate/note"].task_id,
+        "a"
+    );
+    assert!(expanded.packet.task.native_inputs.is_none());
+    assert_eq!(fixture.verified, ["a"]);
+    let raw = expanded.upstream.unwrap().canonical_bytes().unwrap();
+    assert_eq!(
+        expanded.packet.task.upstream_inputs.unwrap().sha256,
+        digest(&raw)
+    );
+}
+#[test]
+fn expansion_refuses_waiting_pending_cancelled_or_unverified_parent_jobs() {
+    let plan = plan();
+    let template = expansion_template(&plan);
+    for state in [
+        State::Waiting,
+        State::ImportPending,
+        State::Cancelled,
+        State::Retained,
+    ] {
+        let mut fixture = Fixture::default();
+        fixture.jobs.insert(
+            "a".into(),
+            job(make_packet(&plan, "a", BTreeMap::new()).unwrap(), state),
+        );
+        if state == State::Retained {
+            fixture.refused.insert(
+                "a".into(),
+                Error {
+                    kind: ErrorKind::Denied,
+                    code: "fixture-lost-retained-coverage".into(),
+                },
+            );
+        }
+        let error = expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap();
+        assert!(matches!(error.kind, ErrorKind::Busy | ErrorKind::Denied));
+    }
+}
+#[test]
+fn expansion_preserves_origin_even_for_identical_bytes_and_logical_ids() {
+    let plan = plan();
+    let mut template = expansion_template(&plan);
+    let mut fixture = Fixture::default();
+    for id in ["a", "b"] {
+        fixture.jobs.insert(
+            id.into(),
+            job(
+                make_packet(&plan, id, BTreeMap::new()).unwrap(),
+                State::Retained,
+            ),
+        );
+    }
+    template.task.depends_on.push("b".into());
+    template.task.inputs.push(expansion::Input::Parent {
+        reference: upstream::Reference {
+            task_id: "b".into(),
+            artifact: upstream::Selector::Output {
+                name: "note".into(),
+            },
+        },
+    });
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .code,
+        "expansion-logical-origin-alias"
+    );
+    let mut template = expansion_template(&plan);
+    template.task.inputs.push(expansion::Input::Fixed {
+        artifact: fixture.jobs["a"].result.as_ref().unwrap().artifacts["note"].clone(),
+    });
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .code,
+        "expansion-logical-origin-alias"
+    );
+}
+#[test]
+fn expansion_refuses_stale_bases_changed_original_parents_and_missing_selectors() {
+    let mut plan = plan();
+    let mut template = expansion_template(&plan);
+    let mut fixture = Fixture::default();
+    fixture.jobs.insert(
+        "a".into(),
+        job(
+            make_packet(&plan, "a", BTreeMap::new()).unwrap(),
+            State::Retained,
+        ),
+    );
+    template.base_plan_sha256 = "0".repeat(64);
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Stale
+    );
+    assert!(fixture.verified.is_empty());
+    template = expansion_template(&plan);
+    template.task.inputs[0] = expansion::Input::Parent {
+        reference: upstream::Reference {
+            task_id: "a".into(),
+            artifact: upstream::Selector::WorkerReceipt,
+        },
+    };
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Missing
+    );
+    plan.tasks[0].prompt.push_str(" Changed authored input.");
+    template = expansion_template(&plan);
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Stale
+    );
+}
+
+#[test]
+fn expansion_fills_tool_request_and_source_roles_from_exact_parent_selectors() {
+    let mut plan = plan();
+    plan.tasks[0].outputs.get_mut("note").unwrap().media_type = "application/json".into();
+    let runtime = artifact("parent/runtime");
+    let publication = artifact("parent/publication");
+    let request = artifact("parent/request");
+    plan.tasks[0].operation = Operation::DeterministicTool;
+    plan.tasks[0].prompt.clear();
+    plan.tasks[0].inputs = vec![publication.clone(), request.clone()];
+    plan.tasks[0].tool = Some(ToolContract {
+        schema: "reel.workflow-tool.v1".into(),
+        capability: ToolCapability::ComicRender,
+        executable: runtime.clone(),
+        publication,
+        edition_id: "es".into(),
+        request,
+        source_bindings: BTreeMap::new(),
+        part: None,
+    });
+    let mut parent = job(
+        make_packet(&plan, "a", BTreeMap::new()).unwrap(),
+        State::Retained,
+    );
+    let result = parent.result.as_mut().unwrap();
+    result.provenance = Provenance {
+        mode: Mode::Tool,
+        provider: None,
+        model: None,
+        executable: Some(runtime),
+    };
+    result.artifacts.get_mut("note").unwrap().media_type = "application/json".into();
+    result.worker_receipt = Some(artifact("parent/worker-receipt"));
+    let expected_request = result.artifacts["note"].clone();
+    let expected_receipt = result.worker_receipt.clone().unwrap();
+    let mut fixture = Fixture::default();
+    fixture.jobs.insert("a".into(), parent);
+    let mut template = expansion_template(&plan);
+    template.task.operation = Operation::DeterministicTool;
+    template.task.prompt.clear();
+    template.task.tool = Some(expansion::Tool {
+        capability: ToolCapability::ComicIssueControl,
+        executable: artifact("tool/runtime"),
+        publication: expansion::Input::Fixed {
+            artifact: artifact("publication/master"),
+        },
+        edition_id: "es".into(),
+        request: template.task.inputs[0].clone(),
+        sources: BTreeMap::from([(
+            "parts/opening/receipt.json".into(),
+            expansion::Input::Parent {
+                reference: upstream::Reference {
+                    task_id: "a".into(),
+                    artifact: upstream::Selector::WorkerReceipt,
+                },
+            },
+        )]),
+        part: None,
+    });
+    let expanded = expansion::prepare(&plan, &template, &mut fixture).unwrap();
+    let tool = expanded.packet.task.tool.as_ref().unwrap();
+    assert_eq!(tool.request, expected_request);
+    assert_eq!(
+        tool.source_bindings["parts/opening/receipt.json"],
+        expected_receipt.logical_id
+    );
+    let bindings = expanded.upstream.as_ref().unwrap();
+    assert_eq!(bindings.inputs.len(), 2);
+    assert_eq!(
+        bindings.inputs[&expected_receipt.logical_id].artifact,
+        upstream::Selector::WorkerReceipt
+    );
+    assert_eq!(expanded.packet.task.inputs.len(), 3);
+}
 #[test]
 fn only_verified_retained_results_unlock_children_with_exact_dependency_fingerprints() {
     let plan = plan();

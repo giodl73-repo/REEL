@@ -215,6 +215,20 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "input_claims_released":false,"scratch_retirement_authorized":false}),
             )
         }
+        [command, plan, bindings, template, output, apply]
+            if command == "expand-plan" && apply == "--apply" =>
+        {
+            let count = reel_workflow_native::graph::export_expansion(
+                &read_control(Path::new(plan))?,
+                &read_control(Path::new(bindings))?,
+                &read_control(Path::new(template))?,
+                Path::new(output),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-planning-expansion","declared_inputs":count,
+                "atomic_custody_snapshot":false,"production_admitted":false,"provider_invoked":false,"task_completed":false,"selected":false}),
+            )
+        }
         [command, plan, bindings] if command == "inspect-run" => {
             let plan = read_control(Path::new(plan))?;
             let bindings = read_control(Path::new(bindings))?;
@@ -645,6 +659,7 @@ fn main() -> ExitCode {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
+            "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
             "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply\n",
             "reel-workflow-native accept-upstream PACKET SOURCE ADMISSION ATTEMPT PARENTS NEW_RECEIPT --apply\n",
             "reel-workflow-native recover-admission PACKET SOURCE ADMISSION ATTEMPT NEW_RECEIPT --apply\n",
