@@ -73,7 +73,7 @@ output parent and rebuild profile files while writing, and preserves partial
 writes. It performs no admission, provider call, rendering, selection, tracker
 message/closure, job close or scratch retirement.
 
-## Scope and next qualification
+## Scope and qualification
 
 Component tests cover film/comic bilingual context, explicit evaluation, stale
 edition/evidence refusal, missing pages/timeline coverage, modality checks,
@@ -85,8 +85,8 @@ The native fixture connects the existing retained corrected comic
 production, a new retained contextual follow-up report and the original finding
 to this exporter under their exact source/operation identities. It must check
 that the reviewed material corresponds to the retained repaired outputs, not
-merely the same source commit. End-to-end qualification is pending until that
-fixture passes. Retention/adoption of the resolution itself,
+merely the same source commit. The fixture now passes for the bounded corrected
+comic case described below. Retention/adoption of the resolution itself,
 tracker close effects and their
 uncertainty reconciliation remain open. A private proposal alone is never issue
 closure evidence.
@@ -104,12 +104,56 @@ files verified against its archived source snapshot. All 98 workflow tests,
 workflow/native Clippy (native film and default features). Formatting and
 `git diff --check` pass. Four new parameterized resolution tests cover the
 contract cases above; the native exporter is compiled and included in standard
-regression checking, but has no integrated positive qualification yet.
+regression checking. This initial snapshot had no integrated positive
+qualification; the subsequent lineage evidence follows below.
 
 External evidence: `F:/src/tig-dev-temp/reel-resolution-20261119-v1/qualified-tools.json`,
 SHA256 `f5502892a10517ba6ad720d6cc02518529a625e14b538c943cbf4999503e99cd`.
 It pins the source/archive, current frozen native CLI/test executables and check
 logs. No new feature execution admitted jobs, called providers, rendered media,
 published native outputs, selected assets or closed issues in this qualification.
-The next integrated fixture and remaining closure boundaries are listed above;
-passing component tests do not substitute for them.
+This initial component evidence precedes the integrated evidence below;
+passing component tests do not substitute for integrated qualification.
+
+## Corrected comic lineage evidence
+
+Source `de6f065caf0fbc03c56c64b8b76932012b83dc28` has all 1,914 tracked
+files verified against its archived snapshot. All 98 workflow tests, 62 standard
+native tests and 247 unchanged SDK source pins pass, with strict workflow/native
+Clippy (native film and default features). The new native unit test refuses a
+different review asset at the same production commit, changed publication
+identity or changed context units.
+
+The integrated fixture passes in 265.46 test seconds / 266.17 wall seconds.
+Its preserved follow-up root is `F:/src/tig-dev-temp/.tmpkHoGyv`, with source
+`F:/src/tig-dev-temp/.tmpZPKcjk`. It reuses the original retained finding at
+`.tmpYT3pCe` and corrected comic at `.tmpWZZmCD`, admits a new contextual report,
+publishes only its three declared controls and retains the report under its
+original attempt. It then exports one private resolution proposal whose producer
+copy exactly matches the retained corrected render. Baseline and producer claim
+files remain byte-identical across execution.
+
+The report and per-unit Text evaluation are scripted technical declarations.
+They do not establish actual viewing, translation/creative approval or issue
+closure. No provider call or replacement production job runs; historical
+producer proof verification may reconstruct reference pixels. The follow-up job
+remains protected, and all original roots, runtime pins and immutable bytes are
+preserved.
+
+A read-only counterexample supplies the original historical report as the
+corrected report while naming the retained corrected producer. It refuses with
+`resolution-production-review-copy` in 101.72 wall seconds, creates no output
+proposal and leaves baseline, producer and follow-up claim files unchanged.
+The same-commit/different-media counterexample is additionally covered by the
+native unit test; the historical counterexample exercises the complete exporter
+against actual retained jobs.
+
+External evidence: `F:/src/tig-dev-temp/reel-resolution-lineage-20261119-v1/qualified-tools.json`,
+SHA256 `03caa019ddaa610eb85831f2eada1f2400ffff661fa0d1f4a2fb1afb210dc90e`.
+It pins source/archive, frozen tools, check/fixture/refusal logs, original
+operation controls, producer controls and private proposal/decision bytes.
+Qualification is Windows/NTFS, the existing synthetic single pool, one Spanish
+comic page and one original finding. Film, full issues, multiple-language native
+resolution, project adoption and actual model/creative inspection still need
+their own evidence. Retention/adoption of resolution proposals and tracker-close
+effects/reconciliation remain open.
