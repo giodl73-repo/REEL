@@ -154,6 +154,187 @@ fn advance_config() -> reel_workflow_native::advancement::Config {
     }
 }
 
+fn runner_case() -> (
+    Fixture,
+    AdmissionCase,
+    reel_workflow::recipe::Recipe,
+    reel_workflow_native::runner::Config,
+    graph::Bindings,
+) {
+    let fixture = Fixture::new();
+    let case = AdmissionCase::with_extra_slot(
+        &fixture,
+        tig_core::Digest::blob(b"synthetic-store"),
+        None,
+        true,
+    );
+    let (recipe, config, bindings) = runner_configuration(&fixture, &case, &advance_config());
+    (fixture, case, recipe, config, bindings)
+}
+pub(super) fn runner_configuration(
+    fixture: &Fixture,
+    case: &AdmissionCase,
+    handoff: &reel_workflow_native::advancement::Config,
+) -> (
+    reel_workflow::recipe::Recipe,
+    reel_workflow_native::runner::Config,
+    graph::Bindings,
+) {
+    let (base, _frozen) = freeze(fixture, case);
+    let task = &base.tasks[0];
+    let mut steps = Vec::new();
+    let mut configs = BTreeMap::new();
+    for (id, slot, dependencies) in [
+        ("one", "slot", vec![]),
+        ("two", "slot2", vec![]),
+        ("after-one", "slot3", vec!["one".to_string()]),
+    ] {
+        steps.push(TaskTemplate {
+            id: id.into(),
+            operation: task.operation,
+            language: task.language.clone(),
+            prompt: task.prompt.clone(),
+            depends_on: dependencies,
+            inputs: task
+                .inputs
+                .iter()
+                .cloned()
+                .map(|artifact| Input::Fixed { artifact })
+                .collect(),
+            outputs: task.outputs.clone(),
+            tool: None,
+        });
+        let mut admission = case.profile.clone();
+        admission.scope.actor = tig_store::Key::parse(slot).unwrap();
+        admission.scope.operation = tig_store::Key::parse(&format!("runner-{id}")).unwrap();
+        configs.insert(
+            id.into(),
+            reel_workflow_native::runner::Step {
+                source: serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap(),
+                admission,
+                attempt_id: "attempt-1".into(),
+                handoff: serde_json::from_slice(&serde_json::to_vec(handoff).unwrap()).unwrap(),
+            },
+        );
+    }
+    let recipe = reel_workflow::recipe::Recipe {
+        schema: "reel.workflow-recipe.v1".into(),
+        base,
+        steps,
+    };
+    let config = reel_workflow_native::runner::Config {
+        schema: "reel.workflow-recipe-runner.v1".into(),
+        steps: configs,
+    };
+    let bindings = graph::Bindings {
+        schema: "reel.workflow-run-bindings.v1".into(),
+        tasks: BTreeMap::new(),
+    };
+    (recipe, config, bindings)
+}
+
+#[test]
+fn recipe_runner_resumes_original_adoption_then_advances_independent_work_and_preserves_waiting_descendants()
+ {
+    use reel_workflow_native::runner::advance;
+    let (_fixture, case, recipe, config, bindings) = runner_case();
+    let root = case.temp.path().join("runner");
+    let first = advance(&recipe, &recipe.base, &bindings, &config, &root, 1).unwrap();
+    assert_eq!(first.advanced, vec!["one"]);
+    assert_eq!(first.checkpoint, 1);
+    let witness = fs::read(root.join("task-001/admission.json")).unwrap();
+    fs::rename(
+        root.join("state-001.json"),
+        root.join("preserved-first-state.json"),
+    )
+    .unwrap();
+    let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+    let recovered = advance(&recipe, &recipe.base, &bindings, &config, &root, 1).unwrap();
+    assert_eq!(recovered.advanced, vec!["one"]);
+    assert_eq!(
+        header,
+        fs::read(case.profile.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        witness,
+        fs::read(root.join("task-001/admission.json")).unwrap()
+    );
+    assert_eq!(
+        fs::read(root.join("preserved-first-state.json")).unwrap(),
+        fs::read(root.join("state-001.json")).unwrap()
+    );
+    let second = advance(&recipe, &recipe.base, &bindings, &config, &root, 1).unwrap();
+    assert_eq!(second.advanced, vec!["two"]);
+    assert_eq!(second.checkpoint, 2);
+    let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+    let waiting = advance(&recipe, &recipe.base, &bindings, &config, &root, 16).unwrap();
+    assert!(waiting.advanced.is_empty());
+    assert_eq!(waiting.checkpoint, 2);
+    assert_eq!(
+        header,
+        fs::read(case.profile.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        waiting
+            .schedule
+            .rows
+            .iter()
+            .find(|r| r.task_id == "after-one")
+            .unwrap()
+            .state,
+        reel_workflow::recipe::State::Blocked
+    );
+}
+
+#[test]
+fn recipe_runner_refuses_identity_collisions_changed_intent_and_partial_checkpoint_without_new_effects()
+ {
+    use reel_workflow_native::runner::advance;
+    let (_fixture, case, recipe, mut config, bindings) = runner_case();
+    let root = case.temp.path().join("runner");
+    assert_eq!(
+        advance(&recipe, &recipe.base, &bindings, &config, &root, 0)
+            .err()
+            .unwrap()
+            .code,
+        "runner-configuration"
+    );
+    let second = config.steps["two"].admission.scope.clone();
+    config.steps.get_mut("two").unwrap().admission.scope =
+        config.steps["one"].admission.scope.clone();
+    assert_eq!(
+        advance(&recipe, &recipe.base, &bindings, &config, &root, 1)
+            .err()
+            .unwrap()
+            .code,
+        "runner-step-identity"
+    );
+    assert!(!root.exists());
+    config.steps.get_mut("two").unwrap().admission.scope = second;
+    advance(&recipe, &recipe.base, &bindings, &config, &root, 1).unwrap();
+    let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+    config.steps.get_mut("two").unwrap().attempt_id = "changed".into();
+    assert_eq!(
+        advance(&recipe, &recipe.base, &bindings, &config, &root, 1)
+            .err()
+            .unwrap()
+            .code,
+        "advance-immutable-control"
+    );
+    config.steps.get_mut("two").unwrap().attempt_id = "attempt-1".into();
+    fs::write(root.join("state-001.json"), b"partial checkpoint").unwrap();
+    assert!(advance(&recipe, &recipe.base, &bindings, &config, &root, 1).is_err());
+    assert_eq!(
+        fs::read(root.join("state-001.json")).unwrap(),
+        b"partial checkpoint"
+    );
+    assert_eq!(
+        header,
+        fs::read(case.profile.index_root.join("claims.json")).unwrap()
+    );
+    assert!(!root.join("pending-002.json").exists());
+}
+
 #[test]
 fn advancement_reconciles_preexisting_original_admission_before_creating_controls() {
     let (_fixture, case, base, frozen) = prepare();

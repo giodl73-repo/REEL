@@ -18,6 +18,9 @@ mod close_native;
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
 #[cfg(windows)]
+#[path = "support/runner_native.rs"]
+mod runner_native;
+#[cfg(windows)]
 use close_native::exercise_native_close;
 #[cfg(windows)]
 #[path = "support/issue_native.rs"]

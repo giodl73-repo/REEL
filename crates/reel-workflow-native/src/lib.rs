@@ -23,6 +23,7 @@ mod producer;
 mod qualified;
 pub mod response;
 pub mod retention;
+pub mod runner;
 pub mod staging;
 pub mod upstream;
 pub use staging::comic_export;

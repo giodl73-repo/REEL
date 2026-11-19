@@ -34,7 +34,7 @@ pub struct Summary {
     pub already_adopted: bool,
 }
 
-fn raw(value: &impl Serialize) -> Result<Vec<u8>> {
+pub(crate) fn raw(value: &impl Serialize) -> Result<Vec<u8>> {
     let raw =
         serde_json::to_vec(value).map_err(|_| error(ErrorKind::Invalid, "advance-control-json"))?;
     if raw.len() > reel_workflow::MAX_CONTROL_BYTES {
@@ -44,7 +44,7 @@ fn raw(value: &impl Serialize) -> Result<Vec<u8>> {
 }
 /// Existing controls are immutable. A partial file needs explicit diagnosis,
 /// never truncation or an inferred fresh attempt.
-fn persist(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn persist(path: &Path, bytes: &[u8]) -> Result<()> {
     match fs::OpenOptions::new()
         .write(true)
         .create_new(true)

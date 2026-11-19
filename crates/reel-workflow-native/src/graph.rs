@@ -117,6 +117,14 @@ fn observer<'a>(plan: &Plan, bindings: &'a Bindings) -> Result<NativeObserver<'a
 pub fn inspect(plan: &Plan, bindings: &Bindings) -> Result<graph::Frontier> {
     graph::inspect(plan, &mut observer(plan, bindings)?)
 }
+pub fn schedule_recipe(
+    plan: &Plan,
+    bindings: &Bindings,
+    recipe: &reel_workflow::recipe::Recipe,
+    limit: usize,
+) -> Result<reel_workflow::recipe::Schedule> {
+    reel_workflow::recipe::inspect(recipe, plan, limit, &mut observer(plan, bindings)?)
+}
 
 pub(crate) fn expansion_parents(
     plan: &Plan,

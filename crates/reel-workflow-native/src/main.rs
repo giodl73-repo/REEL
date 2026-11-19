@@ -63,6 +63,32 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            recipe,
+            plan,
+            bindings,
+            config,
+            directory,
+            limit,
+            apply,
+        ] if command == "advance-recipe" && apply == "--apply" => {
+            let limit = limit.parse().map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "runner-limit".into(),
+            })?;
+            let summary = reel_workflow_native::runner::advance(
+                &read_control(Path::new(recipe))?,
+                &read_control(Path::new(plan))?,
+                &read_control(Path::new(bindings))?,
+                &read_control(Path::new(config))?,
+                Path::new(directory),
+                limit,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-recipe-admission-runner","summary":summary,"provider_invoked":false,"scratch_allocated":false,"selected":false,"input_claims_released":false}),
+            )
+        }
         [command, plan, frozen, pin, config, directory, apply]
             if command == "advance-expanded" && apply == "--apply" =>
         {
@@ -774,6 +800,7 @@ fn main() -> ExitCode {
             "reel-workflow-native recover-close TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native schedule-recipe RECIPE PLAN RUN_BINDINGS LIMIT NEW_PRIVATE_SCHEDULE --apply\n",
             "reel-workflow-native advance-expanded PLAN FROZEN FROZEN_SHA256 CONFIG PRIVATE_DIRECTORY --apply\n",
+            "reel-workflow-native advance-recipe RECIPE BASE_PLAN BASE_BINDINGS CONFIG PRIVATE_DIRECTORY LIMIT --apply\n",
             "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
             "reel-workflow-native prepare-expanded PLAN RUN_BINDINGS TEMPLATE SOURCE ADMISSION ATTEMPT NEW_FROZEN --apply\n",
             "reel-workflow-native accept-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
