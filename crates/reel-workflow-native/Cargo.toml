@@ -11,9 +11,11 @@ description = "Exact native inputs and explicit durable input claims for REEL wo
 
 [dependencies]
 anyhow = "1.0.100"
+base64 = "0.22.1"
 fs2 = "=0.4.3"
 reel-assets = { path = "../reel-assets" }
 reel-workflow = { path = "../reel-workflow" }
+reel-workflow-http = { path = "../reel-workflow-http" }
 reel-publication = { path = "../reel-publication", features = ["comic"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1.0.145"

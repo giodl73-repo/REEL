@@ -24,6 +24,8 @@ const MAX_ENTRIES: usize = 2048;
 const ATTEMPTS: usize = 4;
 #[path = "comic_export.rs"]
 pub mod comic_export;
+#[path = "provider.rs"]
+pub mod provider;
 #[path = "worker.rs"]
 pub mod worker;
 

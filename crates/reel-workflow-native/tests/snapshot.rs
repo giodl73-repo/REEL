@@ -21,6 +21,9 @@ mod close_native;
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
 #[cfg(windows)]
+#[path = "support/provider_native.rs"]
+mod provider_native;
+#[cfg(windows)]
 #[path = "support/runner_native.rs"]
 mod runner_native;
 #[cfg(windows)]

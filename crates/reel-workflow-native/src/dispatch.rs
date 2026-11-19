@@ -13,6 +13,8 @@ pub struct Config {
     pub schema: String,
     pub input_staging: staging::Profile,
     pub worker_staging: Option<staging::Profile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<crate::provider::Config>,
 }
 impl Config {
     pub(crate) fn check_operation(
@@ -22,6 +24,7 @@ impl Config {
     ) -> Result<()> {
         if self.schema != "reel.workflow-dispatch.v1"
             || self.worker_staging.is_some() != (operation == Operation::DeterministicTool)
+            || (self.provider.is_some() && self.worker_staging.is_some())
         {
             return Err(error(ErrorKind::Invalid, "dispatch-operation-mode"));
         }
@@ -47,6 +50,7 @@ pub struct Summary {
     pub state: State,
     pub batch: Option<graph::PinnedFile>,
     pub already_ready: bool,
+    pub provider_called: bool,
 }
 fn read(path: &Path) -> Result<Vec<u8>> {
     let (bytes, _held) = staging::read_held(path, reel_workflow::MAX_CONTROL_BYTES as u64)?;
@@ -72,6 +76,9 @@ fn check_config(
         packet.task.operation,
         packet.task.tool.as_ref().map(|t| t.capability),
     )?;
+    if let Some(provider) = &config.provider {
+        crate::provider::check(packet, provider)?;
+    }
     if let Some(tool) = &packet.task.tool
         && (tool.executable.sha256 != profile.runtime.sha256
             || tool.executable.bytes != profile.runtime.bytes)
@@ -130,6 +137,7 @@ pub fn run(
             state: State::Retained,
             batch: None,
             already_ready: true,
+            provider_called: false,
         });
     }
     if !matches!(
@@ -169,7 +177,10 @@ pub fn run(
         held.push(file);
     }
     let mut scratch_guards = Vec::new();
-    for p in std::iter::once(&config.input_staging).chain(config.worker_staging.iter()) {
+    for p in std::iter::once(&config.input_staging)
+        .chain(config.worker_staging.iter())
+        .chain(config.provider.iter().map(|p| &p.workspace))
+    {
         let scratch = reel_assets::jobs::open_workspace_directory(&p.parent)
             .map_err(|_| error(ErrorKind::Denied, "dispatch-scratch-parent"))?;
         for (p, journal) in &controls {
@@ -257,6 +268,7 @@ pub fn run(
     }
     let batch = saved_pin(&batch_path, &directory.join("ready-pin.json"))?;
     drop(graph::select(plan, &staged, &batch, id)?);
+    let mut provider_called = false;
     let state = if let Some(worker) = &config.worker_staging {
         let path = directory.join("worker-ticket.json");
         if !path.exists() {
@@ -264,6 +276,15 @@ pub fn run(
         }
         let worker_pin = saved_pin(&path, &directory.join("worker-ticket-pin.json"))?;
         staging::worker::run_file(plan, &staged, &path, &worker_pin.sha256)?
+    } else if let Some(provider) = &config.provider {
+        let path = directory.join("provider-ticket.json");
+        if !path.exists() {
+            crate::provider::prepare_file(plan, &staged, &batch, id, provider, &path)?;
+        }
+        let provider_pin = saved_pin(&path, &directory.join("provider-ticket-pin.json"))?;
+        let outcome = crate::provider::run_file(plan, &staged, &path, &provider_pin.sha256)?;
+        provider_called = outcome.called;
+        outcome.state
     } else {
         if observed.state != State::Waiting {
             return Err(error(
@@ -286,5 +307,6 @@ pub fn run(
         state,
         batch: Some(batch),
         already_ready,
+        provider_called,
     })
 }

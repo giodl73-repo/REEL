@@ -270,7 +270,8 @@ pub fn advance(
             prior,
             reel_workflow::handoff::State::Retained | reel_workflow::handoff::State::Cancelled
         ) || (prior == reel_workflow::handoff::State::ImportPending
-            && execution.worker_staging.is_none())
+            && execution.worker_staging.is_none()
+            && execution.provider.is_none())
         {
             continue;
         }
@@ -278,7 +279,10 @@ pub fn advance(
         let bindings: graph::Bindings =
             reel_workflow::decode(&read(&folder.join("bindings.json"))?)?;
         let result = dispatch::run(&plan, &bindings, id, execution, &folder.join("execution"))?;
-        if !result.already_ready || execution.worker_staging.is_some() {
+        if !result.already_ready
+            || execution.worker_staging.is_some()
+            || execution.provider.is_some()
+        {
             resumed += 1;
         }
         dispatched.push(result);

@@ -158,6 +158,7 @@ fn dispatch_config(root: &Path) -> reel_workflow_native::dispatch::Config {
     let parent = root.join("dispatch-inputs");
     fs::create_dir(&parent).unwrap();
     reel_workflow_native::dispatch::Config {
+        provider: None,
         schema: "reel.workflow-dispatch.v1".into(),
         input_staging: reel_workflow_native::staging::Profile {
             schema: "reel.workflow-staging.v1".into(),

@@ -49,6 +49,7 @@ pub(super) fn run_comic(
         }
     };
     let config = dispatch::Config {
+        provider: None,
         schema: "reel.workflow-dispatch.v1".into(),
         input_staging: stage("automatic-inputs"),
         worker_staging: Some(stage("automatic-worker")),

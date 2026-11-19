@@ -74,7 +74,7 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 Path::new(directory),
             )?;
             Ok(
-                serde_json::json!({"ok":true,"scope":"native-protected-task-dispatch","task_completed":summary.state==reel_workflow::handoff::State::Retained,"summary":summary,"provider_invoked":false,"selected":false,"input_claims_released":false}),
+                serde_json::json!({"ok":true,"scope":"native-protected-task-dispatch","task_completed":summary.state==reel_workflow::handoff::State::Retained,"provider_invoked":summary.provider_called,"summary":summary,"selected":false,"input_claims_released":false}),
             )
         }
         [
@@ -100,7 +100,7 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 limit,
             )?;
             Ok(
-                serde_json::json!({"ok":true,"scope":"native-recipe-admission-runner","summary":summary,"provider_invoked":false,"selected":false,"input_claims_released":false}),
+                serde_json::json!({"ok":true,"scope":"native-recipe-admission-runner","provider_invoked":summary.dispatched.iter().any(|s|s.provider_called),"summary":summary,"selected":false,"input_claims_released":false}),
             )
         }
         [command, plan, frozen, pin, config, directory, apply]
