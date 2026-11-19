@@ -58,6 +58,30 @@ pub(super) fn run_graph(
     bindings: &graph::Bindings,
 ) -> std::process::Output {
     let root = case.temp.path();
+    run_graph_root(
+        root,
+        packet,
+        profile,
+        executable,
+        result_path,
+        controls,
+        auxiliary_programs,
+        plan,
+        bindings,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_graph_root(
+    root: &Path,
+    packet: &Packet,
+    profile: &reel_workflow_native::handoff::Profile,
+    executable: &Path,
+    result_path: &Path,
+    controls: &mut Vec<(&'static str, Vec<u8>)>,
+    auxiliary_programs: &BTreeMap<String, Tool>,
+    plan: &Plan,
+    bindings: &graph::Bindings,
+) -> std::process::Output {
     let stage = |name: &str| {
         let parent = root.join(name);
         fs::create_dir(&parent).unwrap();

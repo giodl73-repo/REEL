@@ -38,6 +38,237 @@ fn native_bytes(source: &NativeProfile, pin: &Artifact) -> Vec<u8> {
 }
 
 #[test]
+#[ignore = "Resume only the preserved corrected-comic operation after runtime-pin refusal; no new admission or input publication"]
+fn resume_original_corrected_comic_after_runtime_pin_refusal() {
+    use reel_workflow_native::graph;
+    let root = PathBuf::from(
+        std::env::var_os("REEL_COMIC_REPAIR_RESUME_ROOT")
+            .expect("Set original accepted operation root"),
+    );
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_COMIC_REPAIR_EVIDENCE_DIRECTORY")
+            .expect("Set recovery evidence directory"),
+    );
+    let marker: serde_json::Value = load(root.join("original-operation.json"));
+    assert_eq!(
+        PathBuf::from(marker["root"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        root.canonicalize().unwrap()
+    );
+    let original = PathBuf::from(marker["original"].as_str().unwrap());
+    let report_root = PathBuf::from(marker["report"].as_str().unwrap());
+    let packet: Packet = load(root.join("packet.json"));
+    assert_eq!(marker["task_key"], packet.task_key);
+    let profile_path = root.join("handoff-profile.json");
+    let profile: reel_workflow_native::handoff::Profile = load(&profile_path);
+    let receipt: reel_workflow_native::admission::Receipt = load(root.join("receipt.json"));
+    assert_eq!(
+        canonical_digest(&receipt).unwrap(),
+        canonical_digest(&profile.binding.admission).unwrap()
+    );
+    let mut admitted =
+        NativeInputs::open_admitted(&packet, &profile.source, &profile.admission, &receipt)
+            .unwrap();
+    reel_workflow::publication::bind_comic(&packet, &mut admitted).unwrap();
+    drop(admitted);
+    let old_profile: reel_workflow_native::handoff::Profile =
+        load(original.join("comic-profile.json"));
+    let old_result: ReturnedResult = load(original.join("comic-result.json"));
+    let report_packet = load(report_root.join("packet.json"));
+    let report_source = load(report_root.join("source.json"));
+    let report_profile: reel_workflow_native::admission::Profile =
+        load(report_root.join("admission.json"));
+    let guard = retention::verify(
+        &report_packet,
+        &report_source,
+        &report_profile,
+        &load(report_root.join("receipt.json")),
+        &load(report_root.join("result.json")),
+        &load(report_root.join("ack.json")),
+    )
+    .unwrap();
+    let checked = guard.review_report().unwrap().clone();
+    drop(guard);
+    let candidate = repair::materialize(
+        &load(root.join("baseline.json")),
+        &checked,
+        &load(root.join("repair.json")),
+        &load(root.join("revision.json")),
+    )
+    .unwrap();
+    assert_eq!(
+        make_packet(&candidate.plan, &packet.task.id, BTreeMap::new()).unwrap(),
+        packet
+    );
+    let old_claims = fs::read(old_profile.admission.index_root.join("claims.json")).unwrap();
+    let report_claims = fs::read(report_profile.index_root.join("claims.json")).unwrap();
+    fs::write(
+        evidence.join("original-comic-claims-at-resume.bin"),
+        &old_claims,
+    )
+    .unwrap();
+    fs::write(
+        evidence.join("original-report-claims-at-resume.bin"),
+        &report_claims,
+    )
+    .unwrap();
+    let old_clean = native_bytes(
+        &old_profile.source,
+        &old_result.artifacts["page01-clean.png"],
+    );
+    let old_reading = native_bytes(
+        &old_profile.source,
+        &old_result.artifacts["page01-reading.png"],
+    );
+    let journal = root.join("journal");
+    assert!(
+        !journal.exists(),
+        "This recovery is only for the pre-journal runtime-pin refusal"
+    );
+    save(evidence.join("original-operation-roots.json"), &marker);
+    save(
+        root.join("phase.json"),
+        &json!({"phase":"resume-original-accepted-operation-with-pinned-runtime"}),
+    );
+    let created = Command::new(&profile.runtime.path)
+        .arg("create-handoff")
+        .arg(root.join("packet.json"))
+        .arg(&profile_path)
+        .arg(&journal)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    fs::write(evidence.join("create-handoff-stdout.json"), &created.stdout).unwrap();
+    assert!(
+        created.status.success(),
+        "{} {}",
+        String::from_utf8_lossy(&created.stdout),
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let bindings = graph::Bindings {
+        schema: "reel.workflow-run-bindings.v1".into(),
+        tasks: BTreeMap::from([(
+            packet.task.id.clone(),
+            graph::Binding {
+                journal: journal.clone(),
+                profile: graph::PinnedFile {
+                    path: profile_path,
+                    sha256: digest(&fs::read(root.join("handoff-profile.json")).unwrap()),
+                },
+                staging_ticket: None,
+            },
+        )]),
+    };
+    let mut controls = Vec::new();
+    let result_path = root.join("result.json");
+    automatic_dispatch::run_graph_root(
+        &root,
+        &packet,
+        &profile,
+        &profile.runtime.path,
+        &result_path,
+        &mut controls,
+        &BTreeMap::new(),
+        &candidate.plan,
+        &bindings,
+    );
+    for (name, raw) in controls {
+        fs::write(root.join(name), raw).unwrap();
+    }
+    let result: ReturnedResult = load(&result_path);
+    let ack = load(ack_path(&profile, &packet));
+    save(root.join("ack.json"), &ack);
+    save(
+        root.join("phase.json"),
+        &json!({"phase":"verify-original-corrected-render-after-recovery"}),
+    );
+    drop(
+        retention::verify(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &receipt,
+            &result,
+            &ack,
+        )
+        .unwrap(),
+    );
+    assert_eq!(
+        native_bytes(&profile.source, &result.artifacts["page01-clean.png"]),
+        old_clean
+    );
+    assert_ne!(
+        native_bytes(&profile.source, &result.artifacts["page01-reading.png"]),
+        old_reading
+    );
+    assert!(
+        String::from_utf8(native_bytes(
+            &profile.source,
+            &result.artifacts["transcript.json"]
+        ))
+        .unwrap()
+        .contains("Mira la luz.")
+    );
+    let reviewed = retention::review_copy(
+        &packet,
+        &profile.source,
+        &profile.admission,
+        &receipt,
+        &result,
+        &ack,
+    )
+    .unwrap();
+    assert_eq!(reviewed.copy().units, checked.copy().units);
+    assert_ne!(reviewed.copy().review, checked.copy().review);
+    assert_eq!(reviewed.copy().source_commit, packet.source_commit);
+    let old_report = review::Report {
+        schema: "reel.workflow-review-report.v1".into(),
+        copy_sha256: canonical_digest(checked.copy()).unwrap(),
+        findings: checked
+            .findings()
+            .values()
+            .map(|f| f.finding().clone())
+            .collect(),
+    };
+    assert_eq!(
+        review::check_report(reviewed.copy(), &old_report)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Stale
+    );
+    save(root.join("corrected-review-copy.json"), reviewed.copy());
+    fs::write(
+        root.join("corrected-review-manifest.json"),
+        reviewed.manifest().unwrap(),
+    )
+    .unwrap();
+    drop(reviewed);
+    assert_eq!(
+        canonical_digest(&receipt).unwrap(),
+        canonical_digest(&load::<reel_workflow_native::admission::Receipt>(
+            root.join("receipt.json")
+        ))
+        .unwrap()
+    );
+    assert_eq!(
+        old_claims,
+        fs::read(old_profile.admission.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        report_claims,
+        fs::read(report_profile.index_root.join("claims.json")).unwrap()
+    );
+    let outcome = json!({"root":root,"fixture":marker["fixture"],"finding_bound":true,"new_source_commit":packet.source_commit,"original_task_key":packet.task_key,"original_receipt_unchanged":true,"original_admitted_inputs_reopened_before_recovery":true,"readmission":false,"input_republication":false,"retained":true,"replay_without_render_or_claim_changes":true,"clean_art_unchanged":true,"reading_pixels_changed":true,"corrected_transcript_verified":true,"review_unit_ids_preserved":true,"stale_report_refused":true,"old_claims_unchanged_during_resume":true,"human_reviewed":false,"selected":false,"issue_closed":false});
+    save(root.join("qualification-result.json"), &outcome);
+    save(evidence.join("qualification-result.json"), &outcome);
+    save(
+        root.join("phase.json"),
+        &json!({"phase":"qualified-corrected-render-awaiting-contextual-review"}),
+    );
+}
+
+#[test]
 #[ignore = "Existing retained synthetic comic/report only; creates a new protected corrected render and review copy in the existing pool, preserves every root"]
 fn retained_finding_drives_corrected_comic_render_retention_and_contextual_review_copy() {
     let original = PathBuf::from(
@@ -233,6 +464,8 @@ fn retained_finding_drives_corrected_comic_render_retention_and_contextual_revie
     };
     case.source.source.pool.control = control;
     let root = case.temp.path();
+    fs::write(root.join("original-comic-claims.bin"), &original_claims).unwrap();
+    fs::write(root.join("original-report-claims.bin"), &report_claims).unwrap();
     let source_root = root.join("corrected-inputs");
     fs::create_dir(&source_root).unwrap();
     let marker = json!({"root":root,"fixture":fixture.temp.path(),"original":original,"report":report_root,"task_key":fixture.packet.task_key,"attempt":"attempt-1","runtime":old_profile.runtime,"controller":controller});
@@ -297,7 +530,7 @@ fn retained_finding_drives_corrected_comic_render_retention_and_contextual_revie
         root.join("phase.json"),
         &json!({"phase":"create-and-dispatch-corrected-render"}),
     );
-    let created = Command::new(&controller)
+    let created = Command::new(&old_profile.runtime.path)
         .arg("create-handoff")
         .arg(&packet_path)
         .arg(&profile_path)

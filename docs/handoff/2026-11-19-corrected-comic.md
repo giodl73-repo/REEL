@@ -48,6 +48,16 @@ phase observations, source commit, packet, receipt, handoff profile, worker
 tickets/results and acknowledgement. Failure must be recovered from those exact
 handles; never rerun the entire fixture under a new identity after effects.
 
+The initial fixture used the newer controller to create a handoff pinned to the
+older producer runtime. `handoff-current-executable-pin` correctly refused that
+call before journal creation, after input admission/publication. The fixture now
+uses the original pinned runtime for lifecycle effects too. Its explicit
+`resume_original_corrected_comic_after_runtime_pin_refusal` continuation reopens
+the original accepted inputs and verifies the original candidate/receipt before
+creating the missing journal. It does not readmit or republish inputs. This
+continuation is specifically bounded to that pre-journal refusal, not a generic
+retry of an uncertain renderer or arbitrary partially created workspace.
+
 Applied the editor, comics-editor and rights/provenance checklists: the corrected
 wording is explicit synthetic input, neighboring/full-edition review remains
 required, editable source pins survive, and technical completion grants no
