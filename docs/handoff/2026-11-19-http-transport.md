@@ -27,3 +27,12 @@ Provider-specific image/text/ElevenLabs adapters, raw response evidence retentio
 service operation lookup, contextual review/fixes and the full project completion
 ledger remain open. Producer-applied privacy/provenance and recovery checklists
 are not independent review, speaker consent or release authority.
+
+Local qualification evidence:
+`F:/src/tig-dev-temp/reel-workflow-http-20261119-v1/qualified-tools.json`.
+Source pin `0abd96e`; all 1,835 archived repository files match, with manifest
+SHA256 `529d39b44e271ade3af929fd9fa58c6497a1dbfb60b1fd6a4d09eef93eb3a9ec`.
+Frozen HTTP executable SHA256:
+`007dcb5135f16dd0c47d4cab46764480e27dbeaeecdd4685ff608106fb7e6947`.
+This qualifies synthetic local HTTP and CLI behavior, not real-service HTTPS,
+account access, model/voice entitlement or native protected-provider completion.
