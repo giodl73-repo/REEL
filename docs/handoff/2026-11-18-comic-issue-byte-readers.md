@@ -29,3 +29,15 @@ Private qualification evidence belongs in
 The focused complete-packet replay test, all 63 shared workflow/publication/print
 tests, strict Clippy and `git diff --check` passed. These checks qualify the
 byte-reader assembly seam; they do not qualify native issue production.
+
+For the native adapter, part results expose named reading/page outputs and the
+worker receipt; editable sources are not automatically additional result
+artifacts. An assembly task must explicitly declare every required source as
+well as part receipts/outputs, retaining its original Git or upstream logical
+origin. A receipt's source-object list cannot manufacture input custody.
+
+The adapter must apply its existing limits in addition to the local assembler's
+limits: 128 declared inputs, 64 MiB input closure, 128 changed paths per native
+phase and owned staging's 256-file bound. The portable 128-part issue grammar
+does not promise that every issue fits a single native job. Refuse oversized
+closures and require explicit grouping; do not widen limits or hide extra reads.

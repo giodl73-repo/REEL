@@ -36,12 +36,17 @@ reuse. Source controls remain private and no provider calls are implicit.
 
 The composite native fixture passed, including loss of original source-actor
 coverage, bare-history replay, editable export/restoration and a fresh text edit.
-All 37 default native tests and strict native Clippy passed. The 29 shared
-source/Cargo files match the preceding qualified baseline, preserving its 63
-shared tests. The nine existing-store native regression cases are being rerun;
-their final disposition belongs in the evidence packet rather than an inferred
-pass here.
+All 37 default native tests, the nine existing-store native regression cases
+and strict native Clippy passed. Together with the new composite case, this is
+47 native tests. The 29 shared source/Cargo files match the preceding qualified
+baseline, preserving its 63 shared tests at this native source snapshot:
+110 distinct tests in the scoped qualification. The subsequent byte-reader
+assembler change separately reruns all 63 shared tests against its own source
+snapshot; it does not add native issue-production qualification.
 
 Private evidence: `F:/src/tig-dev-temp/reel-workflow-composite-comic-20261118-v1`.
 Frozen CLI SHA256: `dbd2b764a4da7ef096daf14862491e99d6184cea6265d38504423ebab9286269`;
 fixture SHA256: `2710552e9bb7cfd7cdc7254cbab63c55bfbc114f6c57bad27d499cf5d3bb0d2b`.
+The native source archive contains 1,792 files, all verified after extraction;
+source-manifest SHA256:
+`3de80b65c150a2ad3dad84fb5f7f0a0368bd6a2acd31ac3d0de23d5eb586480a`.
