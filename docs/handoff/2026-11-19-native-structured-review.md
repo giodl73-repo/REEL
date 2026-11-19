@@ -49,12 +49,24 @@ Input and output sets are each bounded to 128 MiB, with existing source reader,
 actor and changed-path limits still applicable. No new cache engine or implicit
 selection, claim release, cleanup or issue delivery is introduced.
 
-Qualification is pending. The existing-pool fixture consumes the prior native
-comic review export and actual reading-image pins, admits new controls, refuses
-stale findings with unchanged claims, then ingests/retains a valid report under
-the original attempt, completes the handoff journal and replays without caller
-return files before verifying using bare Git metadata and native bytes. The
+Qualification passed in 173.71 seconds at source `f8f0460`. The existing-pool
+fixture consumes the prior native comic review export and actual reading-image
+pins, admits new controls, refuses stale findings with unchanged claims and a
+byte-identical Waiting journal, then ingests/retains a valid report under the
+original attempt. It completes the handoff journal and replays without supplying
+return bindings before verifying using bare Git metadata and native bytes. The
 embedding Rust executable is itself the pinned lifecycle runtime in this fixture.
+Original control and Git roots are `.tmpYT3pCe` and `.tmplHicbD`; all refused
+bytes, original work, acknowledgement, journal and scratch remain preserved.
+
+All 81 workflow tests, 57 default native tests, the 247 SDK source pins and strict
+Clippy for workflow/native with and without `film` pass. Formatting and
+`git diff --check` pass. All 1,879 archived source files match. Exact source,
+fixture/runtime and control/log pins are recorded in
+`F:/src/tig-dev-temp/reel-native-structured-review-20261119-v1/qualified-tools.json`
+(SHA256 `eb1a1c0ac05cc6844ea96303b5db34c40f1989bf6ad219b7096bbce324f5e916`).
+This qualifies the bounded single-pool Windows/NTFS comic case through embedded
+Rust interfaces; it does not qualify arbitrary media/project/provider combinations.
 
 This validates declared maps and native custody; it does not authenticate that
 arbitrary caller-authored maps came from a producer. The separate native review

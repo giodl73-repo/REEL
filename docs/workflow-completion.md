@@ -18,7 +18,7 @@ checked again before closing the objective.
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md), retained movie worker and [native review export](handoff/2026-11-19-native-review-export.md) preserve compiled cel/shot IDs, review MP4/font and frame/sample map; bounded synthetic native export binds findings after slot reuse | Translate workflow film controls into the renderer; connect protected structured-review tasks, actual fixes and affected-consumer invalidation. |
-| Packaging, review, issue filing and fixes | Existing packaging/review checks; [shared review/repair contracts](handoff/2026-11-19-review-repair-contracts.md) bind exact film/comic units, languages, returned report bytes/evidence, stable finding/issue proposal keys and proposed dependency rebuild scope | Root producer-map export/binding, native structured-review ingress, authorized issue delivery/reconciliation, scoped repair execution, corrected contextual review and evidenced closure. Local issue proposals are private and unsent. |
+| Packaging, review, issue filing and fixes | Existing packaging/review checks; shared review/repair contracts and native producer-map export; [protected structured reports](handoff/2026-11-19-native-structured-review.md) qualify stale-report refusal before journal intent, native retention/completion/replay and bare history in the bounded comic fixture | Automatic producer-to-review admission lineage, complete issue review export, broader film/project review qualification, authorized issue delivery/reconciliation, scoped repair execution, corrected contextual review and evidenced closure. Local issue proposals are private and unsent. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
 | Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan; owned exact-runtime comic dispatch and composite art dependency replay; bounded two-part retained issue assembly/history/export/edit test passes | Automatic derived controls, complete issue scheduling and larger/project qualification. |
 | Larger complete comic issues | Explicit grouping preserves spreads; selected-part native admission binds the full master/plan; editable packet carriers reduce declared object counts; bounded native two-part issue preserves ordered reading and editable sources through retained assembly | Implement full part scheduling and automatic derived controls within actor/128-path bounds; qualify larger actual issues. Two-part native, three-page local assembly and 40-page metadata evidence do not establish arbitrary issue sizes. |
@@ -175,6 +175,18 @@ finding binding and unchanged claims. All 79 workflow tests, 57 default native
 tests, 247 SDK pins and strict Clippy pass. Exported controls still need explicit
 admission/retention before use by another native task. Complete issue assembly
 review export, structured native report ingestion, tracker delivery, repair
+execution and evidenced closure remain open.
+The [protected structured review operation](handoff/2026-11-19-native-structured-review.md)
+now explicitly pins the reviewed production commit separately from the consumer
+admission snapshot. It validates request/copy metadata before dispatch and
+structured findings before candidate work, publication and handoff import intent;
+native retention/history reopens bytes and rechecks report semantics. Its
+173.71-second comic fixture leaves a stale report's journal Waiting and claims
+unchanged, completes a valid report under the original attempt, replays with no
+return bindings and verifies bare history with unchanged claims. All 81 workflow
+tests, 57 default native tests, 247 SDK pins and strict Clippy pass. Source job
+protection remains active. Automatic producer-derived control lineage, actual
+service/project combinations, post-close review history, issue effects, repair
 execution and evidenced closure remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
