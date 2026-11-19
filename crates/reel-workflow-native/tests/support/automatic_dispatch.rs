@@ -79,8 +79,10 @@ pub(super) fn run_comic(
     let completed = invoke();
     assert!(
         completed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&completed.stdout)
+        "status {}; stdout: {}; stderr: {}",
+        completed.status,
+        String::from_utf8_lossy(&completed.stdout),
+        String::from_utf8_lossy(&completed.stderr)
     );
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&completed.stdout).unwrap()["task_completed"],

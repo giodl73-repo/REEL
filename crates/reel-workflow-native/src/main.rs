@@ -855,7 +855,25 @@ fn main() -> ExitCode {
         ));
         return ExitCode::SUCCESS;
     }
-    match run(&args) {
+    // Native producer validation can be nested beneath recipe/dispatch ingress.
+    // Windows' default main-thread stack is too small for that qualified path.
+    // All effects stay on one bounded worker thread in this same pinned process.
+    let result = std::thread::Builder::new()
+        .name("reel-workflow-native".into())
+        .stack_size(32 * 1024 * 1024)
+        .spawn(move || run(&args))
+        .map_err(|_| reel_workflow::Error {
+            kind: reel_workflow::ErrorKind::NeedsRecovery,
+            code: "native-execution-thread-create".into(),
+        })
+        .and_then(|thread| {
+            thread.join().map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::NeedsRecovery,
+                code: "native-execution-thread-panic-preserve".into(),
+            })
+        })
+        .and_then(|result| result);
+    match result {
         Ok(value) => {
             println!("{value}");
             ExitCode::SUCCESS

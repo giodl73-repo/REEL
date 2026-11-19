@@ -42,9 +42,28 @@ admission; new checkpoints remain within its 32 MiB replay-history bound.
 
 Metadata/claim tests cover missing native bytes, unchanged-index retries, one
 preserved staging workspace/ticket, changed configuration, partial controls,
-operation-mode refusal and runner recovery after dispatch failure. Existing-pool
-qualification is pending for automatic multi-wave manual handoffs and one-command
-comic staging/render/retention followed by editable historical restoration.
+operation-mode refusal and runner recovery after dispatch failure. All 47 default
+native tests passed at source `fd723a6`, with strict Clippy and all 1,827 archived
+files verified. Its automatic multi-wave handoff fixture passed in 401.11 seconds.
+
+That source's first automatic comic fixture failed after materialization and
+original import intent: Windows status `0xc00000fd` (stack overflow). The pinned
+runtime, original worker ticket, completed output packet, journal and claims are
+preserved at `F:/src/tig-dev-temp/.tmpgfZHie`; the Git source is
+`F:/src/tig-dev-temp/.tmp3Cv1qt`. The original-operation dispatch replay confirmed
+the same stack failure. A direct original `run-worker` recovery is being observed;
+no fresh attempt, selection, cleanup or claim release is inferred.
+
+CLI execution now uses one explicitly bounded 32 MiB Rust thread in the same
+executable, preserving the lifecycle runtime pin and keeping all effect handles
+on that thread. The thread-create/panic errors preserve original work and return
+structured NeedsRecovery results. This fixes the default Windows main-stack
+constraint without changing qualified SDK source or production semantics.
+Requalification is pending for automatic comic completion/editable history and
+automatic handoff waves under the updated executable.
+
+Initial evidence, including the preserved failure and exact pins:
+`F:/src/tig-dev-temp/reel-workflow-native-dispatch-20261119-v1`.
 
 Dispatch does not close actors, retire scratch/capacity, select a candidate or
 grant creative, translation, font/print or release approval. Producer-applied
