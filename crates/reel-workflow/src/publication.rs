@@ -27,6 +27,7 @@ pub struct BoundComic {
     expected_sources: BTreeMap<String, Object>,
     outputs: OutputContracts,
     executable: Artifact,
+    review_units: BTreeMap<String, crate::review::Unit>,
 }
 impl BoundComic {
     pub fn task_key(&self) -> &str {
@@ -231,6 +232,7 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         source_ids.insert(part.plan.logical_id.clone());
         read_ids.insert(part.plan.logical_id.clone());
     }
+    let mut review_units = BTreeMap::new();
     for (selected, pin) in pages.iter().zip(&request.pages) {
         let asset = leaf(packet, pin)?;
         // Matching content is insufficient: require the selected logical page input.
@@ -247,6 +249,28 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
                 != selected.utterance_order.iter().collect::<Vec<_>>()
         {
             return bad(ErrorKind::Conflict, "selected-page-order-binding");
+        }
+        let mut add = |panel_id: Option<String>, balloon_id: Option<String>| -> Result<()> {
+            let unit = crate::review::Unit::Comic {
+                page_id: source.id.clone(),
+                panel_id,
+                balloon_id,
+            };
+            let key = crate::review::unit_key(&unit)?;
+            if review_units.insert(key, unit).is_some() {
+                return bad(ErrorKind::Conflict, "comic-review-unit-duplicate");
+            }
+            Ok(())
+        };
+        add(None, None)?;
+        for panel in &source.panels {
+            add(Some(panel.id.clone()), None)?;
+        }
+        for utterance in &source.utterances {
+            if !source.panels.iter().any(|p| p.id == utterance.panel_id) {
+                return bad(ErrorKind::Missing, "comic-review-utterance-panel");
+            }
+            add(Some(utterance.panel_id.clone()), Some(utterance.id.clone()))?;
         }
         add_source(&mut sources, pin)?;
         for layer in &source.layers {
@@ -320,6 +344,73 @@ pub fn bind_comic(packet: &Packet, reader: &mut impl InputReader) -> Result<Boun
         expected_sources: sources,
         outputs: outputs.clone(),
         executable: tool.executable.clone(),
+        review_units,
+    })
+}
+
+/// Export existing page/panel/utterance targets after source/receipt checks.
+/// A native caller must independently verify actual reading output bytes.
+pub fn comic_review_copy(
+    bound: &BoundComic,
+    packet: &Packet,
+    result: &ReturnedResult,
+    receipt: &[u8],
+) -> Result<crate::review::Export> {
+    check_result(packet, result)?;
+    if packet.task_key != bound.task_key {
+        return bad(ErrorKind::Stale, "comic-review-task");
+    }
+    check_comic_receipt(bound, result, receipt)?;
+    let reading: BTreeMap<_, _> = bound
+        .page_order
+        .iter()
+        .map(|page| {
+            let pin = result
+                .artifacts
+                .get(&format!("{page}-reading.png"))
+                .ok_or(Error {
+                    kind: ErrorKind::Missing,
+                    code: "comic-review-reading-output".into(),
+                })?;
+            Ok((page.clone(), pin.clone()))
+        })
+        .collect::<Result<_>>()?;
+    let manifest = serde_json::to_vec(&serde_json::json!({"schema":"reel.workflow-comic-review.v1","task_key":packet.task_key,
+        "edition_id":bound.edition_id,"language":bound.language,"page_order":bound.page_order,"reading":reading}))
+        .map_err(|_| Error { kind: ErrorKind::Invalid, code: "comic-review-manifest".into() })?;
+    if manifest.len() > MAX_CONTROL_BYTES {
+        return bad(ErrorKind::Budget, "comic-review-manifest-bytes");
+    }
+    let copy = crate::review::Copy {
+        schema: "reel.workflow-review-copy.v1".into(),
+        project: packet.project.clone(),
+        source_commit: packet.source_commit.clone(),
+        language: bound.language.clone(),
+        publication: packet
+            .task
+            .tool
+            .as_ref()
+            .ok_or(Error {
+                kind: ErrorKind::Missing,
+                code: "comic-review-tool".into(),
+            })?
+            .publication
+            .clone(),
+        review: Artifact {
+            logical_id: format!("workflow/review/{}/reading", packet.task_key),
+            sha256: digest(&manifest),
+            bytes: manifest.len() as u64,
+            media_type: "application/json".into(),
+        },
+        format: crate::review::Format::Comic {
+            page_order: bound.page_order.clone(),
+        },
+        units: bound.review_units.clone(),
+    };
+    crate::review::check_copy(&copy)?;
+    Ok(crate::review::Export {
+        copy,
+        manifest: Some(manifest),
     })
 }
 

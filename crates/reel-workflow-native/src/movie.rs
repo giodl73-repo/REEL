@@ -246,6 +246,85 @@ fn validate_candidate(
 pub(crate) struct Proof {
     _inputs: Inputs,
     pub(crate) files: Option<BTreeMap<String, Vec<u8>>>,
+    bound: film_render::Bound,
+}
+impl Proof {
+    pub(crate) fn review_copy(
+        &self,
+        packet: &Packet,
+        result: &ReturnedResult,
+    ) -> Result<reel_workflow::review::Export> {
+        let files = self
+            .files
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Unsupported, "movie-review-capture-required"))?;
+        let raw = files
+            .get("delivery/review-ids.json")
+            .ok_or_else(|| error(ErrorKind::Unsupported, "movie-review-ids-required"))?;
+        let metadata: serde_json::Value = reel_workflow::decode(raw)?;
+        if metadata["schema"] != "reel.scene-review-ids.v1"
+            || metadata["job_sha256"] != self.bound.job().sha256
+        {
+            return Err(error(ErrorKind::Integrity, "movie-review-map-job"));
+        }
+        let frames = metadata["frame_count"]
+            .as_u64()
+            .ok_or_else(|| error(ErrorKind::Integrity, "movie-review-map-frames"))?;
+        let labels: Vec<reel::scene_review_ids::Label> =
+            serde_json::from_value(metadata["labels"].clone())
+                .map_err(|_| error(ErrorKind::Integrity, "movie-review-map-labels"))?;
+        let mut units = BTreeMap::new();
+        for label in labels {
+            let unit = if let Some(cel_id) = label.cel_id {
+                reel_workflow::review::Unit::Film {
+                    cel_id,
+                    shot_id: Some(label.shot_id),
+                    cue_id: None,
+                    start_frame: label.start_frame,
+                    end_frame: label.end_frame,
+                }
+            } else {
+                reel_workflow::review::Unit::Shot {
+                    shot_id: label.shot_id,
+                    start_frame: label.start_frame,
+                    end_frame: label.end_frame,
+                }
+            };
+            if units.insert(label.attachment_id, unit).is_some() {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "movie-review-attachment-duplicate",
+                ));
+            }
+        }
+        let review_name = self
+            .bound
+            .request()
+            .output_paths
+            .iter()
+            .find(|(_, path)| path.as_str() == "delivery/review.mp4")
+            .map(|(name, _)| name)
+            .ok_or_else(|| error(ErrorKind::Missing, "movie-review-output"))?;
+        let copy = reel_workflow::review::Copy {
+            schema: "reel.workflow-review-copy.v1".into(),
+            project: packet.project.clone(),
+            source_commit: packet.source_commit.clone(),
+            language: packet
+                .task
+                .language
+                .clone()
+                .ok_or_else(|| error(ErrorKind::Missing, "movie-review-language"))?,
+            publication: self.bound.job().clone(),
+            review: result.artifacts[review_name].clone(),
+            format: reel_workflow::review::Format::Film { frames },
+            units,
+        };
+        reel_workflow::review::check_copy(&copy)?;
+        Ok(reel_workflow::review::Export {
+            copy,
+            manifest: None,
+        })
+    }
 }
 pub(crate) fn native_proof(
     packet: &Packet,
@@ -339,6 +418,7 @@ pub(crate) fn native_proof(
     Ok(Proof {
         _inputs: inputs,
         files: capture.then_some(buffers),
+        bound,
     })
 }
 

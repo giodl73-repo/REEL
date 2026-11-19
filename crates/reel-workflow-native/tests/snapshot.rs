@@ -45,6 +45,9 @@ mod movie_verify;
 #[cfg(windows)]
 #[path = "support/provider_native.rs"]
 mod provider_native;
+#[cfg(all(windows, feature = "film"))]
+#[path = "support/review_export.rs"]
+mod review_export;
 #[cfg(windows)]
 #[path = "support/runner_native.rs"]
 mod runner_native;

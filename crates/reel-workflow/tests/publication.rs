@@ -411,6 +411,58 @@ fn result(packet: &Packet, receipt: &Receipt) -> ReturnedResult {
         },
     }
 }
+
+#[test]
+fn comic_review_export_preserves_page_panel_balloon_and_exact_reading_pins() {
+    for part in [false, true] {
+        let (plan, mut memory, receipt) = if part { part_build() } else { build() };
+        let packet = packet(&plan);
+        let result = result(&packet, &receipt);
+        let bound = bind_comic(&packet, &mut memory).unwrap();
+        let raw = serde_json::to_vec(&receipt).unwrap();
+        let exported = comic_review_copy(&bound, &packet, &result, &raw).unwrap();
+        assert_eq!(
+            exported.copy.format,
+            review::Format::Comic {
+                page_order: vec!["page01".into()]
+            }
+        );
+        assert_eq!(exported.copy.units.len(), 3);
+        assert!(exported.copy.units.values().any(|u| matches!(u, review::Unit::Comic { page_id, panel_id: Some(panel), balloon_id: Some(balloon) } if page_id == "page01" && panel == "panel-a" && balloon == "line-a")));
+        let manifest = exported.manifest.unwrap();
+        assert_eq!(exported.copy.review.sha256, digest(&manifest));
+        assert_eq!(exported.copy.review.bytes, manifest.len() as u64);
+        let manifest: serde_json::Value = decode(&manifest).unwrap();
+        assert_eq!(
+            manifest["reading"]["page01"],
+            serde_json::to_value(&result.artifacts["page01-reading.png"]).unwrap()
+        );
+        let mut tampered = receipt.clone();
+        tampered.page_order = vec!["page02".into()];
+        assert!(
+            comic_review_copy(
+                &bound,
+                &packet,
+                &result,
+                &serde_json::to_vec(&tampered).unwrap()
+            )
+            .is_err()
+        );
+        let mut other_plan = plan;
+        other_plan.tasks[0].language = Some("en".into());
+        let other = make_packet(&other_plan, "render", BTreeMap::new()).unwrap();
+        let other_result = ReturnedResult {
+            task_key: other.task_key.clone(),
+            ..result
+        };
+        assert_eq!(
+            comic_review_copy(&bound, &other, &other_result, &raw)
+                .unwrap_err()
+                .kind,
+            ErrorKind::Stale
+        );
+    }
+}
 fn revise_publication(plan: &mut Plan, memory: &mut Memory, change: impl FnOnce(&mut Publication)) {
     let id = plan.tasks[0]
         .tool

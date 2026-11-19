@@ -11,8 +11,15 @@ pub enum Format {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Unit {
+    Shot {
+        shot_id: String,
+        start_frame: u64,
+        end_frame: u64,
+    },
     Film {
         cel_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shot_id: Option<String>,
         cue_id: Option<String>,
         start_frame: u64,
         end_frame: u64,
@@ -35,6 +42,16 @@ pub struct Copy {
     pub format: Format,
     /// Existing producer IDs and exact ranges; this module allocates no IDs.
     pub units: BTreeMap<String, Unit>,
+}
+/// Derived private controls. A comic manifest references every ordered reading
+/// image; writing these bytes does not retain them or authorize publication.
+#[derive(Debug)]
+pub struct Export {
+    pub copy: Copy,
+    pub manifest: Option<Vec<u8>>,
+}
+pub fn unit_key(unit: &Unit) -> Result<String> {
+    canonical_digest(&("reel.workflow-review-unit.v1", unit))
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -137,14 +154,24 @@ pub fn check_copy(copy: &Copy) -> Result<()> {
         let valid = match (&copy.format, unit) {
             (
                 Format::Film { frames },
+                Unit::Shot {
+                    shot_id,
+                    start_frame,
+                    end_frame,
+                },
+            ) => id(shot_id) && start_frame < end_frame && end_frame <= frames,
+            (
+                Format::Film { frames },
                 Unit::Film {
                     cel_id,
+                    shot_id,
                     cue_id,
                     start_frame,
                     end_frame,
                 },
             ) => {
                 id(cel_id)
+                    && shot_id.as_ref().is_none_or(|v| id(v))
                     && cue_id.as_ref().is_none_or(|v| id(v))
                     && start_frame < end_frame
                     && end_frame <= frames
@@ -197,7 +224,12 @@ pub fn check_report(copy: &Copy, report: &Report) -> Result<CheckedReport> {
             code: "review-finding-unit".into(),
         })?;
         match unit {
-            Unit::Film {
+            Unit::Shot {
+                start_frame,
+                end_frame,
+                ..
+            }
+            | Unit::Film {
                 start_frame,
                 end_frame,
                 ..

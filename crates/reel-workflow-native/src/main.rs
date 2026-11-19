@@ -63,6 +63,69 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
+            ack,
+            output,
+            tail @ ..,
+        ] if command == "export-review-copy"
+            && matches!(tail, [apply] | [_, apply] if apply == "--apply") =>
+        {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let review = reel_workflow_native::retention::review_copy(
+                &packet,
+                &source,
+                &profile,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(ack))?,
+            )?;
+            let manifest_path = if tail.len() == 2 {
+                Some(Path::new(&tail[0]))
+            } else {
+                None
+            };
+            if manifest_path.is_some() != review.manifest().is_some() {
+                return Err(reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Invalid,
+                    code: "review-export-manifest-argument".into(),
+                });
+            }
+            let raw = serde_json::to_vec(review.copy()).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "review-export-json".into(),
+            })?;
+            let mut output = new_receipt(Path::new(output), &source, &profile)?;
+            let mut manifest = manifest_path
+                .map(|p| new_receipt(p, &source, &profile))
+                .transpose()?;
+            let failed = |_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::NeedsRecovery,
+                code: "review-export-write-preserve-partial".into(),
+            };
+            if let Some(manifest) = &mut manifest {
+                manifest
+                    .write_all(review.manifest().unwrap())
+                    .and_then(|_| manifest.sync_all())
+                    .map_err(failed)?;
+            }
+            output
+                .write_all(&raw)
+                .and_then(|_| output.sync_all())
+                .map_err(failed)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-review-export","units":review.copy().units.len(),"native_producer_verified":true,
+                "derived_controls_retained":false,"viewing_verified":false,"approved":false,"selected":false,"input_claims_released":false}),
+            )
+        }
         #[cfg(all(windows, feature = "film"))]
         [command, request, pin, apply] if command == "film-process-child" && apply == "--apply" => {
             reel_workflow_native::film_process::child(Path::new(request), pin)?;
@@ -852,6 +915,7 @@ fn main() -> ExitCode {
             "reel-workflow-native stage-retention PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native retain-response PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT RETAINED_TARGET NEW_ACK --apply\n",
             "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
+            "reel-workflow-native export-review-copy PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK NEW_COPY [NEW_COMIC_MANIFEST] --apply\n",
             "reel-workflow-native create-handoff PACKET HANDOFF_PROFILE NEW_JOURNAL --apply\n",
             "reel-workflow-native import-handoff JOURNAL HANDOFF_PROFILE RESULT RETURNS --apply\n",
             "reel-workflow-native resume-handoff JOURNAL HANDOFF_PROFILE RETURNS_OR_DASH --apply\n",

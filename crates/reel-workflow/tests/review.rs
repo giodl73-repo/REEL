@@ -36,6 +36,7 @@ fn copy(comic: bool, language: &str) -> review::Copy {
             } else {
                 Unit::Film {
                     cel_id: "existing-cel-id".into(),
+                    shot_id: None,
                     cue_id: Some("cue-1".into()),
                     start_frame: 0,
                     end_frame: 24,
@@ -261,6 +262,29 @@ fn returned_review_binds_task_language_source_bytes_and_evidence() {
             "review-task-source-pins"
         );
     }
+}
+
+#[test]
+fn shot_targets_remain_distinct_and_old_cel_metadata_omits_optional_shot() {
+    let mut copy = copy(false, "es");
+    let old = serde_json::to_value(&copy.units["stable-unit"]).unwrap();
+    assert!(old.get("shot_id").is_none());
+    copy.units.insert(
+        "stable-unit".into(),
+        Unit::Shot {
+            shot_id: "existing-shot".into(),
+            start_frame: 0,
+            end_frame: 24,
+        },
+    );
+    check_copy(&copy).unwrap();
+    check_report(&copy, &report(&copy)).unwrap();
+    let shot = serde_json::to_value(&copy.units["stable-unit"]).unwrap();
+    assert!(shot.get("cel_id").is_none());
+    copy.format = Format::Comic {
+        page_order: vec!["page-1".into()],
+    };
+    assert!(check_copy(&copy).is_err());
 }
 
 #[test]

@@ -234,6 +234,45 @@ pub fn verify(
         false,
     )
 }
+/// Review metadata derived from a complete native producer proof. The retained
+/// guards stay live while the caller writes its private new control files.
+pub struct ReviewCopy {
+    export: reel_workflow::review::Export,
+    _retained: RetainedGuard,
+}
+impl ReviewCopy {
+    pub fn copy(&self) -> &reel_workflow::review::Copy {
+        &self.export.copy
+    }
+    pub fn manifest(&self) -> Option<&[u8]> {
+        self.export.manifest.as_deref()
+    }
+}
+pub fn review_copy(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    acknowledgement: &Acknowledgement,
+) -> Result<ReviewCopy> {
+    let retained = capture_comic(packet, source, profile, receipt, result, acknowledgement)?;
+    let export = match retained._comic.as_ref() {
+        Some(crate::producer::Proof::Comic(proof)) => proof.review_copy(packet, result)?,
+        #[cfg(all(windows, feature = "film"))]
+        Some(crate::producer::Proof::Movie(proof)) => proof.review_copy(packet, result)?,
+        _ => {
+            return Err(error(
+                ErrorKind::Unsupported,
+                "retained-review-producer-capability",
+            ));
+        }
+    };
+    Ok(ReviewCopy {
+        export,
+        _retained: retained,
+    })
+}
 pub(crate) fn capture_comic(
     packet: &Packet,
     source: &NativeProfile,

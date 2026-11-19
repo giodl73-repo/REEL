@@ -31,6 +31,23 @@ pub(crate) struct Proof {
     _inputs: NativeInputs,
     _outputs: Vec<reader::VerifiedRead>,
     pub(crate) files: Option<BTreeMap<String, Vec<u8>>>,
+    bound: publication::BoundComic,
+}
+impl Proof {
+    pub(crate) fn review_copy(
+        &self,
+        packet: &Packet,
+        result: &ReturnedResult,
+    ) -> Result<reel_workflow::review::Export> {
+        let files = self
+            .files
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Unsupported, "comic-review-capture-required"))?;
+        let receipt = files
+            .get("receipt.json")
+            .ok_or_else(|| error(ErrorKind::Missing, "comic-review-receipt"))?;
+        publication::comic_review_copy(&self.bound, packet, result, receipt)
+    }
 }
 fn pin(result: &ReturnedResult) -> Result<&Artifact> {
     result
@@ -280,5 +297,6 @@ fn native_proof(
         _inputs: inputs.native,
         _outputs: held,
         files,
+        bound,
     }))
 }
