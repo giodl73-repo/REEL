@@ -66,3 +66,24 @@ retirement or release. Explicit large-job budgets, bounded composition and
 cross-revision task snapshot/adoption semantics remain required. Producer-applied
 editor and rights/provenance checks preserve original IDs, approvals, private
 locators, selected-take reuse and technical/creative authority separation.
+
+## Current qualification state
+
+All 65 standard native tests, including the two new recovery cases and 247 SDK
+source-pin checks, pass. Strict all-target Clippy passes with and without film
+support. Production source is `5ebb30277ff70efc674396ba98137f92a3885e7b`; the
+subsequent fixture-only staging-ticket correction and note are pinned at
+`61fbb5471c72f5c8c1251e0b9694aedfa5270ea6`. All 1,928 tracked files are archived
+and individually hash/length verified. The v1 evidence packet was build/source
+only; no native lifecycle fixture was executed from it.
+
+The corrected native fixture is running in preserved root `.tmpy4yMWg`, previous
+job `.tmpCNEYpK`, using the same Index `.tmp4xlWag/index`, new attempt 3 and task
+key `e033ce3ea0a4fa973dd60bf64dd26b6fd19fe9824db7ca0ccf1a460905d0e344`.
+Frozen runtime: `147d2aa54f2e0a80fda9e41515bde458655e99a74ecbf136556fae7ee0710dd5`
+(24,452,608 bytes). Frozen fixture:
+`de951f7902dab595d7664db9c223ddcf353d505cc3aab08e8db841d87803980a`
+(27,906,560 bytes). Private evidence is under
+`F:/src/tig-dev-temp/reel-owned-file-movie-20261119-v2`.
+Final native qualification remains unconfirmed. Continue the original handle;
+do not restart this effectful fixture as a fresh operation.

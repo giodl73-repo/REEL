@@ -27,6 +27,17 @@ they do not lift v1 limits, stream producer capture or qualify multi-GB episode
 production. The consumer's eight retained S5 requirements remain open where the
 scale audit identifies missing integration/evidence.
 
+The [file-backed movie producer](handoff/2026-11-19-file-backed-movie-capture.md)
+now captures owned media behind held files, records in-place output identities
+in the worker manifest and stream-verifies staging/completion without media
+buffers or duplicate parts. The explicit buffered APIs remain available. All
+65 standard native tests and both strict Clippy configurations pass. Its fresh
+native completed-render/controller-boundary fixture is running with exact source,
+runtime and operation pins; final native qualification is still unconfirmed.
+V1 limits remain unchanged, so this does not qualify S5 episode scale or adopt
+production. Large budgets, bounded composition, cross-revision adoption and
+broader interrupted-controller cases remain required.
+
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
 | Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic/issue workers, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Broader execution/admission scheduling, automatic derived controls and project configuration; preserve existing producers. |
