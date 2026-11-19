@@ -85,6 +85,9 @@ mod review_native;
 #[path = "support/runner_native.rs"]
 mod runner_native;
 #[cfg(windows)]
+#[path = "support/task_snapshots.rs"]
+mod task_snapshots_native;
+#[cfg(windows)]
 #[path = "support/tracker_draft.rs"]
 mod tracker_draft_native;
 #[cfg(windows)]
