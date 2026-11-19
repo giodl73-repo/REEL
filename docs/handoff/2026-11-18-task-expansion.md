@@ -38,10 +38,21 @@ snapshot or permission to release parent history. The 128-task/input bounds,
 All 57 workflow tests and strict shared Clippy pass. Five new protocol cases
 cover exact outputs, tool-request/source roles and worker receipt selectors,
 unretained/refused states, origin aliases, stale bases/originals and missing
-selectors. One native CLI test passes for new-output preservation, explicit apply
-and unretained-parent refusal; it supplies no native custody and does not qualify
-positive retained-parent expansion. Strict native Clippy passes. Positive native
-history integration remains to be checked separately.
+selectors. All 38 default native tests pass. One native CLI test covers new-output preservation, explicit apply
+and unretained-parent refusal; it supplies no native custody. Strict native Clippy
+passes. A separate positive native check reopens the qualified synthetic issue
+through its frozen profiles and bare Git history after source-actor coverage loss,
+then expands an unadmitted review task from its exact transcript and worker receipt.
+The exported full parent-result fingerprint, both artifact identities and all
+unchanged existing tasks were independently checked against original controls.
+
+Evidence is in `F:/src/tig-dev-temp/reel-workflow-native-expansion-20261118-v1`.
+The clean source commit is `072ac9b`; all 1,810 archived files match, with source
+manifest SHA256 `64e3e944f9a025224970fa4222c9c87832efb8be10aea85768284364b830e3dd`.
+The frozen runtime SHA256 is
+`b3388e6b6e6fdc183d342f3ed8c41bdd6c49e1065f0a17811bb6ca0a5e7a79ee`.
+This qualifies bounded expansion metadata from actual historical custody, not
+admission, provider execution or retention of the newly proposed review task.
 
 Producer-applied provenance/recovery checks preserve exact origins, original
 attempts, unchanged existing tasks and separate custody/approval decisions.

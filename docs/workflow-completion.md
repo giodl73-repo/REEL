@@ -30,8 +30,10 @@ checked again before closing the objective.
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
 Current ordering: qualify the implemented [derived issue control producer](handoff/2026-11-18-derived-issue-controls.md)
-through native retention and final assembly, then extend automatic graph expansion
-and larger issue scheduling beyond the bounded retained issue fixture;
+through native retention and final assembly. [Task expansion](handoff/2026-11-18-task-expansion.md)
+now fills concrete tasks from verified retained parent selectors; connect its
+proposals to source freezing/admission and automatic recipe scheduling, then
+extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
 explicit selection/retirement and project adoption qualification. Independent
