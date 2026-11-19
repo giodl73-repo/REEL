@@ -6,6 +6,7 @@ use review::{CheckedReport, Format, Modality, Unit};
 #[serde(deny_unknown_fields)]
 pub struct Context {
     pub report_sha256: String,
+    pub production_task: String,
     /// Every unit of the corrected edition, including added neighboring units.
     pub unit_modalities: BTreeMap<String, Vec<Modality>>,
 }
@@ -123,6 +124,16 @@ pub fn propose(
             || context.report_sha256 != report.report_sha256()
         {
             return fail(ErrorKind::Stale, "resolution-corrected-edition");
+        }
+        if !candidate.impact.rebuild.contains(&context.production_task)
+            || candidate
+                .plan
+                .tasks
+                .iter()
+                .find(|t| t.id == context.production_task)
+                .is_none_or(|t| t.language.as_ref() != Some(language))
+        {
+            return fail(ErrorKind::Missing, "resolution-context-production-task");
         }
         if !matches!(
             (&before.copy().format, &copy.format),

@@ -402,6 +402,7 @@ impl ResolutionCase {
                 language.into(),
                 reel_workflow::resolution::Context {
                     report_sha256: checked.report_sha256().into(),
+                    production_task: format!("{language}-reading"),
                     unit_modalities: copy
                         .units
                         .keys()

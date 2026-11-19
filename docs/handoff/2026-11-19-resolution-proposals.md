@@ -8,7 +8,8 @@ plan, commit, project, format or language bindings refuse.
 The decision uses `reel.workflow-resolution-decision.v1`. Its fields are:
 
 - `baseline_report_sha256` and `candidate_plan_sha256`.
-- `contexts`: language to exact corrected `report_sha256` and
+- `contexts`: language to exact corrected `report_sha256`, required
+  `production_task` in the affected rebuilt plan, and
   `unit_modalities` (unit key to nonempty, unique inspected modality list).
 - `unit_map`: every original-language unit key to a distinct corrected key.
 - `evaluations`: one entry for every repaired finding, containing its
@@ -57,6 +58,15 @@ proposal records report/result/acknowledgement hashes, original task/attempt,
 rebuild task keys and the exact graph-binding digest. It is a sequential historical
 observation, not an atomic custody snapshot or a reusable live guard.
 
+Each context now names its exact producer task. After the retained graph check,
+the adapter reopens that original task's result and acknowledgement and derives
+its review copy from the retained comic/film producer proof. Every field of that
+derived copy must equal the corrected report's copy: project, production commit,
+language, publication/review identities and bytes, format, units and ranges.
+The same commit with a different review asset is insufficient. The proposal
+records producer task/result/acknowledgement/copy digests per language. These
+proofs are released sequentially to avoid reentrant actor or object gates.
+
 Output is a new, exclusive private control file. The command checks the declared
 native roots, source repositories and rebuild control directories, holds its
 output parent and rebuild profile files while writing, and preserves partial
@@ -71,12 +81,13 @@ persisting findings through aliases, unrelated outstanding findings, retiming an
 page reordering. Native adapter compilation and standard regression checks are
 separate from an end-to-end repaired-production qualification.
 
-The next native fixture must connect the existing retained corrected comic
+The native fixture connects the existing retained corrected comic
 production, a new retained contextual follow-up report and the original finding
 to this exporter under their exact source/operation identities. It must check
 that the reviewed material corresponds to the retained repaired outputs, not
-merely the same source commit. That lineage linkage and end-to-end qualification,
-retention/adoption of the resolution itself, tracker close effects and their
+merely the same source commit. End-to-end qualification is pending until that
+fixture passes. Retention/adoption of the resolution itself,
+tracker close effects and their
 uncertainty reconciliation remain open. A private proposal alone is never issue
 closure evidence.
 
