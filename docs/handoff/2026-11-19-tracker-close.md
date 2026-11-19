@@ -95,3 +95,26 @@ is closed, no public message is sent and no creative/release approval is implied
 Producer-applied rights/provenance review preserves explicit egress text,
 historical issue identity, immutable original evidence and technical/creative
 separation. No independent review is claimed.
+
+## Qualification
+
+Source `9a3d80e` has all 1,918 tracked files verified against its archived
+snapshot. All 99 workflow tests, 31 HTTP tests, 62 standard native tests and
+247 unchanged SDK source pins pass. Strict Clippy passes for workflow, HTTP and
+native with film/default features. Existing create tests continue to pass after
+sharing their transport implementation with close.
+
+Four new loopback tests cover the close CLI and replay, missing original delivery
+before network, truncated close replies and lookup-only recovery, changed
+note/resolution refusal, missing target owner, temporary loss of all per-call
+files while the consumed fence survives, and invalid URL/state/revision/resolution
+receipts. Lookup returns the original bound close receipt; no second close POST
+is allowed. A workflow test checks the pure finding/delivery/resolution binding
+and explicit-note payload boundary.
+
+External evidence: `F:/src/tig-dev-temp/reel-tracker-close-20261119-v1/qualified-tools.json`,
+SHA256 `a304f1c00dc95e3043aba44d66721c0d6afe1cdae28dfc8dd7b861ebf6d39fbf`.
+It pins source/archive, frozen HTTP CLI/test executables and all check logs.
+Qualification is Windows/NTFS with synthetic loopback services. No real tracker
+message or close, new native lifecycle effect, resolution/receipt adoption,
+native close scheduling, reopened-issue generation or public release is claimed.

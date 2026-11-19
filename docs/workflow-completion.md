@@ -29,6 +29,17 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
+The [tracker close transport](handoff/2026-11-19-tracker-close.md) now reuses
+the existing create transport for one bounded close effect and lookup-only
+reconciliation. It verifies the original create delivery, exact target/revision/
+resolution receipt, and durable per-issue ownership/consumption before HTTP.
+Four loopback/CLI tests cover replay, truncation, changed intent, missing owner,
+per-call file loss and invalid receipts without another close POST. All 99
+workflow tests, 31 HTTP tests, 62 standard native tests, 247 SDK pins and strict
+Clippy pass. This is a custom proxy contract with no real tracker qualification.
+Retained resolution/delivery/close evidence, native close admission/scheduling,
+actual tracker bridge and explicit reopened-issue generations remain open.
+
 The [native corrected-comic resolution chain](handoff/2026-11-19-resolution-proposals.md)
 now passes original finding -> retained corrected production -> newly admitted
 retained contextual report -> private resolution proposal. Its 265.46-second
@@ -37,8 +48,8 @@ finding/producer claims. A 101.72-second read-only stale historical report expor
 refuses before output creation, with all three claim files unchanged. All 98
 workflow tests, 62 standard native tests, 247 SDK pins and strict Clippy pass.
 The report/evaluation are scripted technical declarations, not actual viewing.
-Next retain/adopt the resolution and delivery evidence and implement checked
-tracker-close effects with original-operation uncertainty reconciliation; broader
+Next retain/adopt the resolution and delivery/close evidence and connect the
+checked close transport above to native admission/scheduling; broader
 formats/languages/projects and automatic fix/control scheduling remain open.
 
 The [repair resolution contract](handoff/2026-11-19-resolution-proposals.md)
