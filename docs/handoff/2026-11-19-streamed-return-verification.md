@@ -33,3 +33,37 @@ source-pin checks), workflow Clippy and strict all-target native Clippy with and
 without film support pass. This is component/standard-suite evidence; the
 separate running automatic-resolution fixture
 uses its previously frozen source/runtime and does not qualify this new adapter.
+
+## Movie return and historical verification
+
+`film_render::capture_output_pins` builds the same worker receipt from content
+hash/length observations, without requiring whole-media byte buffers. Its closed
+path set, exact bound task, output media types and declared byte budgets are
+checked exactly as in `capture_outputs`. Pins are ordinary Rust data and confer
+no file protection, execution proof or custody. The existing buffered API still
+hashes its supplied bytes and produces byte-identical receipts.
+
+The native movie return checker and retained historical proof now independently
+stream each media file through held ordinary handles, then use those verified
+identities for receipt correspondence. They buffer only the small execution
+request/result controls and, when requested, review-ID metadata. The native
+provider guards remain live through historical proof; return-file guards remain
+live through independent primary/media checking and ingestion. The existing
+contained media verifier still performs its checks; hash pins do not replace it.
+
+A contract regression compares complete receipt bytes between the two capture
+paths and refuses missing files, invalid hashes and overflowing byte demand.
+All 103 workflow tests, all 63 standard native tests (including 247 SDK pins),
+workflow Clippy and native strict all-target Clippy with/without film support
+pass. The explicit read-only historical movie fixture is recorded after execution.
+The latter uses the already retained synthetic movie after its source slot was
+closed/reused, compares the full previously exported review copy/IDs and checks
+source activation fencing and unchanged claims. It creates no production job.
+
+This further removes whole-media buffering from **verification**, not producer
+capture. `film_process::Rendered` / `movie::Generated` still carry buffered
+producer outputs, and v1 movie, staging, return and admission limits remain.
+Streamed producer capture plus explicit large-job budgets and bounded native
+composition/recovery remain necessary for S5; this change does not adopt S5 or
+modify existing E7 jobs/approvals. Editor and rights/provenance checks preserve
+unchanged identities, clocks and technical/creative authority separation.

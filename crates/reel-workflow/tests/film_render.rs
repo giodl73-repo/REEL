@@ -177,6 +177,52 @@ fn exact_movie_contract_preserves_nested_paths_and_separate_receipts() {
     assert!(!receipt.retained_owner_acknowledged);
     assert_ne!(receipt.output_paths["delivery-receipt"], "receipt.json");
 }
+
+#[test]
+fn streamed_content_pins_preserve_receipt_bytes_and_enforce_closed_output_contract() {
+    let mut fixture = Fixture::new();
+    let packet = fixture.packet.clone();
+    let bound = film_render::bind(&packet, &mut fixture).unwrap();
+    let files: BTreeMap<_, _> = bound
+        .request()
+        .output_paths
+        .values()
+        .map(|p| (p.clone(), b"candidate".to_vec()))
+        .collect();
+    let receipt = film_render::capture_outputs(&packet, &bound, &files).unwrap();
+    let pins: BTreeMap<_, _> = files
+        .iter()
+        .map(|(p, raw)| {
+            (
+                p.clone(),
+                film_render::OutputContent {
+                    sha256: digest(raw),
+                    bytes: raw.len() as u64,
+                },
+            )
+        })
+        .collect();
+    let streamed = film_render::capture_output_pins(&packet, &bound, &pins).unwrap();
+    assert_eq!(
+        serde_json::to_vec(&receipt).unwrap(),
+        serde_json::to_vec(&streamed).unwrap()
+    );
+    let path = pins.keys().next().unwrap().clone();
+    let mut bad = pins.clone();
+    bad.remove(&path);
+    assert!(film_render::capture_output_pins(&packet, &bound, &bad).is_err());
+    let mut bad = pins.clone();
+    bad.get_mut(&path).unwrap().sha256 = "z".repeat(64);
+    assert!(film_render::capture_output_pins(&packet, &bound, &bad).is_err());
+    let mut bad = pins;
+    bad.get_mut(&path).unwrap().bytes = u64::MAX;
+    assert_eq!(
+        film_render::capture_output_pins(&packet, &bound, &bad)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Budget
+    );
+}
 #[test]
 fn render_limits_enter_task_identity() {
     let mut f = Fixture::new();

@@ -130,7 +130,7 @@ worker configuration. Automatic resolution dispatch under the corrected
 runtime, retained tracker delivery/close evidence and managed close scheduling
 remain open.
 
-## Automatic dispatch qualification in progress
+## Automatic dispatch qualification
 
 Source `f94b50414e1c272ab6675d49af71d4baf5bcfe16` adds a distinct fixture for
 explicit close of the original retained resolution, reuse of its **same Index
@@ -148,14 +148,23 @@ hash/length verified. The frozen release runtime is
 `94e0ee49a5a18295feb1bc59535489127a5f209fa597d42184b8df97ae7e1e1b`
 (27,770,880 bytes).
 
-The actual native fixture is running with preserved root `.tmpCNEYpK`, original
+The actual native fixture passed with preserved root `.tmpCNEYpK`, original
 root `.tmp4xlWag` and replacement task key
 `cd92c7076a03ed829f838dc0632888a0019979faab9bb8cebb4683bddcfa9234`.
-The pinned close preview has succeeded; no final automatic qualification result
-exists yet. Private evidence is under
-`F:/src/tig-dev-temp/reel-resolution-automatic-20261119-v1`.
-Do not rerun the fixture as a fresh operation. Poll/reconcile its original work,
-including any partial close/admission/publication, and preserve scratch.
+It completed in 1,471.58 test seconds. The original source slot was explicitly
+closed into retained coverage and reused in the same Index. Owned dispatch,
+native retention and typed proposal reopening passed; automatic replay preserved
+claims. Replaying the original close did not clear the replacement. The original
+retained proposal reopened after reuse, with all parent claim files unchanged.
+The original handoff/runtime files remain intact; the original source activation
+must not be re-admitted. No provider call, issue close, selection, scratch
+retirement or new Index was introduced.
+
+Private exact source/tool/test evidence is
+`F:/src/tig-dev-temp/reel-resolution-automatic-20261119-v1/qualified-tools.json`
+(SHA256 `d2dcc41d14c6c4aea75233f53762f06f30d535e9504e887e26583338474d315d`).
+The replacement is Retained; preserve both histories and scratch. This qualifies
+the frozen source/runtime above, not subsequent streamed-verifier changes.
 
 This bounded comic test does not qualify the large-film consumer described in
 the [S5 scale audit](2026-11-19-s5-consumer-scale.md), whose eight retained

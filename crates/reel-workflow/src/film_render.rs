@@ -217,13 +217,60 @@ pub fn capture_outputs(
     bound: &Bound,
     files: &BTreeMap<String, Vec<u8>>,
 ) -> Result<Receipt> {
+    capture_header(packet, bound, files.keys())?;
+    files.values().try_fold(0u64, |n, raw| {
+        n.checked_add(raw.len() as u64)
+            .filter(|n| *n <= bound.request.limits.output_bytes)
+            .ok_or_else(|| crate::Error {
+                kind: ErrorKind::Budget,
+                code: "film-render-produced-bytes".into(),
+            })
+    })?;
+    let pins = files
+        .iter()
+        .map(|(path, raw)| {
+            (
+                path.clone(),
+                OutputContent {
+                    sha256: crate::digest(raw),
+                    bytes: raw.len() as u64,
+                },
+            )
+        })
+        .collect();
+    capture_output_pins(packet, bound, &pins)
+}
+
+/// Caller-observed content identity, not a file guard or execution attestation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutputContent {
+    pub sha256: String,
+    pub bytes: u64,
+}
+
+fn capture_header<'a>(
+    packet: &Packet,
+    bound: &Bound,
+    paths: impl Iterator<Item = &'a String>,
+) -> Result<()> {
     crate::check_packet(packet)?;
     if bound.task_key != packet.task_key {
         return fail(ErrorKind::Conflict, "film-render-bound-task");
     }
-    if files.keys().collect::<BTreeSet<_>>() != bound.request.output_paths.values().collect() {
+    if paths.collect::<BTreeSet<_>>() != bound.request.output_paths.values().collect() {
         return fail(ErrorKind::Conflict, "film-render-produced-file-set");
     }
+    Ok(())
+}
+
+/// Build the identical receipt from verified streamed-file identities. Callers
+/// must verify and hold the actual files separately; pins alone confer no trust.
+pub fn capture_output_pins(
+    packet: &Packet,
+    bound: &Bound,
+    files: &BTreeMap<String, OutputContent>,
+) -> Result<Receipt> {
+    capture_header(packet, bound, files.keys())?;
     let tool = packet.task.tool.as_ref().ok_or_else(|| crate::Error {
         kind: ErrorKind::Missing,
         code: "film-render-tool".into(),
@@ -231,9 +278,9 @@ pub fn capture_outputs(
     let mut outputs = crate::ArtifactSet::new();
     let mut total = 0u64;
     for (name, path) in &bound.request.output_paths {
-        let raw = &files[path];
+        let pin = &files[path];
         total = total
-            .checked_add(raw.len() as u64)
+            .checked_add(pin.bytes)
             .filter(|n| *n <= bound.request.limits.output_bytes)
             .ok_or_else(|| crate::Error {
                 kind: ErrorKind::Budget,
@@ -244,8 +291,8 @@ pub fn capture_outputs(
             name.clone(),
             Artifact {
                 logical_id: format!("workflow/film/{}/{name}", packet.task_key),
-                sha256: crate::digest(raw),
-                bytes: raw.len() as u64,
+                sha256: pin.sha256.clone(),
+                bytes: pin.bytes,
                 media_type: media_type.into(),
             },
         );

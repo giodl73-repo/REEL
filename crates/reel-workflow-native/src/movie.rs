@@ -14,6 +14,9 @@ use std::{
     fs::File,
     path::Path,
 };
+#[cfg(test)]
+#[path = "movie_streaming_tests.rs"]
+mod streaming_tests;
 
 pub struct Generated {
     pub files: BTreeMap<String, Vec<u8>>,
@@ -221,10 +224,11 @@ fn validate_candidate(
     packet: &Packet,
     bound: &film_render::Bound,
     result: &ReturnedResult,
+    pins: &BTreeMap<String, film_render::OutputContent>,
     buffers: &BTreeMap<String, Vec<u8>>,
     wrapper: &[u8],
 ) -> Result<()> {
-    let expected = film_render::capture_outputs(packet, bound, buffers)?;
+    let expected = film_render::capture_output_pins(packet, bound, pins)?;
     if serde_json::to_vec(&expected)
         .map_err(|_| error(ErrorKind::Invalid, "movie-return-receipt-json"))?
         != wrapper
@@ -241,6 +245,36 @@ fn validate_candidate(
         &buffers["render-request.json"],
         &buffers["render-result.json"],
     )
+}
+
+/// Only execution controls and explicitly requested review metadata need byte
+/// buffers. Media stays behind held file handles and is independently checked.
+fn checked_output_file(
+    packet: &Packet,
+    result: &ReturnedResult,
+    name: &str,
+    physical: &Path,
+    capture: bool,
+) -> Result<(film_render::OutputContent, Option<Vec<u8>>, File)> {
+    let asset = &result.artifacts[name];
+    let (bytes, held) = if capture {
+        let (raw, held) =
+            crate::staging::read_held(physical, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+        reel_workflow::check_output(packet, result, name, &raw)?;
+        (Some(raw), held)
+    } else {
+        let mut held = crate::staging::open_held(physical, asset.bytes)?;
+        reel_workflow::check_output_reader(packet, result, name, &mut held, asset.bytes)?;
+        (None, held)
+    };
+    Ok((
+        film_render::OutputContent {
+            sha256: asset.sha256.clone(),
+            bytes: asset.bytes,
+        },
+        bytes,
+        held,
+    ))
 }
 
 pub(crate) struct Proof {
@@ -367,23 +401,39 @@ pub(crate) fn native_proof(
         .collect();
     let paths = inputs.returned_paths(&artifacts)?;
     let mut buffers = BTreeMap::new();
+    let mut pins = BTreeMap::new();
     let mut outputs = BTreeMap::new();
     let mut wrapper = Vec::new();
     for (name, pin) in &paths {
-        let (raw, _guard) = crate::staging::read_held(&pin.path, pin.bytes)?;
-        if raw.len() as u64 != pin.bytes || reel_workflow::digest(&raw) != pin.sha256 {
-            return Err(error(ErrorKind::Integrity, "movie-native-candidate-pin"));
-        }
         if name == "receipt.json" {
+            let (raw, _guard) =
+                crate::staging::read_held(&pin.path, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+            if raw.len() as u64 != pin.bytes || reel_workflow::digest(&raw) != pin.sha256 {
+                return Err(error(ErrorKind::Integrity, "movie-native-candidate-pin"));
+            }
             wrapper = raw;
         } else {
-            buffers.insert(name.clone(), raw);
+            let output_name = bound
+                .request()
+                .output_paths
+                .iter()
+                .find(|(_, p)| *p == name)
+                .map(|(n, _)| n)
+                .ok_or_else(|| error(ErrorKind::Conflict, "movie-native-output-path"))?;
+            let needs_bytes = matches!(name.as_str(), "render-request.json" | "render-result.json")
+                || (capture && name == "delivery/review-ids.json");
+            let (content, raw, _guard) =
+                checked_output_file(packet, result, output_name, &pin.path, needs_bytes)?;
+            pins.insert(name.clone(), content);
+            if let Some(raw) = raw {
+                buffers.insert(name.clone(), raw);
+            }
         }
         if let Some(virtual_name) = name.strip_prefix("delivery/") {
             outputs.insert(virtual_name.to_owned(), pin.clone());
         }
     }
-    validate_candidate(packet, &bound, result, &buffers, &wrapper)?;
+    validate_candidate(packet, &bound, result, &pins, &buffers, &wrapper)?;
     let required = bound
         .request()
         .limits
@@ -571,6 +621,7 @@ pub fn check_returned(
     }
     let mut guards = vec![held];
     let mut buffers = BTreeMap::new();
+    let mut pins = BTreeMap::new();
     let mut outputs = BTreeMap::new();
     let mut identities = BTreeMap::new();
     identities.insert(
@@ -584,11 +635,27 @@ pub fn check_returned(
             reel_assets::jobs::open_workspace_directory(physical.parent().unwrap())
                 .map_err(|_| error(ErrorKind::Denied, "movie-return-file-namespace"))?,
         );
-        let (raw, held) = crate::staging::read_held(&physical, artifact.bytes)?;
-        reel_workflow::check_output(packet, result, name, &raw)?;
-        identities.insert(relative.clone(), tig_core::Object::from_bytes(&raw));
-        guards.push(held);
         let nominal = &bound.request().output_paths[name];
+        let (content, raw, held) = checked_output_file(
+            packet,
+            result,
+            name,
+            &physical,
+            matches!(
+                nominal.as_str(),
+                "render-request.json" | "render-result.json"
+            ),
+        )?;
+        identities.insert(
+            relative.clone(),
+            tig_core::Object {
+                sha256: tig_core::Digest::parse(&content.sha256)
+                    .map_err(|_| error(ErrorKind::Invalid, "movie-return-pin"))?,
+                bytes: content.bytes,
+            },
+        );
+        pins.insert(nominal.clone(), content);
+        guards.push(held);
         if let Some(name) = nominal.strip_prefix("delivery/") {
             outputs.insert(
                 name.to_owned(),
@@ -599,10 +666,12 @@ pub fn check_returned(
                 },
             );
         }
-        buffers.insert(nominal.clone(), raw);
+        if let Some(raw) = raw {
+            buffers.insert(nominal.clone(), raw);
+        }
     }
     crate::output_layout::check(&result.artifacts, worker, &returns.files, &identities)?;
-    validate_candidate(packet, &bound, result, &buffers, &wrapper)?;
+    validate_candidate(packet, &bound, result, &pins, &buffers, &wrapper)?;
     let inputs = Inputs::prepare(
         packet,
         native,
