@@ -56,3 +56,38 @@ pinned executable. It neither starts the positive fixture fresh nor readmits or
 republishes inputs. The initial prior-claims comparison was after the failed
 probe and was not reached; recovery can only compare those claims across the
 resume itself. This limit must remain visible in the qualification evidence.
+
+## Qualified evidence
+
+Recovery source `6557a97004f69c4e9944deb1c574563c9ed16865` has all 1,910
+tracked files verified against its archived source snapshot. Current native fixture
+compilation and strict Clippy with film and default features pass. All 508 shared
+crate production/Cargo and vendor files match the prior text-adapter snapshot;
+its 27 HTTP tests, 61 native tests and 247 SDK pin checks remain the unchanged
+production regression evidence. These suites were not rerun for fixture-only
+changes.
+
+The original positive operation is preserved at `F:/src/tig-dev-temp/.tmpmCpXqe`.
+Its initial 442.19-second fixture fails at the final listener probe; its retained
+result and historical readback were already established. Recovery passes in
+70.70 test seconds / 72.26 wall seconds using that exact operation and original
+runtime. The bare Git snapshot and native proof supply one checked finding with
+local returned files absent; replay reports already-ready completion and no
+provider invocation. Prior claims are unchanged during recovery.
+
+The negative fixture passes in 118.26 test seconds / 118.28 wall seconds at
+`F:/src/tig-dev-temp/.tmp6OsYtB`. The semantic error is `review-finding-unit`.
+Waiting journal bytes, current claims, prior job claims and absent retained
+acknowledgements are checked across full execution/replay, with exactly one
+scripted HTTP call and a nonblocking empty listener check afterward. Its source
+harness is preserved at `F:/src/tig-dev-temp/.tmpNqZeuQ`.
+
+External evidence: `F:/src/tig-dev-temp/reel-direct-review-20261119-v2/qualified-tools.json`,
+SHA256 `dd27255509813b51236da8e98aeeda574a8f81e4776724ee1f28d7946a63ddf3`.
+It pins both source packets/tools, the original failed log and diagnostic probe,
+recovery/refusal logs, operation controls, private call bytes and prior regression
+evidence. Scope is Windows/NTFS, an existing synthetic single pool and a scripted
+loopback Responses endpoint. The negative job remains protected and Waiting;
+neither job was closed, scratch-retired or selected. Actual model inspection,
+whole-issue review, automatic composite-parent scheduling and project adoption
+remain outside this qualification.

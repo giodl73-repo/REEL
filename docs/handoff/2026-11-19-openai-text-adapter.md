@@ -59,9 +59,11 @@ a fixed report schema/copy fingerprint. It intentionally leaves contextual unit,
 frame, modality, evidence and edition checks to REEL's existing semantic validator
 before import intent/candidate registration and again on retained historical
 readback. A structurally valid model response cannot bypass these checks. The
-current adapter supplies text/PNG review material only; video/audio inspection,
-arbitrary custom JSON schemas and a full native structured-review provider
-qualification remain separate work.
+current adapter supplies text/PNG review material only; video/audio inspection
+and arbitrary custom JSON schemas remain separate work. The subsequent
+[direct comic review qualification](2026-11-19-direct-comic-review.md) covers
+native report retention/history/replay and contextual refusal in a bounded
+synthetic comic case, including its documented original-operation recovery.
 
 Request/response fields follow the [Responses reference](https://developers.openai.com/api/reference/resources/responses/methods/create)
 and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses),
@@ -98,7 +100,9 @@ private call evidence and the HTTP test execution record. Both jobs retain their
 original executable identity; uncertainty requires reconciliation of that exact
 operation, not a new attempt or another POST.
 
-Native qualification covers text proposals on Windows/NTFS with the existing
+This initial qualification covers text proposals on Windows/NTFS with the existing
 synthetic single-pool fixture and literal loopback HTTP. The structured-review
-wire/normalization tests do not establish full native direct-review execution,
-visual inspection, actual model access or project adoption.
+wire/normalization tests alone do not establish native direct-review execution,
+visual inspection, actual model access or project adoption. Subsequent bounded
+native comic evidence is linked above; actual inspection/model/project scope
+remains unqualified.

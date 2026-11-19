@@ -12,7 +12,7 @@ checked again before closing the objective.
 | Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic/issue workers, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Broader execution/admission scheduling, automatic derived controls and project configuration; preserve existing producers. |
 | Direct API/proxy/subprocess and makefile-like handoff | Native-backed prompt batch export/return/continuation, original tickets/runtime pins and exact task/result/dependency keys; deterministic comic and bounded complete-issue dispatch including retained upstream inputs; composite intelligence handoff/retention; HTTP proxy, timed speech, [direct Images API](handoff/2026-11-19-openai-image-adapter.md) and [Responses text/review](handoff/2026-11-19-openai-text-adapter.md) adapters | Broader provider transports, bounded subprocess/general worker dispatch, direct/manual evidence-contract alignment and complete production graph qualification. |
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
-| Image generation and other intelligence | Typed text/image/review operations; [direct Images API](handoff/2026-11-19-openai-image-adapter.md) supports generation and exact PNG reference/mask request composition, bounded PNG normalization, requested-model/config/evidence recording and protected native single-reference edit retention/replay/uncertainty; [manual PNG handoff](handoff/2026-11-19-png-handoff.md) packs multiple exact returns with unknown provider/model and shares pre-import/historical PNG validation; [Responses adapter](handoff/2026-11-19-openai-text-adapter.md) supplies protected text proposals and component-tested structured review composition/normalization | More providers/formats, actual account/model qualification, native image generation/mask cases, downstream project/creative integration, full native direct structured-review execution and general custom structured intelligence. Direct/manual companion evidence contracts remain explicit. Loopback service provenance does not authenticate a real model. |
+| Image generation and other intelligence | Typed text/image/review operations; [direct Images API](handoff/2026-11-19-openai-image-adapter.md) supports generation and exact PNG reference/mask request composition, bounded PNG normalization, requested-model/config/evidence recording and protected native single-reference edit retention/replay/uncertainty; [manual PNG handoff](handoff/2026-11-19-png-handoff.md) packs multiple exact returns with unknown provider/model and shares pre-import/historical PNG validation; [Responses adapter](handoff/2026-11-19-openai-text-adapter.md) supplies protected text proposals and [native direct comic review](handoff/2026-11-19-direct-comic-review.md) with retained history/replay and contextual refusal | More providers/formats, actual account/model qualification, native image generation/mask cases, downstream project/creative integration, broader/composite direct-review execution and general custom structured intelligence. Direct/manual companion evidence contracts remain explicit. Loopback service provenance does not authenticate a real model. |
 | Speech recording, including requested ElevenLabs integration | [Built-in timed adapter](handoff/2026-11-19-elevenlabs-adapter.md), frozen source/catalogue/scope checks, candidate WAV/original alignment/language-local timing; bounded native complete-response staging/retention/replay passes after one HTTP call | Actual account/model/voice entitlement and real-service qualification; selected-take film integration and reuse of existing season-5 cues without regeneration. |
 | Film production | Existing root producers; [scene controls](handoff/2026-11-19-film-scene-controls.md), [contained rendering](handoff/2026-11-19-contained-film-process.md), [task-bound candidates](handoff/2026-11-19-movie-task-contract.md), [independent return checks](handoff/2026-11-19-movie-return-verification.md), [native retained media](handoff/2026-11-19-native-movie-retention.md), [owned dispatch/completion](handoff/2026-11-19-owned-movie-dispatch.md) and [history after slot reuse](handoff/2026-11-19-movie-slot-history.md) | Bounded `dispatch-task` renders 48 frames, retains twelve outputs, records Retained journal completion and replays without new rendering/claims. Historical reopening after close/reuse passes. Qualify interrupted producer/controller recovery, completed-render adoption, broader editions and project integration. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; [frozen film direction](handoff/2026-11-19-film-direction.md) integrates desired cel duration, separate visual school/performance/technique, delivery fps, exposure cadence and bounded drawing/storage/cost demand into v2 scene controls; ES/EN forecasting and native Spanish six-output retention/replay pass | Generate/bind actual additional drawings, connect exposure sheets and renderer-specific adapters, consume the frozen requirement in rendered editions and qualify multiple drawings per second. Forecasts do not prove animated footage. |
@@ -29,6 +29,21 @@ checked again before closing the objective.
 | Structured errors and retry policy | Typed workflow errors plus native phase codes; unknown native I/O remains NeedsRecovery | Normalize remaining typed SDK/provider/selection errors. No stderr parsing or blind effect retries. |
 | Review and release authority | `.roles`, `.pitfall`, private controls and separate technical flags | Continue producer-applied reviews per feature. Technical completion cannot grant creative, translation, likeness/voice, font, print or public release approval. |
 
+The [direct structured comic review](handoff/2026-11-19-direct-comic-review.md)
+now has bounded native retention/history/replay and semantic refusal evidence.
+Its positive operation reached Retained and passed history/replay before a final
+harness listener check blocked; the failed log is preserved. The explicit
+70.70-second recovery reopens that original retained identity with local returns
+absent and bare Git, then replays without a provider call or claim change. The
+118.26-second negative fixture refuses a correct-copy/wrong-unit response before
+import intent or registration, preserves Waiting state and both jobs' claims,
+and does not call again. Strict Clippy passes in both native feature modes;
+production sources match prior regression evidence. No fresh positive job was
+substituted. The initial positive prior-claims comparison was not reached;
+recovery compares those claims during resume only. Model inspection, complete
+issues, composite-parent scheduling, project adoption and issue/fix closure
+remain open.
+
 The [Responses text/review adapter](handoff/2026-11-19-openai-text-adapter.md)
 now connects explicit text proposals to protected native dispatch and retention.
 Its 142.32-second positive fixture retains six exact outputs after one local
@@ -36,8 +51,8 @@ request and replays without another call. The 77.75-second uncertainty fixture
 preserves the original Waiting job, claims, request ID and received bytes while
 refusing another POST, including after temporary local call-evidence loss.
 All 27 HTTP tests, 61 standard native tests, 247 SDK source pins and strict Clippy
-pass. Structured review schema/normalization has component coverage; full native
-direct structured review, custom schemas, film/audio review inputs, real account
+pass. Its initial structured review schema/normalization coverage is extended by
+the native comic evidence above. Custom schemas, film/audio review inputs, real account
 qualification and project integration remain open.
 
 The [manual PNG handoff](handoff/2026-11-19-png-handoff.md) now passes malformed
