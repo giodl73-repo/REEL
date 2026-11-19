@@ -86,8 +86,13 @@ now feeds the existing renderer directly from nine admitted native objects with
 exact path/file/program guards. Its 48-frame review fixture passes mutation and
 stale/unknown-reference refusal with unchanged claims. All 49 non-opt-in native
 tests with `film` and strict Clippy pass. This supplies guarded inputs; the local
-movie is not a retained task result. Owned movie dispatch, auxiliary-tool binding,
-result retention and interrupted-production recovery remain open.
+movie is not a retained task result. The [auxiliary-runtime binding](handoff/2026-11-19-auxiliary-programs.md)
+now freezes exact portable executable identities and original machine paths in
+owned dispatch. Its existing-pool qualification retains five scene controls,
+refuses substitution/retargeting and replays the restored original ticket with
+unchanged claims. All 51 default native tests and strict Clippy pass. This fixture
+does not execute the auxiliary program. Owned movie dispatch, movie result
+retention and interrupted-production recovery remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

@@ -52,7 +52,15 @@ The first native attempt exposed the reserved Windows component `aux` during
 preparation, before admission. The prefix is now `auxiliary`, and invalid native
 runtime paths return a structured Invalid error instead of panicking. Preserve
 the refused fixture roots `F:/src/tig-dev-temp/.tmpaXAV9e` and `.tmpT2WR7y`.
-Actual qualification evidence is recorded after running it.
+The corrected existing-pool qualification passed in 476.36 seconds at source
+`f0bb8498aa425b0516635d571128c83ecbbc7a10`. Evidence and frozen executable/source
+pins are in `F:/src/tig-dev-temp/reel-native-auxiliary-20261119-v2/qualified-tools.json`.
+All 1,854 archived source files match; the 51 default native tests, strict Clippy
+and all 247 original SDK source pins pass. The fixture retained five scene-control
+outputs, refused corrupt and same-byte retargeted auxiliary executables, then
+replayed the original ticket after restoration, preserving claims. Its original
+roots are `F:/src/tig-dev-temp/.tmp3WpZJu` and `.tmpOuzVjL`; scratch remains owned
+and no selection was applied. The failed v1 evidence remains separately preserved.
 
 Producer-applied custody/recovery and rights/provenance checks keep runtime
 identity, source authority, private machine bindings, retained output coverage and
