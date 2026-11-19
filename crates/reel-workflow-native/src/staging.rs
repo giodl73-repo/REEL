@@ -784,6 +784,179 @@ fn publish(
     ))
 }
 struct Buffers(BTreeMap<String, (Artifact, Vec<u8>)>);
+trait InputStreams {
+    fn with_stream<T>(
+        &mut self,
+        id: &str,
+        expected: &Object,
+        consume: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T>;
+}
+struct BufferedStreams<'a>(&'a Buffers);
+impl InputStreams for BufferedStreams<'_> {
+    fn with_stream<T>(
+        &mut self,
+        id: &str,
+        expected: &Object,
+        consume: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T> {
+        let (_, raw) = self
+            .0
+            .0
+            .get(id)
+            .ok_or_else(|| error(ErrorKind::Missing, "staging-payload-buffer"))?;
+        if Object::from_bytes(raw) != *expected {
+            return Err(error(ErrorKind::Integrity, "staging-buffer-content"));
+        }
+        consume(&mut std::io::Cursor::new(raw))
+    }
+}
+struct NativeStreams<'a> {
+    native: &'a mut NativeInputs,
+    root: PathBuf,
+    paths: BTreeMap<String, String>,
+    copied: BTreeMap<Object, PathBuf>,
+}
+impl InputStreams for NativeStreams<'_> {
+    fn with_stream<T>(
+        &mut self,
+        id: &str,
+        expected: &Object,
+        consume: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T> {
+        let asset = self
+            .native
+            .snapshot
+            .packet
+            .task
+            .inputs
+            .iter()
+            .find(|a| a.logical_id == id)
+            .cloned()
+            .ok_or_else(|| error(ErrorKind::Missing, "staging-declared-stream"))?;
+        if asset.sha256 != expected.sha256.as_str() || asset.bytes != expected.bytes {
+            return Err(error(ErrorKind::Integrity, "staging-declared-stream-pin"));
+        }
+        if let Some(path) = self.copied.get(expected) {
+            // The first copy is guarded by the owned view and its native source
+            // gate remains live. Reuse it rather than reopen the same gated object.
+            let mut held = open_held(path, expected.bytes)?;
+            return consume(&mut held);
+        }
+        let result = self.native.with_stream(&asset, consume)?;
+        let path = self
+            .paths
+            .get(id)
+            .ok_or_else(|| error(ErrorKind::Missing, "staging-stream-path"))?;
+        self.copied.insert(expected.clone(), self.root.join(path));
+        Ok(result)
+    }
+}
+
+fn transfer(reader: &mut dyn Read, writer: &mut impl Write, expected: &Object) -> Result<()> {
+    let mut hash = Sha256::new();
+    let mut remaining = expected.bytes;
+    let mut buffer = [0u8; 65536];
+    while remaining > 0 {
+        let limit = remaining.min(buffer.len() as u64) as usize;
+        let count = match reader.read(&mut buffer[..limit]) {
+            Ok(0) => return Err(error(ErrorKind::Integrity, "staging-stream-content")),
+            Ok(n) => n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(io_error(e)),
+        };
+        writer.write_all(&buffer[..count]).map_err(io_error)?;
+        hash.update(&buffer[..count]);
+        remaining -= count as u64;
+    }
+    loop {
+        match reader.read(&mut buffer[..1]) {
+            Ok(0) => break,
+            Ok(_) => return Err(error(ErrorKind::Integrity, "staging-stream-content")),
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return Err(io_error(e)),
+        }
+    }
+    let actual: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+    if actual != expected.sha256.as_str() {
+        return Err(error(ErrorKind::Integrity, "staging-stream-content"));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn publish_stream(
+    view: &mut View,
+    profile: &Profile,
+    path: &str,
+    index: usize,
+    expected: &Object,
+    reader: &mut dyn Read,
+    hook: &mut impl FnMut(usize) -> Result<()>,
+) -> Result<()> {
+    let target = view.root.path().join(path);
+    directory(
+        view,
+        target
+            .parent()
+            .ok_or_else(|| error(ErrorKind::Invalid, "staging-target-parent"))?,
+    )?;
+    if fs::symlink_metadata(&target).is_ok() {
+        let (actual, held) = observe_held(&target, expected.bytes)?;
+        if actual != *expected {
+            return Err(error(
+                ErrorKind::Integrity,
+                "staging-existing-target-content",
+            ));
+        }
+        transfer(reader, &mut std::io::sink(), expected)?;
+        view.files.push(held);
+        return Ok(());
+    }
+    directory(view, &view.root.path().join("parts"))?;
+    for attempt in 0..ATTEMPTS {
+        let part = view
+            .root
+            .path()
+            .join(format!("parts/{index:03}-{attempt}.part"));
+        if fs::symlink_metadata(&part).is_ok() {
+            let (actual, held) = observe_held(&part, expected.bytes)?;
+            drop(held);
+            if actual != *expected {
+                continue;
+            }
+            transfer(reader, &mut std::io::sink(), expected)?;
+        } else {
+            space(profile, view, expected.bytes)?;
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&part)
+                .map_err(io_error)?;
+            transfer(reader, &mut file, expected)?;
+            file.sync_all().map_err(io_error)?;
+            drop(file);
+            view.usage += expected.bytes;
+            hook(index)?;
+        }
+        space(profile, view, expected.bytes)?;
+        fs::hard_link(&part, &target).map_err(io_error)?;
+        let (actual, held) = observe_held(&target, expected.bytes)?;
+        if actual != *expected {
+            return Err(error(
+                ErrorKind::Integrity,
+                "staging-published-input-content",
+            ));
+        }
+        view.usage += expected.bytes;
+        view.files.push(held);
+        return Ok(());
+    }
+    Err(error(
+        ErrorKind::NeedsRecovery,
+        "staging-part-attempt-bound-preserved",
+    ))
+}
 impl InputReader for Buffers {
     fn read(&mut self, asset: &Artifact, maximum: u64) -> Result<Vec<u8>> {
         let (expected, raw) = self
@@ -804,34 +977,48 @@ fn materialize(
     ticket_hash: &str,
     hook: &mut impl FnMut(usize) -> Result<()>,
 ) -> Result<Summary> {
+    materialize_streams(
+        view,
+        profile,
+        plan,
+        &mut BufferedStreams(buffers),
+        ticket_hash,
+        hook,
+    )
+}
+fn materialize_streams(
+    view: &mut View,
+    profile: &Profile,
+    plan: &Plan,
+    streams: &mut impl InputStreams,
+    ticket_hash: &str,
+    hook: &mut impl FnMut(usize) -> Result<()>,
+) -> Result<Summary> {
     let complete = completion(plan, ticket_hash)?;
     let resumed = scan(view, profile, plan, &complete)?;
     for (index, (path, entry)) in plan.manifest.files.iter().enumerate() {
-        let raw = match &entry.input {
-            Some(id) => {
-                &buffers
-                    .0
-                    .get(id)
-                    .ok_or_else(|| error(ErrorKind::Missing, "staging-payload-buffer"))?
-                    .1
-            }
-            None => match plan.controls.get(path) {
-                Some(raw) => raw,
-                None => {
-                    // Producer-owned file already at its exact final path.
-                    // No copy, implicit repair or buffer-backed fallback.
-                    let (actual, held) =
-                        observe_held(&view.root.path().join(path), entry.object.bytes)?;
-                    if actual != entry.object {
-                        return Err(error(
-                            ErrorKind::Integrity,
-                            "staging-existing-input-content",
-                        ));
-                    }
-                    view.files.push(held);
-                    continue;
+        if let Some(id) = &entry.input {
+            streams.with_stream(id, &entry.object, |reader| {
+                publish_stream(view, profile, path, index, &entry.object, reader, hook)
+            })?;
+            continue;
+        }
+        let raw = match plan.controls.get(path) {
+            Some(raw) => raw,
+            None => {
+                // Producer-owned file already at its exact final path.
+                // No copy, implicit repair or buffer-backed fallback.
+                let (actual, held) =
+                    observe_held(&view.root.path().join(path), entry.object.bytes)?;
+                if actual != entry.object {
+                    return Err(error(
+                        ErrorKind::Integrity,
+                        "staging-existing-input-content",
+                    ));
                 }
-            },
+                view.files.push(held);
+                continue;
+            }
         };
         if Object::from_bytes(raw) != entry.object {
             return Err(error(ErrorKind::Integrity, "staging-buffer-content"));
@@ -895,21 +1082,25 @@ pub fn export(
         &completion(&plan, expected_sha256)?,
     )?;
     let mut reader = NativeInputs::from_claims(packet, source, claims)?;
-    let mut buffers = Buffers(BTreeMap::new());
-    for asset in &packet.task.inputs {
-        let raw = reader.read(asset, asset.bytes)?;
-        buffers
-            .0
-            .insert(asset.logical_id.clone(), (asset.clone(), raw));
-    }
     if packet.task.tool.is_some() {
-        crate::producer::output_budget(packet, &mut buffers)?;
+        crate::producer::output_budget(packet, &mut reader)?;
     }
-    materialize(
+    let mut streams = NativeStreams {
+        native: &mut reader,
+        root: view.root.path().into(),
+        paths: plan
+            .manifest
+            .files
+            .iter()
+            .filter_map(|(path, entry)| entry.input.as_ref().map(|id| (id.clone(), path.clone())))
+            .collect(),
+        copied: BTreeMap::new(),
+    };
+    materialize_streams(
         &mut view,
         &ticket.profile,
         &plan,
-        &buffers,
+        &mut streams,
         expected_sha256,
         &mut |_| Ok(()),
     )

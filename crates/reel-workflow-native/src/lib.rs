@@ -524,6 +524,30 @@ impl NativeInputs {
     pub(crate) fn captured(&self, object: &Object) -> Option<&[u8]> {
         self.captured.get(object).map(Vec::as_slice)
     }
+    /// Stream one exact declared input while retaining its native gate through
+    /// this provider's lifetime. Large inputs are never added to captured buffers.
+    /// Callers must reuse their verified local copy for duplicate object aliases.
+    pub(crate) fn with_stream<T>(
+        &mut self,
+        asset: &Artifact,
+        consume: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T> {
+        if !self.snapshot.packet.task.inputs.contains(asset) {
+            return Err(error(ErrorKind::Conflict, "native-undeclared-read"));
+        }
+        if self.reads >= 256 {
+            return Err(error(ErrorKind::Budget, "native-read-count"));
+        }
+        self.reads += 1;
+        let object = &self.snapshot.objects[&asset.logical_id];
+        if let Some(raw) = self.captured.get(object) {
+            return consume(&mut std::io::Cursor::new(raw));
+        }
+        let mut held = reader::open(&self.source, object).map_err(io_error)?;
+        let result = consume(&mut held);
+        self.held.push(held);
+        result
+    }
 }
 impl InputReader for NativeInputs {
     fn read(&mut self, asset: &Artifact, maximum: u64) -> Result<Vec<u8>> {
