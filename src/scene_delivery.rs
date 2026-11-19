@@ -2256,25 +2256,32 @@ fn render_controls(
     preserve_failed_stage: bool,
 ) -> Result<Receipt> {
     let (parsed, plan) = plan_with_control_files(job, production, inputs, controls)?;
-    render_planned(parsed, plan, inputs, output, preserve_failed_stage, |root| {
-        let mut bytes = Vec::new();
-        fs::File::open(root.join("receipt.json"))?
-            .take(4 * 1024 * 1024 + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > 4 * 1024 * 1024 {
-            bail!("delivery receipt exceeds metadata budget");
-        }
-        let sha256 = <sha2::Sha256 as sha2::Digest>::digest(&bytes)
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
-        let receipt = FileRef {
-            path: "receipt.json".into(),
-            sha256,
-            bytes: bytes.len() as u64,
-        };
-        check_with_all_files(job, production, inputs, root, &receipt, controls)
-    })
+    render_planned(
+        parsed,
+        plan,
+        inputs,
+        output,
+        preserve_failed_stage,
+        |root| {
+            let mut bytes = Vec::new();
+            fs::File::open(root.join("receipt.json"))?
+                .take(4 * 1024 * 1024 + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() > 4 * 1024 * 1024 {
+                bail!("delivery receipt exceeds metadata budget");
+            }
+            let sha256 = <sha2::Sha256 as sha2::Digest>::digest(&bytes)
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            let receipt = FileRef {
+                path: "receipt.json".into(),
+                sha256,
+                bytes: bytes.len() as u64,
+            };
+            check_with_all_files(job, production, inputs, root, &receipt, controls)
+        },
+    )
 }
 
 fn render_planned(

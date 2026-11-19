@@ -45,5 +45,27 @@ Producer-applied editor and rights/provenance review: frame/sample limits must
 refuse rather than shorten an edition; review IDs remain the root renderer's
 compiled labels; child locators remain private. Technical checks grant no creative,
 translation, voice/font, selection or release approval. No independent review is
-claimed. Component and synthetic existing-admission qualification evidence will
-be recorded separately after execution.
+claimed.
+
+Qualification at source `53b129a8ab0a4a0bad4520f02cee3627a6a7c899` passed:
+`F:/src/tig-dev-temp/reel-contained-film-20261119-v1/qualified-tools.json` pins the
+runtime, fixture, archived source, media tools and evidence. All 1,859 archived
+source files match. The contained fixture passed in 85.08 seconds using the
+original admission at `F:/src/tig-dev-temp/.tmpkr4voL`, without accepting another
+native job or publishing inputs. Its preserved root is `.tmp75WMoV`.
+
+The fixture produced ten delivery files, 48 frames and two cel-ID spans cut at
+frame 24; held outputs refused write access. It refused a changed movie before
+launching verification, restored the original bytes and checked them without
+rendering again. A 47-frame budget returned a request-bound structured Budget
+outcome; a one-second deadline preserved the original request and refused another
+launch. The deadline fired before a delivery stage was observed, so interruption
+with partial media and failed-stage recovery remain unqualified. Original input
+claims stayed byte-identical. No movie output was retained and no task completed.
+
+All 57 default native tests with `film`, strict all-target Clippy and the 247 SDK
+source-pin checks pass. The existing root review-ID regression also passes,
+including decoded master parity and frame-label checks; its preserved root is
+`.tmpA84WZJ`. Root/native formatting and `git diff --check` pass. The later root
+formatting adjustment changes layout only; executable evidence stays pinned to
+the qualified source above.
