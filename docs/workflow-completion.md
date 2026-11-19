@@ -14,7 +14,7 @@ checked again before closing the objective.
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | [Built-in timed adapter](handoff/2026-11-19-elevenlabs-adapter.md), frozen source/catalogue/scope checks, candidate WAV/original alignment/language-local timing; bounded native complete-response staging/retention/replay passes after one HTTP call | Actual account/model/voice entitlement and real-service qualification; selected-take film integration and reuse of existing season-5 cues without regeneration. |
-| Film production | Existing root producers; [scene controls](handoff/2026-11-19-film-scene-controls.md), [contained rendering](handoff/2026-11-19-contained-film-process.md), [task-bound candidates](handoff/2026-11-19-movie-task-contract.md), [independent return checks](handoff/2026-11-19-movie-return-verification.md) and [native retained media](handoff/2026-11-19-native-movie-retention.md) connect exact sources, primary comparison and managed byte retention | Twelve outputs/worker receipt ingest and retain; repeated native checks pass with bare history and worker media unreadable. Connect durable task completion, post-close/slot-reuse history, automatic owned movie dispatch and interrupted producer/controller recovery. Automatic FilmRender dispatch remains Unsupported. |
+| Film production | Existing root producers; [scene controls](handoff/2026-11-19-film-scene-controls.md), [contained rendering](handoff/2026-11-19-contained-film-process.md), [task-bound candidates](handoff/2026-11-19-movie-task-contract.md), [independent return checks](handoff/2026-11-19-movie-return-verification.md), [native retained media](handoff/2026-11-19-native-movie-retention.md) and [owned dispatch/completion](handoff/2026-11-19-owned-movie-dispatch.md) | Bounded `dispatch-task` renders 48 frames, retains twelve outputs, records Retained journal completion and replays without new rendering/claims. Qualify interrupted producer/controller recovery, completed-render adoption, post-close/slot-reuse history, broader editions and project integration. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md) burns compiled cel/shot IDs into review MP4s, with an exact selected font and retained source/frame/sample map; synthetic render, master parity, borrowed inputs/scattered outputs and tamper rejection pass | Translate workflow film controls into the renderer, qualify the complete native movie worker, then connect findings, fixes and affected-consumer invalidation. |
@@ -136,6 +136,16 @@ unchanged. All 57 default native tests and strict Clippy with/without `film` pas
 The source job is still active. Durable task completion, slot-close/reuse history,
 automatic movie production dispatch and interrupted controller/media recovery
 remain open; retained bytes do not by themselves complete the workflow objective.
+The [owned movie worker](handoff/2026-11-19-owned-movie-dispatch.md) now connects
+production, independent checks, native retention and durable journal completion.
+Its actual `dispatch-task` fixture renders 48 frames with the cel-ID cut at frame
+24, retains all twelve outputs and redispatches completed work with unchanged
+claims and no replacement rendering. All 57 default native tests and strict
+Clippy with/without `film` pass. This closes the earlier automatic-dispatch gate
+for explicitly pinned Windows film-capable runtimes; legacy task runtime pins
+are not upgraded. Partial/missing-outcome recovery, completed-render adoption
+qualification, controller crashes, post-close/slot-reuse movie history and full
+project/edition qualification remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

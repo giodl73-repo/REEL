@@ -32,7 +32,27 @@ Selection, job-slot close/reuse and scratch/capacity retirement remain explicit.
 The synthetic existing-pool fixture prepares original input protection, creates a
 native workflow journal and invokes `dispatch-task`. It checks 48-frame production,
 all twelve retained output artifacts, durable task completion and replay with
-unchanged claims. Qualification evidence will be recorded after execution.
+unchanged claims.
+
+Qualification passed in 483.18 seconds at source
+`10bf83bdf25bad7553d0cea6cf2a57cbc14cd75c`. Exact frozen executables, source and
+evidence are pinned by
+`F:/src/tig-dev-temp/reel-owned-movie-dispatch-20261119-v1/qualified-tools.json`.
+All 1,869 archived source files match. Preserved controller/source roots:
+`.tmpoi9NTI` and `.tmpRrP8xR`.
+
+The actual `dispatch-task` path rendered the 48-frame film with a cel-ID cut at
+frame 24, materialized exact packet/evidence bytes, ingested and retained all
+twelve output artifacts and recorded Retained journal completion. Redispatch
+passed without rendering a replacement and left claims byte-identical. All 57
+default native tests, the 247 SDK source pins, strict Clippy with/without `film`,
+formatting and `git diff --check` pass.
+
+This qualifies the bounded uninterrupted dispatch/completion/replay flow. Completed
+render adoption is implemented but not independently interrupted/qualified by this
+fixture. Partial render/missing-outcome recovery, controller crash reconciliation,
+post-close/slot-reuse movie history and scratch/capacity retirement remain open.
+The source job remains active and no selected records changed.
 
 Producer-applied editor, sound and rights/provenance review: exact source clocks,
 primary comparison and review IDs remain in the existing renderer/checker. Render
