@@ -87,7 +87,7 @@ pub(crate) fn pin_for_read(
         parent.acknowledgement,
         session,
     )?;
-    drop(outputs(parent.source, parent.result)?);
+    drop(outputs(parent.packet, parent.source, parent.result)?);
     drop(crate::producer::check_native(
         parent.packet,
         parent.source,
@@ -100,6 +100,12 @@ pub(crate) fn pin_for_read(
     })
 }
 impl RetainedGuard {
+    pub fn review_report(&self) -> Option<&reel_workflow::review::CheckedReport> {
+        match self._comic.as_ref() {
+            Some(crate::producer::Proof::Review(proof)) => Some(&proof.checked),
+            _ => None,
+        }
+    }
     pub(crate) fn comic_files(&self) -> Result<&std::collections::BTreeMap<String, Vec<u8>>> {
         self._comic
             .as_ref()
@@ -125,10 +131,16 @@ fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<
     }
     Ok(())
 }
-fn outputs(source: &NativeProfile, result: &ReturnedResult) -> Result<Vec<reader::VerifiedRead>> {
+fn outputs(
+    packet: &Packet,
+    source: &NativeProfile,
+    result: &ReturnedResult,
+) -> Result<Vec<reader::VerifiedRead>> {
     // Deterministic producer proof owns its source/output gates and performs
     // capability-specific replay or independent media/primary verification.
-    if result.provenance.mode == reel_workflow::Mode::Tool {
+    if result.provenance.mode == reel_workflow::Mode::Tool
+        || packet.task.operation == reel_workflow::Operation::ReviewReport
+    {
         return Ok(Vec::new());
     }
     let mut seen = std::collections::BTreeSet::new();
@@ -198,7 +210,7 @@ pub fn retain(
     // Native read guards hold object effect gates. Do not keep those gates
     // while admitting a NEW index update. Original positive job claims and the
     // ordered source/retained fences protect this transition instead.
-    drop(outputs(source, result).map_err(|e| phase(e, "retention-output-preflight"))?);
+    drop(outputs(packet, source, result).map_err(|e| phase(e, "retention-output-preflight"))?);
     drop(
         crate::producer::check_native(packet, source, result, guard.input_permit())
             .map_err(|e| phase(e, "retention-comic-preflight"))?,
@@ -207,7 +219,8 @@ pub fn retain(
         .retain_response(receipt, &candidate, target, true)
         .map_err(|e| phase(e, "retention-apply"))?;
     guard.verify_retention(receipt, &acknowledgement)?;
-    let _outputs = outputs(source, result).map_err(|e| phase(e, "retention-output-readback"))?;
+    let _outputs =
+        outputs(packet, source, result).map_err(|e| phase(e, "retention-output-readback"))?;
     let _comic = crate::producer::check_native(packet, source, result, guard.input_permit())
         .map_err(|e| phase(e, "retention-comic-readback"))?;
     Ok(acknowledgement)
@@ -311,7 +324,7 @@ fn verify_inner(
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
-    let outputs = outputs(source, result)?;
+    let outputs = outputs(packet, source, result)?;
     let comic = if capture {
         crate::producer::capture_native(
             packet,

@@ -181,6 +181,7 @@ pub(crate) fn check_returned(
     }
 }
 pub(crate) enum Proof {
+    Review(Box<crate::review::Proof>),
     #[cfg(all(windows, feature = "film"))]
     Movie(Box<crate::movie::Proof>),
     Comic(Box<crate::comic::Proof>),
@@ -189,6 +190,7 @@ pub(crate) enum Proof {
 impl Proof {
     pub(crate) fn files(&self) -> Option<&BTreeMap<String, Vec<u8>>> {
         match self {
+            Self::Review(_) => None,
             #[cfg(all(windows, feature = "film"))]
             Self::Movie(p) => p.files.as_ref(),
             Self::Comic(p) => p.files.as_ref(),
@@ -219,6 +221,10 @@ fn native(
     capture: bool,
     permit: InputPermit,
 ) -> Result<Option<Proof>> {
+    if packet.task.operation == reel_workflow::Operation::ReviewReport {
+        return crate::review::verify(packet, source, result, permit)
+            .map(|proof| Some(Proof::Review(Box::new(proof))));
+    }
     if result.provenance.mode != reel_workflow::Mode::Tool {
         return Ok(None);
     }

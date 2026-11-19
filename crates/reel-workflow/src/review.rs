@@ -1,6 +1,112 @@
 //! Versioned review findings and proposed repair impact. These are private
 //! metadata contracts, not proof of viewing, authority, custody or issue delivery.
 use crate::*;
+pub const REQUEST_ID: &str = "control/review-request";
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Request {
+    pub schema: String,
+    pub production_commit: String,
+    pub copy_input: String,
+    pub report_output: String,
+}
+pub struct Bound {
+    packet: Packet,
+    request: Request,
+    copy_bytes: Vec<u8>,
+}
+impl Bound {
+    pub fn report_output(&self) -> &str {
+        &self.request.report_output
+    }
+    pub fn check(&self, result: &ReturnedResult, report: &[u8]) -> Result<CheckedReport> {
+        check_returned_report_at(
+            &self.packet,
+            result,
+            &self.request.copy_input,
+            &self.copy_bytes,
+            &self.request.report_output,
+            report,
+            &self.request.production_commit,
+        )
+    }
+}
+/// Frozen structured-review input checks, before a provider or manual export.
+/// The reader owns native admission and must hold its byte guards separately.
+pub fn bind(packet: &Packet, reader: &mut impl publication::InputReader) -> Result<Bound> {
+    check_packet(packet)?;
+    if packet.task.operation != Operation::ReviewReport {
+        return fail(ErrorKind::Invalid, "review-task-operation");
+    }
+    let read = |reader: &mut dyn publication::InputReader, pin: &Artifact| -> Result<Vec<u8>> {
+        if pin.media_type != "application/json" || pin.bytes > MAX_CONTROL_BYTES as u64 {
+            return fail(ErrorKind::Budget, "review-task-control-pin");
+        }
+        let raw = reader.read(pin, MAX_CONTROL_BYTES as u64)?;
+        if pin.bytes != raw.len() as u64 || pin.sha256 != digest(&raw) {
+            return fail(ErrorKind::Integrity, "review-task-control-content");
+        }
+        Ok(raw)
+    };
+    let request_pin = packet
+        .task
+        .inputs
+        .iter()
+        .find(|a| a.logical_id == REQUEST_ID)
+        .ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "review-task-request".into(),
+        })?;
+    let request: Request = decode(&read(reader, request_pin)?)?;
+    if request.schema != "reel.workflow-review-request.v1"
+        || !hex(&request.production_commit, &[40, 64])
+        || request.copy_input == REQUEST_ID
+        || !token(&request.report_output)
+    {
+        return fail(ErrorKind::Invalid, "review-request-contract");
+    }
+    let output = packet
+        .task
+        .outputs
+        .get(&request.report_output)
+        .ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "review-report-output".into(),
+        })?;
+    if output.media_type != "application/json"
+        || !output.required
+        || output.max_bytes > MAX_CONTROL_BYTES as u64
+    {
+        return fail(ErrorKind::Invalid, "review-report-output-contract");
+    }
+    let copy_pin = packet
+        .task
+        .inputs
+        .iter()
+        .find(|a| a.logical_id == request.copy_input)
+        .ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "review-task-copy-input".into(),
+        })?;
+    let copy_bytes = read(reader, copy_pin)?;
+    let copy: Copy = decode(&copy_bytes)?;
+    check_copy(&copy)?;
+    if copy.project != packet.project
+        || copy.source_commit != request.production_commit
+        || packet.task.language.as_ref() != Some(&copy.language)
+    {
+        return fail(ErrorKind::Stale, "review-task-edition");
+    }
+    if !packet.task.inputs.contains(&copy.publication) || !packet.task.inputs.contains(&copy.review)
+    {
+        return fail(ErrorKind::Missing, "review-task-source-pins");
+    }
+    Ok(Bound {
+        packet: packet.clone(),
+        request,
+        copy_bytes,
+    })
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -298,11 +404,36 @@ pub fn check_returned_report(
     report_output: &str,
     report_bytes: &[u8],
 ) -> Result<CheckedReport> {
+    if packet.task.operation == Operation::ReviewReport {
+        return fail(ErrorKind::Denied, "review-request-bound-check-required");
+    }
+    check_returned_report_at(
+        packet,
+        result,
+        copy_input,
+        copy_bytes,
+        report_output,
+        report_bytes,
+        &packet.source_commit,
+    )
+}
+fn check_returned_report_at(
+    packet: &Packet,
+    result: &ReturnedResult,
+    copy_input: &str,
+    copy_bytes: &[u8],
+    report_output: &str,
+    report_bytes: &[u8],
+    production_commit: &str,
+) -> Result<CheckedReport> {
     check_result(packet, result)?;
     if copy_bytes.len() > MAX_CONTROL_BYTES || report_bytes.len() > MAX_CONTROL_BYTES {
         return fail(ErrorKind::Budget, "review-task-control-bytes");
     }
-    if packet.task.operation != Operation::ReviewFinding {
+    if !matches!(
+        packet.task.operation,
+        Operation::ReviewFinding | Operation::ReviewReport
+    ) {
         return fail(ErrorKind::Invalid, "review-task-operation");
     }
     let copy_pin = packet
@@ -325,7 +456,7 @@ pub fn check_returned_report(
     }
     let copy: Copy = decode(copy_bytes)?;
     if copy.project != packet.project
-        || copy.source_commit != packet.source_commit
+        || copy.source_commit != production_commit
         || packet.task.language.as_ref() != Some(&copy.language)
     {
         return fail(ErrorKind::Stale, "review-task-edition");

@@ -2,6 +2,131 @@
 use reel_workflow::{review::*, *};
 use std::collections::BTreeMap;
 
+struct Memory(BTreeMap<String, Vec<u8>>);
+impl publication::InputReader for Memory {
+    fn read(&mut self, artifact: &Artifact, _: u64) -> Result<Vec<u8>> {
+        self.0.get(&artifact.logical_id).cloned().ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "fixture-input".into(),
+        })
+    }
+}
+fn structured() -> (Plan, Memory, ReturnedResult, Vec<u8>) {
+    let copy = copy(true, "es");
+    let report = report(&copy);
+    let copy_bytes = serde_json::to_vec(&copy).unwrap();
+    let request_bytes = serde_json::to_vec(&Request {
+        schema: "reel.workflow-review-request.v1".into(),
+        production_commit: copy.source_commit.clone(),
+        copy_input: "control/copy".into(),
+        report_output: "report".into(),
+    })
+    .unwrap();
+    let report_bytes = serde_json::to_vec(&report).unwrap();
+    let memory = Memory(BTreeMap::from([
+        (REQUEST_ID.into(), request_bytes.clone()),
+        ("control/copy".into(), copy_bytes.clone()),
+        ("publication/source".into(), b"source".to_vec()),
+        ("review/copy".into(), b"review".to_vec()),
+        ("evidence/text".into(), b"synthetic observation".to_vec()),
+    ]));
+    let mut task = task(
+        "review",
+        "es",
+        vec![
+            pin(REQUEST_ID, &request_bytes),
+            pin("control/copy", &copy_bytes),
+            copy.publication,
+            copy.review,
+            report.findings[0].evidence[0].clone(),
+        ],
+        &[],
+    );
+    task.operation = Operation::ReviewReport;
+    task.outputs = BTreeMap::from([(
+        "report".into(),
+        OutputContract {
+            media_type: "application/json".into(),
+            max_bytes: MAX_CONTROL_BYTES as u64,
+            required: true,
+        },
+    )]);
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: "synthetic".into(),
+        source_commit: "b".repeat(40),
+        tasks: vec![task],
+    };
+    let packet = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    let result = ReturnedResult {
+        schema: RESULT_SCHEMA.into(),
+        task_id: "review".into(),
+        task_key: packet.task_key,
+        attempt_id: "attempt-1".into(),
+        artifacts: BTreeMap::from([("report".into(), pin("candidate/report", &report_bytes))]),
+        provenance: Provenance {
+            mode: Mode::Handoff,
+            provider: None,
+            model: None,
+            executable: None,
+        },
+        worker_receipt: None,
+    };
+    (plan, memory, result, report_bytes)
+}
+#[test]
+fn structured_review_binds_before_dispatch_and_checks_returned_semantics() {
+    let (plan, mut memory, result, raw) = structured();
+    let packet = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    let bound = bind(&packet, &mut memory).unwrap();
+    assert_eq!(bound.report_output(), "report");
+    assert_eq!(bound.check(&result, &raw).unwrap().findings().len(), 1);
+    let mut bad: Report = decode(&raw).unwrap();
+    bad.copy_sha256 = "b".repeat(64);
+    let bad_raw = serde_json::to_vec(&bad).unwrap();
+    let mut bad_result = result.clone();
+    bad_result
+        .artifacts
+        .insert("report".into(), pin("candidate/report", &bad_raw));
+    assert_eq!(
+        bound.check(&bad_result, &bad_raw).unwrap_err().code,
+        "review-copy-pin"
+    );
+    let mut bad_result = result;
+    bad_result
+        .artifacts
+        .insert("report".into(), pin("candidate/report", b"{}"));
+    assert!(bound.check(&bad_result, b"{}").is_err());
+}
+#[test]
+fn structured_request_is_explicit_bounded_and_cannot_retarget_outputs_or_language() {
+    let (mut plan, mut memory, _, _) = structured();
+    let original = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    memory.0.insert(REQUEST_ID.into(), b"{}".to_vec());
+    assert_eq!(
+        bind(&original, &mut memory).err().unwrap().kind,
+        ErrorKind::Integrity
+    );
+    let (mut plan2, mut memory, _, _) = structured();
+    plan2.tasks[0].language = Some("en".into());
+    let changed = make_packet(&plan2, "review", BTreeMap::new()).unwrap();
+    assert_eq!(
+        bind(&changed, &mut memory).err().unwrap().code,
+        "review-task-edition"
+    );
+    plan.tasks[0].inputs.retain(|a| a.logical_id != REQUEST_ID);
+    assert_eq!(check_plan(&plan).unwrap_err().code, "review-task-request");
+    plan.tasks[0].operation = Operation::ReviewFinding;
+    check_plan(&plan).unwrap();
+    let (mut plan, mut memory, _, _) = structured();
+    plan.tasks[0].outputs.get_mut("report").unwrap().media_type = "text/plain".into();
+    let changed = make_packet(&plan, "review", BTreeMap::new()).unwrap();
+    assert_eq!(
+        bind(&changed, &mut memory).err().unwrap().code,
+        "review-report-output-contract"
+    );
+}
+
 fn pin(id: &str, raw: &[u8]) -> Artifact {
     Artifact {
         logical_id: id.into(),

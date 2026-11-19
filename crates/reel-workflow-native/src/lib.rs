@@ -31,6 +31,7 @@ mod producer;
 mod qualified;
 pub mod response;
 pub mod retention;
+mod review;
 pub mod runner;
 pub mod staging;
 pub mod upstream;
@@ -445,7 +446,9 @@ impl NativeInputs {
         claims: admission::ClaimsGuard,
     ) -> Result<Self> {
         claims.check_source(packet, profile)?;
-        Self::open_inner(packet, profile, Some(Box::new(claims)))
+        let mut inputs = Self::open_inner(packet, profile, Some(Box::new(claims)))?;
+        crate::review::prepare(packet, &mut inputs)?;
+        Ok(inputs)
     }
     pub fn open_admitted(
         packet: &Packet,
@@ -465,6 +468,7 @@ impl NativeInputs {
         permit.check_source(packet, profile)?;
         let mut inputs = Self::open_inner(packet, profile, None)?;
         inputs._permit = Some(permit);
+        crate::review::prepare(packet, &mut inputs)?;
         Ok(inputs)
     }
     fn open_inner(

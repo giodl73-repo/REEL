@@ -49,6 +49,9 @@ mod provider_native;
 #[path = "support/review_export.rs"]
 mod review_export;
 #[cfg(windows)]
+#[path = "support/review_native.rs"]
+mod review_native;
+#[cfg(windows)]
 #[path = "support/runner_native.rs"]
 mod runner_native;
 #[cfg(windows)]

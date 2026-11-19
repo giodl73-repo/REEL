@@ -550,6 +550,18 @@ pub fn import(
     {
         let _guard = adapter.reopen(journal.ticket())?;
     }
+    if journal.state() == State::Waiting
+        && journal.ticket().packet.task.operation == reel_workflow::Operation::ReviewReport
+    {
+        response::preflight(
+            &journal.ticket().packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission,
+            &result,
+            returns,
+        )?;
+    }
     journal.import(result, &mut adapter)?;
     Ok(journal.state())
 }

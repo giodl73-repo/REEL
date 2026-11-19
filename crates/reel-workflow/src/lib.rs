@@ -85,6 +85,7 @@ pub enum Operation {
     SpeechCandidate,
     BrowserSourceCandidate,
     ReviewFinding,
+    ReviewReport,
     DeterministicTool,
 }
 
@@ -328,6 +329,19 @@ fn task(value: &Task) -> Result<()> {
         artifact(input)?;
         if !inputs.insert(&input.logical_id) {
             return fail(ErrorKind::Conflict, "duplicate-input-identity");
+        }
+    }
+    if value.operation == Operation::ReviewReport {
+        let request = value
+            .inputs
+            .iter()
+            .find(|a| a.logical_id == review::REQUEST_ID)
+            .ok_or(Error {
+                kind: ErrorKind::Missing,
+                code: "review-task-request".into(),
+            })?;
+        if request.media_type != "application/json" || request.bytes > MAX_CONTROL_BYTES as u64 {
+            return fail(ErrorKind::Invalid, "review-task-request-pin");
         }
     }
     let dependencies: BTreeSet<_> = value.depends_on.iter().collect();

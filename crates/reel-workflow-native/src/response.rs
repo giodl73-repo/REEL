@@ -102,6 +102,22 @@ fn verify(
     let mut paths = BTreeSet::new();
     let mut files = Vec::new();
     let mut total = 0u64;
+    let review = if packet.task.operation == reel_workflow::Operation::ReviewReport {
+        let mut native = crate::NativeInputs::open_admitted(packet, source, profile, receipt)?;
+        let bound = reel_workflow::review::bind(packet, &mut native)?;
+        let mut total = 0u64;
+        for pin in &packet.task.inputs {
+            total = total
+                .checked_add(pin.bytes)
+                .filter(|n| *n <= MAX_BYTES)
+                .ok_or_else(|| error(ErrorKind::Budget, "review-native-input-bytes"))?;
+            reel_workflow::publication::InputReader::read(&mut native, pin, MAX_BYTES)?;
+        }
+        Some((native, bound))
+    } else {
+        None
+    };
+    let mut review_output = None;
     for (name, path) in &returns.files {
         if !paths.insert(path.to_ascii_lowercase()) {
             return Err(error(ErrorKind::Conflict, "response-file-alias"));
@@ -118,7 +134,19 @@ fn verify(
         );
         let (raw, held) = crate::staging::read_held(&path, artifact.bytes.min(MAX_BYTES))?;
         reel_workflow::check_output(packet, result, name, &raw)?;
+        if review
+            .as_ref()
+            .is_some_and(|(_, bound)| bound.report_output() == name)
+        {
+            review_output = Some(raw);
+        }
         files.push(held);
+    }
+    if let Some((_, bound)) = &review {
+        let raw = review_output
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Missing, "review-report-output"))?;
+        bound.check(result, raw)?;
     }
     if result.provenance.mode == Mode::Tool {
         if paths.contains("receipt.json") {
@@ -145,6 +173,19 @@ fn verify(
         _files: files,
         root,
     })
+}
+
+/// Read-only semantic/byte preflight, before a handoff records import intent.
+pub(crate) fn preflight(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    returns: &Returns,
+) -> Result<()> {
+    drop(verify(packet, source, profile, receipt, result, returns)?);
+    Ok(())
 }
 
 pub(crate) fn identity(
