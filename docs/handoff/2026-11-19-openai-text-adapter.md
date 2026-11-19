@@ -73,3 +73,32 @@ source identity, language preservation, uncertain-call reconciliation and
 candidate/selection separation. Text proposals and model findings are private
 unapproved candidates. No real service call or creative/translation approval is
 implied by component tests.
+
+## Qualification
+
+Source `11ac4d78569cc32330acb245eb4a120694f02a63` has all 1,908 tracked
+files verified against its archived snapshot. All 27 HTTP tests, 61 standard
+native tests, 247 unchanged SDK source pins and strict HTTP/native Clippy checks
+(film and default features) pass.
+
+The native text-proposal fixture passes in 142.32 test seconds / 143.08 wall
+seconds: one synthetic local request, exact Spanish output, six retained outputs
+and replay without another call or claim change. Its preserved operation root is
+`F:/src/tig-dev-temp/.tmpu8woAj`, source `F:/src/tig-dev-temp/.tmpJhLJNI`.
+The uncertainty fixture passes in 77.75 test seconds / 77.78 wall seconds: one
+truncated local response, preserved request ID/received prefix, original Waiting
+job and claims, and refusal to repeat the call even after temporary local evidence
+loss. Its root is `F:/src/tig-dev-temp/.tmpPimgKK`, source
+`F:/src/tig-dev-temp/.tmpB5syd2`. Neither operation is closed or scratch-retired.
+
+External evidence: `F:/src/tig-dev-temp/reel-openai-text-20261119-v1/qualified-tools.json`,
+SHA256 `ab18c761ef33b1a4e9532fd865eb667f650057800e95a55299d91642f82ab957`.
+It pins source/archive, runtime/test executables, native logs, operation controls,
+private call evidence and the HTTP test execution record. Both jobs retain their
+original executable identity; uncertainty requires reconciliation of that exact
+operation, not a new attempt or another POST.
+
+Native qualification covers text proposals on Windows/NTFS with the existing
+synthetic single-pool fixture and literal loopback HTTP. The structured-review
+wire/normalization tests do not establish full native direct-review execution,
+visual inspection, actual model access or project adoption.
