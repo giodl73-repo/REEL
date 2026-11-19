@@ -14,9 +14,9 @@ checked again before closing the objective.
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | [Built-in timed adapter](handoff/2026-11-19-elevenlabs-adapter.md), frozen source/catalogue/scope checks, candidate WAV/original alignment/language-local timing; bounded native complete-response staging/retention/replay passes after one HTTP call | Actual account/model/voice entitlement and real-service qualification; selected-take film integration and reuse of existing season-5 cues without regeneration. |
-| Film production | Existing root REEL compilers/producers and assembly contracts | Connect film producers to the new workflow and qualify full film/review derivatives, not merely opaque file retention. |
+| Film production | Existing root producers; [deterministic film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) connects exact selected recordings, authored semantic triggers and candidate graph/pointer generation to owned native dispatch | Native scene-control retention/replay now passes. Connect actual audiovisual rendering and full film/review derivatives; controls alone are not a rendered film. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
-| Language-local semantic triggers and cue lengths | Existing `reel-assembly` semantic graph and language bindings | Connect measured selected-take word/phrase evidence to workflow builds, then qualify differing trigger words, durations and complete editions. |
+| Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | Existing root review/asset authority surfaces described in the orchestration plan | Connect generated review copies and exact frame/sample locations to findings, fixes and affected consumer invalidation. |
 | Packaging, review, issue filing and fixes | Existing packaging/review checks; `ReviewFinding` task type; project/root role checklists | Machine-readable findings, issue dedup/routing and authorized issue adapter, scoped repairs, contextual review, closure evidence and dependency invalidation. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
@@ -73,6 +73,14 @@ preserves service identifiers, partial bytes and unchanged claims while refusing
 a repeated POST, including after local call-file loss. Actual account/model/voice
 entitlement and real-service qualification remain open; frozen declarations do
 not authenticate consent.
+The [film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) now
+compiles exact selected recordings and language-local scene triggers into
+candidate graph/pointer/event/alignment controls and a sample-bound review map.
+Its existing-pool fixture passes automatic staging, all five retained outputs,
+native deterministic replay and unchanged claims on redispatch. ES/EN component
+tests use different trigger words, cut samples and cue lengths. No movie is
+rendered by this capability; full audiovisual production and burned-in review
+IDs remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,

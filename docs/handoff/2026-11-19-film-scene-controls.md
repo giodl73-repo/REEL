@@ -65,7 +65,26 @@ replay pass; stale take hashes/clocks, unselected takes, changed pointers, sourc
 text mismatches, absent trigger phrases and altered input bytes refuse. PCM
 clock tests cover 16/24-bit and extensible headers, padding, truncation, malformed
 format/chunk lengths and duplicate data. Workflow/assembly suites and strict
-Clippy pass. Native end-to-end qualification is recorded separately once run.
+Clippy pass. All 48 default native tests and all 13 HTTP regression tests pass.
+
+The existing-pool native fixture passes in 297.24 seconds: exact committed
+synthetic scene/take/source inputs, durable admission, owned automatic staging,
+deterministic control generation, all five retained outputs and receipt,
+native replay verification, unchanged claims on dispatch replay and exact
+review-map cel IDs/sample boundaries. The cue's cut is sample 2,400 and end is
+sample 8,000. This uses an existing recording and no synthesis/provider call.
+
+Evidence:
+`F:/src/tig-dev-temp/reel-workflow-native-film-20261119-v1/qualified-tools.json`.
+Source `001f05a68d40f33f9abef32761f4e8c31dcd40ba`; all 1,848 archived files
+match. Runtime SHA256:
+`f081b1e013ef83c34f2b01fd1311cc84042e04b8c9d14749032b28d12becbe37`.
+Fixture SHA256:
+`f9d0d38e5ffd1f25b187e62e1349c0f6b0bb0a935d382092ceee4d15a5e235c1`.
+Controller `F:/src/tig-dev-temp/.tmpGivQRI`, source
+`F:/src/tig-dev-temp/.tmpi32IUf`. Preserve these roots, original tickets, claims,
+native retained coverage and scratch. No selection application, scratch retirement
+or real-project production is inferred from the passing fixture.
 
 Producer-applied editor/sound checks preserve measured language-local rhythm and
 selected take identity. Animation-direction checks leave style/motion feasibility
