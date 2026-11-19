@@ -720,3 +720,13 @@ requests can set `part_id` for distinct part-scoped output identities. Automatic
 derived-control production, larger issue scheduling, guarded slot closure and
 scratch/capacity retirement remain separate work. Input admission
 or technical completion does not select an asset or grant creative/release approval.
+
+## Late-bound task planning
+
+`expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply` fills a
+new task's input and tool roles from exact verified retained parent selectors.
+It exports a bounded proposed plan, task packet and upstream bindings while
+preserving existing tasks. The [task expansion contract](../../docs/handoff/2026-11-18-task-expansion.md)
+records positive native history verification and its explicit planning scope.
+The controller must still freeze the new source declaration and admit the child;
+expansion does not dispatch a provider, allocate an actor or grant custody.
