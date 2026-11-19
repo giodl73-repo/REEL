@@ -72,20 +72,14 @@ fn check_config(
         packet.task.operation,
         packet.task.tool.as_ref().map(|t| t.capability),
     )?;
-    if let Some(tool) = &packet.task.tool {
-        if !matches!(
-            tool.capability,
-            ToolCapability::ComicRender
-                | ToolCapability::ComicIssueAssembly
-                | ToolCapability::ComicIssueControl
-        ) || tool.executable.sha256 != profile.runtime.sha256
-            || tool.executable.bytes != profile.runtime.bytes
-        {
-            return Err(error(
-                ErrorKind::Unsupported,
-                "dispatch-qualified-tool-required",
-            ));
-        }
+    if let Some(tool) = &packet.task.tool
+        && (tool.executable.sha256 != profile.runtime.sha256
+            || tool.executable.bytes != profile.runtime.bytes)
+    {
+        return Err(error(
+            ErrorKind::Unsupported,
+            "dispatch-qualified-tool-required",
+        ));
     }
     Ok(())
 }
