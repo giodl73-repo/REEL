@@ -78,6 +78,89 @@ pub enum Service {
     ElevenlabsTimed {
         spec: reel_workflow_http::elevenlabs::Spec,
     },
+    OpenaiImage {
+        spec: reel_workflow_http::openai_image::Spec,
+    },
+}
+#[cfg(test)]
+mod image_context_tests {
+    use super::*;
+    #[test]
+    fn image_api_refuses_ungranted_inputs_other_operations_and_unknown_outputs() {
+        let reference = reel_workflow::Artifact {
+            logical_id: "reference".into(),
+            sha256: reel_workflow::digest(b"metadata-only"),
+            bytes: 13,
+            media_type: "image/png".into(),
+        };
+        let task = reel_workflow::Task {
+            id: "image".into(),
+            native_inputs: None,
+            upstream_inputs: None,
+            operation: Operation::ImageCandidate,
+            tool: None,
+            language: None,
+            prompt: "Synthetic prompt".into(),
+            inputs: vec![reference],
+            depends_on: vec![],
+            outputs: [
+                ("candidate.png", "image/png"),
+                ("image.json", "application/json"),
+                ("http.json", "application/json"),
+                (REQUEST, "application/json"),
+                (RESPONSE, "application/json"),
+                (CONFIG, "application/json"),
+            ]
+            .into_iter()
+            .map(|(n, m)| {
+                (
+                    n.into(),
+                    reel_workflow::OutputContract {
+                        media_type: m.into(),
+                        max_bytes: 1024 * 1024,
+                        required: true,
+                    },
+                )
+            })
+            .collect(),
+        };
+        let mut packet = reel_workflow::make_packet(
+            &reel_workflow::Plan {
+                schema: reel_workflow::PLAN_SCHEMA.into(),
+                project: "synthetic".into(),
+                source_commit: "a".repeat(40),
+                tasks: vec![task],
+            },
+            "image",
+            BTreeMap::new(),
+        )
+        .unwrap();
+        let mut config=Config {schema:"reel.workflow-provider-proxy.v1".into(),provider:"openai".into(),model:"gpt-image-1.5".into(),send_inputs:vec!["reference".into()],http:reel_workflow_http::Config {schema:"reel.workflow-http.v1".into(),endpoint:"http://127.0.0.1:9/v1/images/edits".into(),timeout_seconds:1,request_byte_limit:1024*1024,response_byte_limit:1024*1024,secret_headers:BTreeMap::new(),allow_loopback_http:true},workspace:Profile {schema:"reel.workflow-staging.v1".into(),parent:"not-opened".into(),maximum_bytes:16*1024*1024,capacity_policy:Default::default()},service:Some(Service::OpenaiImage {spec:serde_json::from_value(serde_json::json!({"schema":"reel.openai-image.v1","references":["reference"],"mask":null,"size":[1024,1024],"quality":"high","background":"opaque"})).unwrap()})};
+        check(&packet, &config).unwrap();
+        config.send_inputs.clear();
+        assert_eq!(check(&packet, &config).unwrap_err().kind, ErrorKind::Denied);
+        config.send_inputs = vec!["reference".into()];
+        let mut private = packet.task.inputs[0].clone();
+        private.logical_id = "private-unused".into();
+        packet.task.inputs.push(private);
+        config.send_inputs.push("private-unused".into());
+        assert_eq!(
+            check(&packet, &config).unwrap_err().code,
+            "openai-image-native-context"
+        );
+        config.send_inputs.pop();
+        packet.task.operation = Operation::ReviewReport;
+        assert_eq!(check(&packet, &config).unwrap_err().kind, ErrorKind::Denied);
+        packet.task.operation = Operation::ImageCandidate;
+        packet.task.outputs.insert(
+            "undeclared-by-service".into(),
+            packet.task.outputs["image.json"].clone(),
+        );
+        assert_eq!(
+            check(&packet, &config).unwrap_err().code,
+            "openai-image-output-contract"
+        );
+    }
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -185,6 +268,54 @@ pub(crate) fn check(packet: &Packet, c: &Config) -> Result<()> {
             {
                 return Err(error(ErrorKind::Invalid, "elevenlabs-declared-outputs"));
             }
+        }
+    }
+    if let Some(Service::OpenaiImage { spec }) = &c.service {
+        spec.check(&c.model)?;
+        spec.check_endpoint(&c.http)?;
+        if packet.task.operation != Operation::ImageCandidate
+            || c.provider != "openai"
+            || c.send_inputs.iter().cloned().collect::<BTreeSet<_>>() != spec.egress_inputs()
+            || spec.egress_inputs().iter().any(|id| {
+                !packet
+                    .task
+                    .inputs
+                    .iter()
+                    .any(|a| a.logical_id == *id && a.media_type == "image/png")
+            })
+        {
+            return Err(error(ErrorKind::Denied, "openai-image-native-context"));
+        }
+        let outputs = BTreeSet::from([
+            "candidate.png",
+            "image.json",
+            "http.json",
+            REQUEST,
+            RESPONSE,
+            CONFIG,
+        ]);
+        if packet
+            .task
+            .outputs
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            != outputs
+            || packet.task.outputs.iter().any(|(name, c)| {
+                !c.required
+                    || c.media_type
+                        != if name == "candidate.png" {
+                            "image/png"
+                        } else {
+                            "application/json"
+                        }
+            })
+            || packet.task.outputs["candidate.png"].max_bytes > 64 * 1024 * 1024
+            || ["image.json", "http.json"].iter().any(|n| {
+                packet.task.outputs[*n].max_bytes > reel_workflow::MAX_CONTROL_BYTES as u64
+            })
+        {
+            return Err(error(ErrorKind::Invalid, "openai-image-output-contract"));
         }
     }
     for (name, limit) in [
@@ -568,6 +699,28 @@ pub fn run_file(
                 })
                 .collect();
             spec.request(&ticket.config.model, &inputs)?
+        } else if let Some(Service::OpenaiImage { spec }) = &ticket.config.service {
+            let inputs = ticket
+                .packet
+                .task
+                .inputs
+                .iter()
+                .map(|a| {
+                    (
+                        a.logical_id.clone(),
+                        reel_workflow_http::openai_image::Input {
+                            artifact: a,
+                            bytes: &raw_inputs[&a.logical_id],
+                        },
+                    )
+                })
+                .collect();
+            spec.request(
+                &ticket.config.model,
+                &ticket.packet.task.prompt,
+                &inputs,
+                ticket.config.http.request_byte_limit,
+            )?
         } else {
             let inputs: Vec<_> = ticket
                 .config
@@ -718,6 +871,23 @@ pub fn run_file(
         let observed: reel_workflow_http::ResponseHead = reel_workflow::decode(&head)?;
         if observed.schema != "reel.workflow-http-head.v1" || observed.status != complete.status {
             return Err(error(ErrorKind::Integrity, "elevenlabs-http-head"));
+        }
+        outputs.insert("http.json".into(), head);
+        outputs
+    } else if let Some(Service::OpenaiImage { spec }) = &ticket.config.service {
+        let mut outputs = spec.normalize(
+            &ticket.config.model,
+            &ticket.packet.task.prompt,
+            &response,
+            ticket.packet.task.outputs["candidate.png"].max_bytes,
+        )?;
+        let (head, _guard) = read_held(
+            &root.join("http-head.json"),
+            reel_workflow::MAX_CONTROL_BYTES as u64,
+        )?;
+        let observed: reel_workflow_http::ResponseHead = reel_workflow::decode(&head)?;
+        if observed.schema != "reel.workflow-http-head.v1" || observed.status != complete.status {
+            return Err(error(ErrorKind::Integrity, "openai-image-http-head"));
         }
         outputs.insert("http.json".into(), head);
         outputs

@@ -133,22 +133,93 @@ fn proxy_dispatch_requires_declared_evidence_and_native_inputs_before_network_ef
 #[test]
 #[ignore = "Existing declared native pool and synthetic local HTTP only: protected call, retained evidence, original-call fencing and uncertainty preservation"]
 fn protected_proxy_call_retains_request_response_and_config_and_never_reissues_uncertainty() {
-    run_case(false, false);
+    run_case(false, false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and synthetic local HTTP only: uncertain response cannot become another call; preserves roots"]
 fn protected_proxy_uncertain_response_preserves_original_call_and_claims() {
-    run_case(true, false);
+    run_case(true, false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and synthetic timed speech HTTP only; preserves original roots"]
 fn protected_timed_speech_retains_original_alignment_and_replays_without_synthesis() {
-    run_case(false, true);
+    run_case(false, true, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and truncated timed speech HTTP only; preserves original claims"]
 fn protected_timed_speech_uncertainty_keeps_service_identifiers_without_reissue() {
-    run_case(true, true);
+    run_case(true, true, false);
+}
+#[test]
+#[ignore = "Existing synthetic native pool and literal loopback Images API edit only; one request, PNG validation, retained evidence and replay"]
+fn protected_openai_image_edit_retains_candidate_and_replays_without_another_call() {
+    run_case(false, false, true);
+}
+#[test]
+#[ignore = "Existing synthetic native pool and truncated loopback Images API reply only; preserves original request ID, prefix and claims"]
+fn protected_openai_image_uncertainty_preserves_original_call_without_reissue() {
+    run_case(true, false, true);
+}
+fn image_png(size: u32, blue: bool) -> Vec<u8> {
+    let mut pix = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
+    pix.fill(if blue {
+        resvg::tiny_skia::Color::from_rgba8(0, 0, 255, 255)
+    } else {
+        resvg::tiny_skia::Color::from_rgba8(255, 0, 0, 255)
+    });
+    pix.encode_png().unwrap()
+}
+fn image_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
+    let bytes = image_png(16, false);
+    let object = Object::from_bytes(&bytes);
+    let root = fixture.temp.path();
+    let mut record: serde_json::Value =
+        decode(&fs::read(root.join("records/input.tig")).unwrap()).unwrap();
+    record["id"] = json!("image/reference");
+    record["selected"] = json!(object);
+    record["streams"] = json!([]);
+    write(root, "records/image.tig", record);
+    fs::write(
+        root.join("payloads/image.bin"),
+        Key::from_object(&object).unlocked_pointer(),
+    )
+    .unwrap();
+    fixture.profile.records = vec!["records/image.tig".into()];
+    fixture.profile.bindings = BTreeMap::from([(
+        "image/reference".into(),
+        Binding {
+            selected: LogicalPath::parse("payloads/image.bin").unwrap(),
+            streams: BTreeMap::new(),
+        },
+    )]);
+    fixture.profile.input_streams = BTreeMap::from([("image/reference".into(), None)]);
+    fixture.packet.task.inputs = vec![Artifact {
+        logical_id: "image/reference".into(),
+        sha256: digest(&bytes),
+        bytes: bytes.len() as u64,
+        media_type: "image/png".into(),
+    }];
+    fixture.packet.task.id = "image-candidate".into();
+    fixture.packet.task.operation = Operation::ImageCandidate;
+    fixture.packet.task.prompt = "Synthetic blue-square edit".into();
+    fixture.packet.task.outputs.clear();
+    for (name, media) in reel_workflow_http::openai_image::OUTPUTS
+        .into_iter()
+        .chain([("http.json", "application/json")])
+    {
+        fixture.packet.task.outputs.insert(
+            name.into(),
+            OutputContract {
+                media_type: media.into(),
+                max_bytes: 32768,
+                required: true,
+            },
+        );
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "synthetic image reference input"]);
+    fixture.profile.commit = git(root, &["rev-parse", "HEAD"]);
+    vec![("reference.bin".into(), bytes)]
 }
 fn speech_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
     let text = "¡Sí!".as_bytes().to_vec();
@@ -226,7 +297,7 @@ fn speech_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
     }
     raw_inputs
 }
-fn run_case(uncertain: bool, speech: bool) {
+fn run_case(uncertain: bool, speech: bool, image: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -243,6 +314,8 @@ fn run_case(uncertain: bool, speech: bool) {
     };
     let raw_inputs = if speech {
         speech_inputs(&mut fixture)
+    } else if image {
+        image_inputs(&mut fixture)
     } else {
         vec![]
     };
@@ -293,7 +366,7 @@ fn run_case(uncertain: bool, speech: bool) {
         .unwrap()
         .accept()
         .unwrap();
-    if speech {
+    if speech || image {
         let input_root = root.join("synthetic-inputs");
         fs::create_dir(&input_root).unwrap();
         for (name, bytes) in &raw_inputs {
@@ -363,6 +436,8 @@ fn run_case(uncertain: bool, speech: bool) {
         listener.local_addr().unwrap(),
         if speech {
             "/v1/text-to-speech/fixture/with-timestamps?output_format=pcm_8000&enable_logging=true"
+        } else if image {
+            "/v1/images/edits"
         } else {
             "/generate"
         }
@@ -370,7 +445,11 @@ fn run_case(uncertain: bool, speech: bool) {
     let observer = listener.try_clone().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let count = calls.clone();
-    let expected = object.clone();
+    let expected = if image {
+        Object::from_bytes(&raw_inputs[0].1)
+    } else {
+        object.clone()
+    };
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         count.fetch_add(1, Ordering::SeqCst);
@@ -405,6 +484,18 @@ fn run_case(uncertain: bool, speech: bool) {
             assert_eq!(request["apply_text_normalization"], "off");
             assert!(request.get("inputs").is_none());
             serde_json::to_vec(&json!({"audio_base64":STANDARD.encode(vec![0u8;16000]),"alignment":{"characters":["¡","S","í","!"],"character_start_times_seconds":[0.0,0.1,0.2,0.3],"character_end_times_seconds":[0.1,0.2,0.3,0.5]},"normalized_alignment":{"separate":true}})).unwrap()
+        } else if image {
+            assert!(header.starts_with("POST /v1/images/edits HTTP/1.1"));
+            assert_eq!(request["model"], "gpt-image-2.5-sunburst-2026-09-08");
+            assert_eq!(request["prompt"], "Synthetic blue-square edit");
+            assert_eq!(request["n"], 1);
+            assert_eq!(request["stream"], false);
+            let url = request["images"][0]["image_url"].as_str().unwrap();
+            let input = STANDARD
+                .decode(url.strip_prefix("data:image/png;base64,").unwrap())
+                .unwrap();
+            assert_eq!(Object::from_bytes(&input), expected);
+            serde_json::to_vec(&json!({"created":123,"output_format":"png","background":"opaque","size":"1024x1024","data":[{"b64_json":STANDARD.encode(image_png(1024,true))}],"usage":{"input_tokens":1}})).unwrap()
         } else {
             assert_eq!(request["schema"], "reel.workflow-proxy-request.v1");
             let input = STANDARD
@@ -414,7 +505,11 @@ fn run_case(uncertain: bool, speech: bool) {
             serde_json::to_vec(&json!({"schema":"reel.workflow-proxy-response.v1","operation_id":request["operation_id"],"provider":"synthetic-proxy","model":"fixture-model","outputs":{"note":{"media_type":"text/plain","base64":STANDARD.encode(b"synthetic provider result")}}})).unwrap()
         };
         let length = raw.len() + if uncertain { 10 } else { 0 };
-        write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nrequest-id: fixture-request\r\nhistory-item-id: fixture-history\r\nConnection: close\r\n\r\n").unwrap();
+        if image {
+            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nx-request-id: fixture-openai-request\r\nConnection: close\r\n\r\n").unwrap();
+        } else {
+            write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nrequest-id: fixture-request\r\nhistory-item-id: fixture-history\r\nConnection: close\r\n\r\n").unwrap();
+        }
         stream.write_all(&raw).unwrap();
     });
     let config = dispatch::Config {
@@ -425,20 +520,33 @@ fn run_case(uncertain: bool, speech: bool) {
         provider: Some(provider::Config {
             service: if speech {
                 Some(provider::Service::ElevenlabsTimed {spec:serde_json::from_value(json!({"schema":"reel.elevenlabs-timed.v1","voice_id":"fixture","language":"es","cue_id":"cue-1","text_input":"speech/text","models_input":"speech/models","admission_input":"speech/admission","decision_input":"speech/decision","sample_rate":8000,"enable_logging":true,"seed":17,"voice_settings":{"stability":0.5,"similarity_boost":0.5,"style":0.0,"speed":1.0,"use_speaker_boost":false},"segments":["¡Sí!"]})).unwrap()})
+            } else if image {
+                Some(provider::Service::OpenaiImage {spec:serde_json::from_value(json!({"schema":"reel.openai-image.v1","references":["image/reference"],"mask":null,"size":[1024,1024],"quality":"high","background":"opaque"})).unwrap()})
             } else {
                 None
             },
             schema: "reel.workflow-provider-proxy.v1".into(),
             provider: if speech {
                 "elevenlabs"
+            } else if image {
+                "openai"
             } else {
                 "synthetic-proxy"
             }
             .into(),
-            model: if speech { "eleven_v4" } else { "fixture-model" }.into(),
+            model: if speech {
+                "eleven_v4"
+            } else if image {
+                "gpt-image-2.5-sunburst-2026-09-08"
+            } else {
+                "fixture-model"
+            }
+            .into(),
             send_inputs: vec![
                 if speech {
                     "speech/text"
+                } else if image {
+                    "image/reference"
                 } else {
                     "input/source"
                 }
@@ -509,6 +617,11 @@ fn run_case(uncertain: bool, speech: bool) {
             serde_json::from_slice(&fs::read(workspace.join("http-head.json")).unwrap()).unwrap();
         assert_eq!(head["request_id"], "fixture-request");
         assert_eq!(head["history_item_id"], "fixture-history");
+    }
+    if image {
+        let head: serde_json::Value =
+            decode(&fs::read(workspace.join("http-head.json")).unwrap()).unwrap();
+        assert_eq!(head["request_id"], "fixture-openai-request");
     }
     let header = fs::read(case.profile.index_root.join("claims.json")).unwrap();
     let second = invoke();
@@ -591,6 +704,19 @@ fn run_case(uncertain: bool, speech: bool) {
             assert_eq!(take["selected"], false);
             assert_eq!(take["approved"], false);
         }
+        if image {
+            assert_eq!(result.artifacts.len(), 6);
+            assert_eq!(
+                fs::read(workspace.join("packet/candidate.png")).unwrap(),
+                image_png(1024, true)
+            );
+            let meta: serde_json::Value =
+                decode(&fs::read(workspace.join("packet/image.json")).unwrap()).unwrap();
+            assert_eq!(meta["width"], 1024);
+            assert_eq!(meta["requested_model"], "gpt-image-2.5-sunburst-2026-09-08");
+            assert_eq!(meta["selected"], false);
+            assert_eq!(meta["approved"], false);
+        }
         assert_eq!(
             reel_workflow::handoff::Journal::open(&journal)
                 .unwrap()
@@ -601,6 +727,6 @@ fn run_case(uncertain: bool, speech: bool) {
     if let Some(evidence) = evidence {
         fs::write(evidence.join("first.json"), first.stdout).unwrap();
         fs::write(evidence.join("replay.json"), second.stdout).unwrap();
-        fs::write(evidence.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,"uncertain":uncertain,"calls":1,"no_repeat_on_replay":true,"claims_preserved":true,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
+        fs::write(evidence.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,"uncertain":uncertain,"openai_image":image,"calls":1,"no_repeat_on_replay":true,"claims_preserved":true,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
     }
 }

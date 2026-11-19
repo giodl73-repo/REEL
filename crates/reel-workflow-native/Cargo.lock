@@ -1729,6 +1729,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "fs2",
+ "png 0.17.16",
  "reel-assembly",
  "reel-workflow",
  "reqwest",
