@@ -213,6 +213,16 @@ still supports the externally pinned `comic-restore` operation. Inputs are never
 overwritten; output inside a source packet is refused, and partial writes remain.
 Captured sources and these receipts are private, not shareable public reports.
 
+Rust adapters can call `comic_issue::capture_with(request_bytes, reader)` to
+produce the same complete packet in memory. The reader receives a portable
+request-relative path and a byte bound. Every expected source and derivative
+must be supplied and match deterministic replay. This permits an adapter to use
+declared retained bytes without restoring original worker folders. The adapter
+still owns native custody, admission and completion. The filesystem command
+additionally checks the complete source-directory inventory and refuses output
+inside a source packet; a byte-reader callback makes no claim about unrelated
+files outside its declared reads.
+
 The synthetic fixture assembles three Spanish pages in two parts, preserves a
 two-page spread and right-to-left page order, verifies every PDF page's decoded
 RGB against its selected reading PNG, removes the original source/part folders,

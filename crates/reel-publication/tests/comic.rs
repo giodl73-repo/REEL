@@ -490,6 +490,62 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
     let replay: reel_publication::comic_issue::AssemblyReceipt =
         serde_json::from_slice(&fs::read(second.join("receipt.json")).unwrap()).unwrap();
     assert_eq!(receipt.outputs, replay.outputs);
+    // Native callers can provide retained bytes without recreating worker folders.
+    fn collect_packet(
+        root: &Path,
+        at: &Path,
+        files: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) {
+        for entry in fs::read_dir(at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect_packet(root, &path, files);
+            } else {
+                files.insert(
+                    path.strip_prefix(root)
+                        .unwrap()
+                        .to_str()
+                        .unwrap()
+                        .replace('\\', "/"),
+                    fs::read(path).unwrap(),
+                );
+            }
+        }
+    }
+    let mut memory = std::collections::BTreeMap::new();
+    collect_packet(&output, &output, &mut memory);
+    let request_raw = memory["assembly.json"].clone();
+    let (captured, captured_files) =
+        reel_publication::comic_issue::capture_with(&request_raw, |path, _| {
+            memory
+                .get(path)
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("missing retained input"))
+        })
+        .unwrap();
+    assert_eq!(captured.outputs, replay.outputs);
+    let mut expected_files = std::collections::BTreeMap::new();
+    collect_packet(&second, &second, &mut expected_files);
+    assert_eq!(captured_files, expected_files);
+    memory.insert(
+        "parts/opening/page01-lettering.svg".into(),
+        b"changed retained output".to_vec(),
+    );
+    assert!(
+        reel_publication::comic_issue::capture_with(&request_raw, |path, _| memory
+            .get(path)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing retained input")))
+        .is_err()
+    );
+    memory.remove("issue-plan.json");
+    assert!(
+        reel_publication::comic_issue::capture_with(&request_raw, |path, _| memory
+            .get(path)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("missing retained input")))
+        .is_err()
+    );
     let restored = temp.path().join("restored-part");
     let part = output.join("parts/opening");
     let receipt_pin = object(&fs::read(part.join("receipt.json")).unwrap());

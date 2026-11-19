@@ -508,15 +508,6 @@ fn check_packet(packet: &Packet, output: &Path) -> Result<()> {
     }
     Ok(())
 }
-/// Capture and replay a packet using only its own editable source copies.
-pub(crate) fn reopen_packet(output: &Path) -> Result<Packet> {
-    let raw = read(&output.join("sources/request.json"), 1024 * 1024)?;
-    let packet = prepare_with(&raw, &mut |pin| {
-        read(&output.join("sources").join(&pin.path), pin.bytes)
-    })?;
-    check_packet(&packet, output)?;
-    Ok(packet)
-}
 /// Deterministic replay against injected exact source/output readers. Performs
 /// no filesystem writes and does not infer worker identity, rights or custody.
 pub fn check_with(
@@ -542,7 +533,12 @@ pub fn capture_with(
     let packet = prepare_with(request, &mut input)?;
     Ok((packet.receipt, packet.files))
 }
-fn inventory(root: &Path, at: &Path, depth: usize, files: &mut BTreeSet<String>) -> Result<()> {
+pub(crate) fn inventory(
+    root: &Path,
+    at: &Path,
+    depth: usize,
+    files: &mut BTreeSet<String>,
+) -> Result<()> {
     ensure!(
         depth <= 16 && ordinary(at)?.is_dir(),
         "packet directory bound exceeded"

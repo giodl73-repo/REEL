@@ -3,7 +3,10 @@
 use crate::{Artifact, ArtifactSet, comic, comic_source::*};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 pub use crate::comic_issue_source::{Part, Plan};
 /// Bounded, read-only metadata decoding. Call `Plan::check` to validate it.
@@ -33,12 +36,26 @@ pub struct AssemblyReceipt {
     pub retained_owner_acknowledged: bool,
     pub print_ready: bool,
 }
-fn pinned(root: &Path, pin: &Pin, max: u64) -> Result<Vec<u8>> {
+fn read_with(
+    input: &mut impl FnMut(&str, u64) -> Result<Vec<u8>>,
+    path: &str,
+    max: u64,
+) -> Result<Vec<u8>> {
+    ensure!(comic::portable(path), "issue source path refused");
+    let raw = input(path, max)?;
+    ensure!(raw.len() as u64 <= max, "issue source byte bound exceeded");
+    Ok(raw)
+}
+fn pinned(
+    input: &mut impl FnMut(&str, u64) -> Result<Vec<u8>>,
+    pin: &Pin,
+    max: u64,
+) -> Result<Vec<u8>> {
     ensure!(
         comic::portable(&pin.path) && (1..=max).contains(&pin.bytes),
         "issue pin/path bound refused"
     );
-    let raw = comic::read(&root.join(&pin.path), pin.bytes)?;
+    let raw = read_with(input, &pin.path, pin.bytes)?;
     ensure!(
         comic::object(&raw)
             == Object {
@@ -66,7 +83,43 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
                 .context("issue destination name absent")?,
         );
     let raw = comic::read(&request_path, crate::MAX_CONTROL_BYTES as u64)?;
+    let root = request_path.parent().context("assembly parent absent")?;
+    let (receipt, files) = capture_with(&raw, |path, max| comic::read(&root.join(path), max))?;
     let request: Assembly = serde_json::from_slice(&raw)?;
+    for (id, pin) in &request.parts {
+        let packet_root = root
+            .join(&pin.path)
+            .parent()
+            .context("part packet parent absent")?
+            .to_path_buf();
+        ensure!(
+            !resolved_destination.starts_with(packet_root.canonicalize()?),
+            "issue destination overlaps source packet"
+        );
+        let mut actual = BTreeSet::new();
+        comic::inventory(&packet_root, &packet_root, 0, &mut actual)?;
+        let prefix = format!("parts/{id}/");
+        let expected: BTreeSet<_> = files
+            .keys()
+            .filter_map(|name| name.strip_prefix(&prefix).map(str::to_owned))
+            .collect();
+        ensure!(actual == expected, "comic packet file set differs");
+    }
+    comic::write_new(&destination, &files)?;
+    Ok(receipt)
+}
+/// Replay explicitly named part bytes and assemble a complete editable reading
+/// packet without filesystem access. The caller supplies exact retained reads;
+/// this function verifies correspondence, not native custody or task completion.
+pub fn capture_with(
+    raw: &[u8],
+    mut input: impl FnMut(&str, u64) -> Result<Vec<u8>>,
+) -> Result<(AssemblyReceipt, BTreeMap<String, Vec<u8>>)> {
+    ensure!(
+        raw.len() <= crate::MAX_CONTROL_BYTES,
+        "issue request byte bound exceeded"
+    );
+    let request: Assembly = serde_json::from_slice(raw)?;
     ensure!(
         request.schema == "reel.comic-issue-assembly.v1"
             && (1..=128).contains(&request.parts.len())
@@ -74,8 +127,7 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
             && (1..=128 * 1024 * 1024).contains(&request.limits.output_bytes),
         "issue assembly limits refused"
     );
-    let root = request_path.parent().context("assembly parent absent")?;
-    let plan_raw = pinned(root, &request.plan, crate::MAX_CONTROL_BYTES as u64)?;
+    let plan_raw = pinned(&mut input, &request.plan, crate::MAX_CONTROL_BYTES as u64)?;
     let plan: Plan = serde_json::from_slice(&plan_raw)?;
     plan.check()?;
     ensure!(
@@ -104,17 +156,37 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
                 .is_some_and(|n| n == "receipt.json"),
             "part receipt filename refused"
         );
-        let receipt_raw = pinned(root, pin, crate::MAX_CONTROL_BYTES as u64)?;
-        let packet_root = root
-            .join(&pin.path)
-            .parent()
-            .context("part packet parent absent")?
-            .to_path_buf();
-        ensure!(
-            !resolved_destination.starts_with(packet_root.canonicalize()?),
-            "issue destination overlaps source packet"
-        );
-        let packet = comic::reopen_packet(&packet_root)?;
+        let receipt_raw = pinned(&mut input, pin, crate::MAX_CONTROL_BYTES as u64)?;
+        let prefix = pin
+            .path
+            .strip_suffix("receipt.json")
+            .context("part packet path")?;
+        let build_raw = read_with(
+            &mut input,
+            &format!("{prefix}sources/request.json"),
+            crate::MAX_CONTROL_BYTES as u64,
+        )?;
+        let (part_receipt, part_files) = comic::capture_with(&build_raw, |source| {
+            read_with(
+                &mut input,
+                &format!("{prefix}sources/{}", source.path),
+                source.bytes,
+            )
+        })?;
+        for (name, expected) in &part_files {
+            ensure!(
+                read_with(
+                    &mut input,
+                    &format!("{prefix}{name}"),
+                    expected.len() as u64
+                )? == *expected,
+                "comic packet differs"
+            );
+        }
+        let packet = comic::Packet {
+            receipt: part_receipt,
+            files: part_files,
+        };
         ensure!(
             comic::object(&packet.files["receipt.json"]) == comic::object(&receipt_raw),
             "part receipt changed"
@@ -211,7 +283,7 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
     crate::check_outputs(&edition.outputs, &outputs)?;
     let receipt = AssemblyReceipt {
         schema: "reel.comic-issue-receipt.v1".into(),
-        request: comic::object(&raw),
+        request: comic::object(raw),
         plan: comic::object(&plan_raw),
         parts: part_receipts,
         page_order: pages.iter().map(|p| p.id.clone()).collect(),
@@ -247,7 +319,7 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
         "assembly.json".into(),
         serde_json::to_vec_pretty(&relocated)?,
     );
-    files.insert("source-assembly.json".into(), raw);
+    files.insert("source-assembly.json".into(), raw.to_vec());
     files.insert("receipt.json".into(), serde_json::to_vec_pretty(&receipt)?);
     let total = files.values().try_fold(0u64, |n, b| {
         n.checked_add(b.len() as u64)
@@ -261,6 +333,5 @@ pub fn assemble(request_path: &Path, destination: &Path) -> Result<AssemblyRecei
         files.keys().all(|name| comic::portable(name)),
         "issue output path bound exceeded"
     );
-    comic::write_new(&destination, &files)?;
-    Ok(receipt)
+    Ok((receipt, files))
 }
