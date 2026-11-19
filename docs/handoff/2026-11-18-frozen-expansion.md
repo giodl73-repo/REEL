@@ -41,7 +41,16 @@ Two added Windows metadata/claims fixtures pass for freezing without changing
 claims, exact acceptance and receipt recovery, stale base/packet refusal, altered
 preview refusal, wrong package hash, protected output paths and existing-file
 preservation. They establish no native payload availability. Strict native Clippy
-passes. Positive composite history-to-admission qualification remains pending.
+passes. All 40 default native tests and 57 workflow tests pass. Positive composite
+history-to-admission qualification is running separately in
+`F:/src/tig-dev-temp/reel-workflow-native-freeze-20261118-v1` against the explicitly
+enrolled unused test actor and existing qualified issue history. Its source pin
+is commit `070fb66`; all 1,813 archived files match, with manifest SHA256
+`128d85952ff0fb6e91cb77b511610bb94feca1e63f04c35c94ded8994979ad85`.
+The frozen runtime SHA256 is
+`495475ba18c01b2eff26b68eeb1c0df40fb060287c967017beafa7a758e4ae0a`.
+These are pins under test; positive composite acceptance/recovery is not yet
+reported as qualified.
 
 Producer-applied provenance/recovery checks retain origin/result fingerprints,
 original work and activation, explicit actors and preserved failure evidence.

@@ -31,8 +31,10 @@ checked again before closing the objective.
 
 Current ordering: qualify the implemented [derived issue control producer](handoff/2026-11-18-derived-issue-controls.md)
 through native retention and final assembly. [Task expansion](handoff/2026-11-18-task-expansion.md)
-now fills concrete tasks from verified retained parent selectors; connect its
-proposals to source freezing/admission and automatic recipe scheduling, then
+now fills concrete tasks from verified retained parent selectors;
+[frozen expansion admission](handoff/2026-11-18-frozen-expansion.md) connects those
+proposals to exact source declarations, previews, acceptance and original receipt
+recovery. Complete their positive composite qualification and automatic recipe scheduling, then
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish
