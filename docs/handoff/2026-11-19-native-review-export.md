@@ -32,10 +32,23 @@ Exported derived controls are not retained merely because their source media is
 retained. A later workflow task must explicitly admit them. Export does not prove
 watching/listening or authorize publication.
 
-Qualification is pending. The ignored existing-pool fixture takes explicit
-retained movie/comic roots and writes its operation marker before exporting.
-It checks the 48-frame film cut at frame 24, actual cel/shot targets, ordered comic
-reading pins, finding binding and unchanged claims. It does not render new media.
+Qualification passed in 77.50 seconds at source `314885e`. The existing-pool
+fixture used retained movie `.tmpoi9NTI` (after its slot was reused) and comic
+`.tmpgipRl8`; its new preserved control root is `.tmp7TWQrl`. It checks the
+48-frame film cut at frame 24, original cel/shot targets, ordered comic reading
+pins, balloon targets, finding binding and byte-identical claims. No new
+production task runs; existing proof checks may reconstruct reference pixels or
+audio while verifying media. The fixture's `media_rendered: false` flag denotes
+absence of replacement production, not absence of that verification work.
+
+All 79 workflow tests, 57 default native tests, the 247 SDK source pins and strict
+Clippy for workflow/native with and without `film` pass. Formatting and
+`git diff --check` pass. All 1,876 archived source files match. Exact source,
+runtime/fixture, controls and log pins are recorded by
+`F:/src/tig-dev-temp/reel-native-review-export-20261119-v1/qualified-tools.json`
+(SHA256 `05dfc44f935ec9ba561d90e4fa3d15580c0832a3755a5f6485590438a0b89d8d`).
+This qualifies bounded existing single-pool Windows/NTFS synthetic exports. It
+does not qualify arbitrary issue assemblies, project adoption or new platforms.
 
 Producer-applied editor, comics editor and rights/provenance review: mappings use
 producer IDs and selected versions, and local repairs retain the full contextual

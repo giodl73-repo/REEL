@@ -17,7 +17,7 @@ checked again before closing the objective.
 | Film production | Existing root producers; [scene controls](handoff/2026-11-19-film-scene-controls.md), [contained rendering](handoff/2026-11-19-contained-film-process.md), [task-bound candidates](handoff/2026-11-19-movie-task-contract.md), [independent return checks](handoff/2026-11-19-movie-return-verification.md), [native retained media](handoff/2026-11-19-native-movie-retention.md) and [owned dispatch/completion](handoff/2026-11-19-owned-movie-dispatch.md) | Bounded `dispatch-task` renders 48 frames, retains twelve outputs, records Retained journal completion and replays without new rendering/claims. Qualify interrupted producer/controller recovery, completed-render adoption, post-close/slot-reuse history, broader editions and project integration. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
-| Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md) burns compiled cel/shot IDs into review MP4s, with an exact selected font and retained source/frame/sample map; synthetic render, master parity, borrowed inputs/scattered outputs and tamper rejection pass | Translate workflow film controls into the renderer, qualify the complete native movie worker, then connect findings, fixes and affected-consumer invalidation. |
+| Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md), retained movie worker and [native review export](handoff/2026-11-19-native-review-export.md) preserve compiled cel/shot IDs, review MP4/font and frame/sample map; bounded synthetic native export binds findings after slot reuse | Translate workflow film controls into the renderer; connect protected structured-review tasks, actual fixes and affected-consumer invalidation. |
 | Packaging, review, issue filing and fixes | Existing packaging/review checks; [shared review/repair contracts](handoff/2026-11-19-review-repair-contracts.md) bind exact film/comic units, languages, returned report bytes/evidence, stable finding/issue proposal keys and proposed dependency rebuild scope | Root producer-map export/binding, native structured-review ingress, authorized issue delivery/reconciliation, scoped repair execution, corrected contextual review and evidenced closure. Local issue proposals are private and unsent. |
 | HTML/CSS/SVG and browser compositions | Existing root browser/composition and vector/print surfaces | Explicit workflow contracts/producer bindings, reference closure, deterministic checks and bounded execution policy. Returned code is never an implicit shell command. |
 | Comic editions, pages, panels, editable lettering and reading order | `reel-publication`, shared print renderer, bilingual fixtures; native receipt/replay/export/restoration; selected-part admission/recovery tied to portable full master/plan; owned exact-runtime comic dispatch and composite art dependency replay; bounded two-part retained issue assembly/history/export/edit test passes | Automatic derived controls, complete issue scheduling and larger/project qualification. |
@@ -167,6 +167,15 @@ execution or closure. Those integrations remain required.
 All 77 workflow tests, 57 default native tests, 247 SDK source pins and strict
 Clippy checks pass; the nine new review tests cover both formats and all four
 local commands. Exact source and log pins are linked from the contract document.
+The [native review export](handoff/2026-11-19-native-review-export.md) now derives
+film cel/shot targets from the complete retained movie proof and comic
+page/panel/balloon targets from native deterministic replay. Its 77.50-second
+fixture verifies the 48-frame movie after slot reuse, ordered comic reading pins,
+finding binding and unchanged claims. All 79 workflow tests, 57 default native
+tests, 247 SDK pins and strict Clippy pass. Exported controls still need explicit
+admission/retention before use by another native task. Complete issue assembly
+review export, structured native report ingestion, tracker delivery, repair
+execution and evidenced closure remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
