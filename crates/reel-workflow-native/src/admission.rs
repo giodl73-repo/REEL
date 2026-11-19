@@ -313,6 +313,7 @@ impl Prepared {
                 tool.capability,
                 reel_workflow::ToolCapability::ComicIssueAssembly
                     | reel_workflow::ToolCapability::ComicIssueControl
+                    | reel_workflow::ToolCapability::FilmSceneControl
             ) || packet.task.outputs.contains_key("editable.packet")
         });
         let input_paths: BTreeMap<_, _> = snapshot

@@ -10,6 +10,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod audio_clock;
 pub const GRAPH_SCHEMA: &str = "reel.semantic-assembly.v1";
 pub const POINTER_SCHEMA: &str = "reel.selected-pointer.v1";
 pub const REVISION_REQUEST_SCHEMA: &str = "reel.slot-revision-request.v1";

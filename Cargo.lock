@@ -1474,6 +1474,7 @@ dependencies = [
 name = "reel-workflow"
 version = "0.1.0"
 dependencies = [
+ "reel-assembly",
  "reel-publication",
  "serde",
  "serde_json",

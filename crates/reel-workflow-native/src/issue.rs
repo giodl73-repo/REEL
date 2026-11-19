@@ -59,6 +59,20 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         .task
         .tool
         .as_ref()
+        .is_some_and(|t| t.capability == reel_workflow::ToolCapability::FilmSceneControl)
+    {
+        let g = reel_workflow::film::generate(packet, &mut inputs)?;
+        return Ok(Generated {
+            _inputs: inputs.native,
+            bound: None,
+            outputs: g.outputs,
+            files: g.files,
+        });
+    }
+    if packet
+        .task
+        .tool
+        .as_ref()
         .is_some_and(|t| t.capability == reel_workflow::ToolCapability::ComicIssueControl)
     {
         let generated = reel_workflow::issue_control::generate(packet, &mut inputs)?;

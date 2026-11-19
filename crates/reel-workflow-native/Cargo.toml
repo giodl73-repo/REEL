@@ -26,5 +26,6 @@ tig-git = { path = "../../vendor/tig-workflow/crates/tig-git", features = ["asse
 tig-store = { path = "../../vendor/tig-workflow/crates/tig-store" }
 
 [dev-dependencies]
+reel-assembly = { path = "../reel-assembly" }
 tempfile = "=3.27.0"
 resvg = { version = "=0.45.1", default-features = false, features = ["text"] }

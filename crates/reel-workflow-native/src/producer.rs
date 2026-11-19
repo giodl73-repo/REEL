@@ -16,6 +16,10 @@ fn capability(packet: &Packet) -> Result<ToolCapability> {
 }
 pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> Result<u64> {
     match capability(packet)? {
+        ToolCapability::FilmSceneControl => {
+            reel_workflow::film::generate(packet, inputs)?;
+            Ok(6 * reel_workflow::MAX_CONTROL_BYTES as u64)
+        }
         ToolCapability::ComicRender => {
             reel_workflow::publication::bind_comic(packet, inputs)?;
             let asset = &packet
@@ -60,7 +64,9 @@ pub(crate) fn generate(packet: &Packet, inputs: NativeInputs) -> Result<Generate
         ToolCapability::ComicRender => {
             crate::comic::generate(packet, inputs).map(|g| Generated::Comic(Box::new(g)))
         }
-        ToolCapability::ComicIssueAssembly | ToolCapability::ComicIssueControl => {
+        ToolCapability::ComicIssueAssembly
+        | ToolCapability::ComicIssueControl
+        | ToolCapability::FilmSceneControl => {
             crate::issue::generate(packet, inputs).map(|g| Generated::Issue(Box::new(g)))
         }
     }
@@ -76,7 +82,9 @@ pub(crate) fn check_returned(
         ToolCapability::ComicRender => {
             crate::comic::check_returned(packet, inputs, result, root, paths)
         }
-        ToolCapability::ComicIssueAssembly | ToolCapability::ComicIssueControl => {
+        ToolCapability::ComicIssueAssembly
+        | ToolCapability::ComicIssueControl
+        | ToolCapability::FilmSceneControl => {
             crate::issue::check_returned(packet, inputs, result, root, paths)
         }
     }
@@ -126,7 +134,9 @@ fn native(
             crate::comic::check_native(packet, source, result, permit)
         }
         .map(|p| p.map(|p| Proof::Comic(Box::new(p)))),
-        ToolCapability::ComicIssueAssembly | ToolCapability::ComicIssueControl => {
+        ToolCapability::ComicIssueAssembly
+        | ToolCapability::ComicIssueControl
+        | ToolCapability::FilmSceneControl => {
             crate::issue::native_proof(packet, source, result, capture, permit)
                 .map(|p| Some(Proof::Issue(Box::new(p))))
         }

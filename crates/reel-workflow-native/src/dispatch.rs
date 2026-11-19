@@ -34,6 +34,7 @@ impl Config {
                 ToolCapability::ComicRender
                     | ToolCapability::ComicIssueAssembly
                     | ToolCapability::ComicIssueControl
+                    | ToolCapability::FilmSceneControl
             )
         }) {
             return Err(error(

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod expansion;
+pub mod film;
 pub mod graph;
 pub mod handoff;
 pub mod issue;
@@ -88,6 +89,7 @@ pub enum Operation {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolCapability {
+    FilmSceneControl,
     ComicRender,
     ComicIssueAssembly,
     ComicIssueControl,

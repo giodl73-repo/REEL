@@ -38,6 +38,7 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
             ToolCapability::ComicRender
                 | ToolCapability::ComicIssueAssembly
                 | ToolCapability::ComicIssueControl
+                | ToolCapability::FilmSceneControl
         )
         || tool.executable.sha256 != selected.profile.runtime.sha256
         || tool.executable.bytes != selected.profile.runtime.bytes

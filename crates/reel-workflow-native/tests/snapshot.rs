@@ -18,6 +18,13 @@ mod automatic_dispatch;
 #[path = "support/close_native.rs"]
 mod close_native;
 #[cfg(windows)]
+#[allow(dead_code)]
+#[path = "../../reel-workflow/tests/support/film_fixture.rs"]
+mod film_fixture;
+#[cfg(windows)]
+#[path = "support/film_native.rs"]
+mod film_native;
+#[cfg(windows)]
 #[path = "support/frozen_expansion.rs"]
 mod frozen_expansion;
 #[cfg(windows)]
