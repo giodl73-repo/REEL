@@ -45,8 +45,7 @@ fn owned_resolution_protects_parent_payloads_and_reopens_typed_native_proof() {
     };
     let request_pin = pin(REQUEST_ID, &request_raw);
     let plan_pin = pin("control/resolution-plan", &plan_raw);
-    let mut inputs = resources.clone();
-    inputs.extend([request_pin.clone(), plan_pin.clone()]);
+    let inputs = vec![request_pin.clone(), plan_pin.clone()];
     let original_source: NativeProfile = load(existing.join("source.json"));
     let before_claims =
         fs::read(request.baseline.admission.index_root.join("claims.json")).unwrap();
@@ -82,6 +81,29 @@ fn owned_resolution_protects_parent_payloads_and_reopens_typed_native_proof() {
         value["id"] = json!(input.logical_id);
         value["selected"] = serde_json::to_value(&object).unwrap();
         value["streams"] = json!([]);
+        let mut streams = BTreeMap::new();
+        if input.logical_id == REQUEST_ID {
+            let declared: Vec<_> = resources
+                .iter()
+                .enumerate()
+                .map(|(n, a)| {
+                    let slot = format!("custody-{n:03}");
+                    let path = format!("payloads/custody-{n:03}.bin");
+                    let object = Object {
+                        sha256: tig_core::Digest::parse(&a.sha256).unwrap(),
+                        bytes: a.bytes,
+                    };
+                    fs::write(
+                        fixture.temp.path().join(&path),
+                        Key::from_object(&object).unlocked_pointer(),
+                    )
+                    .unwrap();
+                    streams.insert(slot.clone(), LogicalPath::parse(&path).unwrap());
+                    json!({"slot":slot,"role":"review","group":"resolution","object":object})
+                })
+                .collect();
+            value["streams"] = json!(declared);
+        }
         write(fixture.temp.path(), &record, value);
         fs::write(
             fixture.temp.path().join(&leaf),
@@ -93,7 +115,7 @@ fn owned_resolution_protects_parent_payloads_and_reopens_typed_native_proof() {
             input.logical_id.clone(),
             Binding {
                 selected: LogicalPath::parse(&leaf).unwrap(),
-                streams: BTreeMap::new(),
+                streams,
             },
         );
         fixture
@@ -135,15 +157,7 @@ fn owned_resolution_protects_parent_payloads_and_reopens_typed_native_proof() {
             media_type: "application/octet-stream".into(),
         },
         edition_id: "resolution".into(),
-        source_bindings: resources
-            .iter()
-            .map(|a| {
-                (
-                    format!("resources/{}-{}", a.sha256, a.bytes),
-                    a.logical_id.clone(),
-                )
-            })
-            .collect(),
+        source_bindings: BTreeMap::new(),
         auxiliary_executables: BTreeMap::new(),
         part: None,
     });

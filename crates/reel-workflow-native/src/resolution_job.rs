@@ -232,12 +232,11 @@ pub(crate) fn generate(packet: &Packet, native: &mut NativeInputs) -> Result<Gen
     {
         return Err(error(ErrorKind::Conflict, "resolution-job-child-pool"));
     }
-    let expected: BTreeMap<_, _> = resources
-        .iter()
-        .chain([&tool.request, &tool.publication])
+    let expected: BTreeMap<_, _> = [&tool.request, &tool.publication]
+        .into_iter()
         .map(|a| (&a.logical_id, a))
         .collect();
-    if expected.len() != resources.len() + 2
+    if expected.len() != 2
         || packet.task.inputs.len() != expected.len()
         || packet
             .task
@@ -250,16 +249,18 @@ pub(crate) fn generate(packet: &Packet, native: &mut NativeInputs) -> Result<Gen
             "resolution-job-declared-closure",
         ));
     }
-    let bindings: BTreeMap<_, _> = resources
+    let objects: BTreeSet<_> = resources
         .iter()
+        .chain([&tool.request, &tool.publication])
         .map(|a| {
-            (
-                format!("resources/{}-{}", a.sha256, a.bytes),
-                a.logical_id.clone(),
-            )
+            Ok(Object {
+                sha256: tig_core::Digest::parse(&a.sha256)
+                    .map_err(|_| error(ErrorKind::Invalid, "resolution-job-resource-digest"))?,
+                bytes: a.bytes,
+            })
         })
-        .collect();
-    if tool.source_bindings != bindings {
+        .collect::<Result<_>>()?;
+    if native.snapshot.declared_objects != objects || !tool.source_bindings.is_empty() {
         return Err(error(
             ErrorKind::Conflict,
             "resolution-job-resource-bindings",
@@ -270,8 +271,41 @@ pub(crate) fn generate(packet: &Packet, native: &mut NativeInputs) -> Result<Gen
     // a control object may also occur in a parent's declared input set.
     native.held.clear();
     native.captured.clear();
-    // Do not open resource aliases here: each original retained proof owns its
-    // actual read gates, while this job durably protects their complete objects.
+    // The SDK admits every declared stream, even though only two control inputs
+    // are selected. Verify their bytes sequentially without retaining duplicate
+    // gates across independent parent proofs.
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    for asset in &resources {
+        let object = Object {
+            sha256: tig_core::Digest::parse(&asset.sha256)
+                .map_err(|_| error(ErrorKind::Invalid, "resolution-job-resource-digest"))?,
+            bytes: asset.bytes,
+        };
+        let mut held = tig_git::annex::workflow::reader::open(&native.source, &object)
+            .map_err(crate::io_error)?;
+        let mut hash = Sha256::new();
+        let mut bytes = 0u64;
+        let mut buffer = [0u8; 65536];
+        loop {
+            let n = held.read(&mut buffer).map_err(crate::io_error)?;
+            if n == 0 {
+                break;
+            }
+            bytes = bytes
+                .checked_add(n as u64)
+                .filter(|b| *b <= asset.bytes)
+                .ok_or_else(|| error(ErrorKind::Integrity, "resolution-job-resource-bytes"))?;
+            hash.update(&buffer[..n]);
+        }
+        let actual: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        if bytes != asset.bytes || actual != asset.sha256 {
+            return Err(error(
+                ErrorKind::Integrity,
+                "resolution-job-resource-content",
+            ));
+        }
+    }
     let checked = resolution::propose(
         &request.baseline,
         &plan,

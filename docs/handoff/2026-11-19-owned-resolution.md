@@ -24,10 +24,13 @@ and the child must use the same explicitly declared native store and physical
 pool. Original contexts, Git history and pinned verification tools must remain
 available; missing history is an error, never a latest-context fallback.
 
-The task declares the request as `control/resolution-request`, the baseline plan
-as its distinct publication input, and the complete resource alias set. Its tool
-has no auxiliary programs/parts, resource `source_bindings`, a pinned native
-runtime and one required JSON output bounded by 1 MiB. Native admission owns
+The task selects the request as `control/resolution-request` and the baseline
+plan as its distinct publication input. Every parent resource object is declared
+as a native record stream, with its exact stream-to-annex-leaf binding included
+in the source declaration. The SDK protects these streams even though they are
+not selected logical inputs. The task has no auxiliary programs, parts or
+`source_bindings`, a pinned native runtime and one required JSON output bounded
+by 1 MiB. Native admission owns
 durable claims for the full declared closure before dispatch. The logical
 126-resource/512 MiB bound does not override the SDK's 128-change transaction or
 16-actor limits; preview/admission may refuse earlier. There is no splitting or
@@ -38,8 +41,9 @@ then recomputes the checked resolution with exact producer-derived review copies
 It requires live admitted or retained child authority. Captured control bytes
 are hash-checked; their read gates are released before reopening parent proofs
 while durable child fences remain held, avoiding reentrant payload gates when
-control bytes are also parent inputs. Resource aliases themselves are protected
-by the child and checked during staging; parent proofs own their read gates.
+control bytes are also parent inputs. Every protected resource stream is reopened
+and hash/length-checked sequentially before parent proof replay; no duplicate
+read gate remains held across those proofs.
 
 The receipt and every output must equal deterministic replay before native
 completion/history is accepted. `RetainedGuard::resolution_proposal()` returns
@@ -57,3 +61,12 @@ Rights/provenance and comics-editor checks preserve original evidence, exact
 language/context, private metadata and technical/creative separation. No actual
 viewing, creative approval, tracker effect or public release is implied. Retained
 tracker delivery/close receipts and managed close scheduling remain separate work.
+
+The first fixture represented each of 24 resource objects as its own selected
+record. It refused with `admission-atomic-claim-bound` before acceptance, with
+no receipt or native publication. Its root `.tmpHDjgoX` and source `.tmpgRbhWK`
+are preserved. The revised fixture uses the existing declared-stream machinery
+to represent exactly the same object closure with fewer record/metadata objects.
+The 128-change limit remains intact; no split admission, omitted resource or new
+cache is introduced. A new fixture is permitted because the original never
+accepted a protection work/activation or published controls.
