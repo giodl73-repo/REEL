@@ -62,3 +62,41 @@ Applied the editor, comics-editor and rights/provenance checklists: the correcte
 wording is explicit synthetic input, neighboring/full-edition review remains
 required, editable source pins survive, and technical completion grants no
 canon, translation, font or public-release authority.
+
+## Qualification
+
+Initial source `83b73f0f84fac26176afeabaa5b4513ceabe9be3` verified the
+historical producer/report, committed the correction, admitted the new job and
+published its three changed inputs. That test stopped at the runtime-pin refusal
+after 73.23 seconds. Its source, binary and failure log remain preserved.
+Recovery source `adbf968212663faff44af21106db9b1d1d8576bc` resumed that
+same operation and passed in 322.19 test seconds (322.92 wall seconds).
+
+The corrected job reached Retained journal completion and replayed. Retained
+clean PNG bytes remained identical, reading PNG bytes changed, and the transcript
+contained the explicit correction. The new review copy preserved unit identities
+and rejected the old report. The original admission receipt was unchanged, and
+the continuation performed no readmission or input republication. Old comic/report
+claims were byte-identical across the continuation; the initial failed fixture's
+in-memory baselines were not persisted, so the claim comparison is scoped to
+resume. The corrected copy/manifest are private exports, not retained review-task
+outputs or evidence of actual contextual viewing.
+
+The preserved operation is `F:/src/tig-dev-temp/.tmpWZZmCD`, with source fixture
+`F:/src/tig-dev-temp/.tmprdUuHV`. Its exact new source commit is
+`b85a6893e33de14c1484fa628b6cdc4d90a6587b`; task key is
+`82d1ca5be88a2d59b7c5856ced393f8cba4158c7e8f2536e031bfdafdf513ba3`.
+Both production and lifecycle effects used the original runtime SHA256
+`bdea01148a0776d56151c74692ffe5edaa2a8c5bf38113e831773668fb9578f0`.
+
+The 89 workflow tests, strict workflow Clippy and 247 SDK source-pin checks passed
+on initial source; those source directories are unchanged in the recovery commit.
+Strict native all-target Clippy passed with and without film support. All 1,894
+archived recovery source files verified. Full standard native suites were not
+repeated for these fixture/Clone changes; prior standard-suite evidence remains
+separate from this actual execution test.
+
+Frozen sources/tools, both execution logs, original operation controls and outcome
+are pinned by
+`F:/src/tig-dev-temp/reel-corrected-comic-20261119-v2/qualified-tools.json`,
+SHA256 `2922489854651c2714f90b10fd8ec65457edd583f52371a03f7e25c74bbd1871`.
