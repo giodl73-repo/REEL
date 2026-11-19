@@ -18,6 +18,9 @@ mod automatic_dispatch;
 #[path = "support/close_native.rs"]
 mod close_native;
 #[cfg(windows)]
+#[path = "support/direct_review.rs"]
+mod direct_review_native;
+#[cfg(windows)]
 #[allow(dead_code)]
 #[path = "../../reel-workflow/tests/support/film_fixture.rs"]
 mod film_fixture;
