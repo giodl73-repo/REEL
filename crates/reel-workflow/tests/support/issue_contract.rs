@@ -117,6 +117,7 @@ fn fixture() -> (Plan, Memory, AssemblyReceipt) {
         inputs.insert(a.logical_id.clone(), a.clone());
     }
     task.tool = Some(ToolContract {
+        auxiliary_executables: BTreeMap::new(),
         schema: original.schema,
         capability: ToolCapability::ComicIssueAssembly,
         executable: original.executable,

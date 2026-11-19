@@ -79,6 +79,7 @@ fn runner_case(automatic: bool) {
         fs::create_dir(&parent).unwrap();
         for step in config.steps.values_mut() {
             step.execution = Some(reel_workflow_native::dispatch::Config {
+                auxiliary_programs: BTreeMap::new(),
                 provider: None,
                 schema: "reel.workflow-dispatch.v1".into(),
                 input_staging: staging::Profile {

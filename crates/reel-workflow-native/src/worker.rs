@@ -16,6 +16,65 @@ pub struct Ticket {
     batch: graph::PinnedFile,
     task_id: String,
     packet: Packet,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    auxiliary_programs: BTreeMap<String, crate::Tool>,
+}
+pub fn validate_programs(packet: &Packet, programs: &BTreeMap<String, crate::Tool>) -> Result<()> {
+    reel_workflow::check_packet(packet)?;
+    let Some(tool) = &packet.task.tool else {
+        return if programs.is_empty() {
+            Ok(())
+        } else {
+            Err(error(ErrorKind::Invalid, "worker-auxiliary-tool-required"))
+        };
+    };
+    if tool.auxiliary_executables.len() != programs.len()
+        || tool.auxiliary_executables.iter().any(|(role, a)| {
+            programs
+                .get(role)
+                .is_none_or(|p| p.sha256 != a.sha256 || p.bytes != a.bytes)
+        })
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "worker-auxiliary-program-binding",
+        ));
+    }
+    Ok(())
+}
+struct ProgramGuards {
+    _files: Vec<File>,
+    _directories: Vec<reel_assets::jobs::WorkspaceDirectory>,
+}
+fn hold_programs(
+    packet: &Packet,
+    programs: &BTreeMap<String, crate::Tool>,
+) -> Result<ProgramGuards> {
+    validate_programs(packet, programs)?;
+    let mut files = Vec::new();
+    let mut directories = Vec::new();
+    for program in programs.values() {
+        if !program.path.is_absolute()
+            || program.path.components().count() > 128
+            || program.path.as_os_str().len() > 4096
+        {
+            return Err(error(ErrorKind::Invalid, "worker-auxiliary-path-bound"));
+        }
+        directories.push(
+            open_workspace_directory(
+                program
+                    .path
+                    .parent()
+                    .ok_or_else(|| error(ErrorKind::Invalid, "worker-auxiliary-parent"))?,
+            )
+            .map_err(|_| error(ErrorKind::Denied, "worker-auxiliary-namespace"))?,
+        );
+        files.push(crate::hold_tool(program)?);
+    }
+    Ok(ProgramGuards {
+        _files: files,
+        _directories: directories,
+    })
 }
 impl Ticket {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
@@ -50,19 +109,25 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
     }
     Ok(tool)
 }
-fn intent(packet: &Packet, receipt: &Receipt, batch: &graph::PinnedFile) -> Result<Plan> {
-    let operation = reel_workflow::digest(&json(
-        &serde_json::json!({"schema":"reel.workflow-worker-operation.v1",
+fn intent(
+    packet: &Packet,
+    receipt: &Receipt,
+    batch: &graph::PinnedFile,
+    programs: &BTreeMap<String, crate::Tool>,
+) -> Result<Plan> {
+    let mut identity = serde_json::json!({"schema":"reel.workflow-worker-operation.v1",
         "admission":receipt.operation_identity()?,"task_key":packet.task_key,"attempt":receipt.attempt_id,
-        "executable":packet.task.tool.as_ref().map(|t|&t.executable)}),
-    )?);
-    let controls: BTreeMap<String, Vec<u8>> = BTreeMap::from([(
-        "invocation.json".into(),
-        json(
-            &serde_json::json!({"schema":"reel.workflow-worker-invocation.v1",
-        "packet":packet,"admission":receipt,"batch":batch}),
-        )?,
-    )]);
+        "executable":packet.task.tool.as_ref().map(|t|&t.executable)});
+    let mut invocation = serde_json::json!({"schema":"reel.workflow-worker-invocation.v1","packet":packet,"admission":receipt,"batch":batch});
+    if !programs.is_empty() {
+        let value = serde_json::to_value(programs)
+            .map_err(|_| error(ErrorKind::Invalid, "worker-auxiliary-json"))?;
+        identity["auxiliary_programs"] = value.clone();
+        invocation["auxiliary_programs"] = value;
+    }
+    let operation = reel_workflow::digest(&json(&identity)?);
+    let controls: BTreeMap<String, Vec<u8>> =
+        BTreeMap::from([("invocation.json".into(), json(&invocation)?)]);
     let files = controls
         .iter()
         .map(|(name, raw)| {
@@ -91,9 +156,20 @@ pub fn prepare(
     id: &str,
     profile: &Profile,
 ) -> Result<Ticket> {
+    prepare_with_programs(plan, bindings, batch, id, profile, &BTreeMap::new())
+}
+pub fn prepare_with_programs(
+    plan: &WorkflowPlan,
+    bindings: &graph::Bindings,
+    batch: &graph::PinnedFile,
+    id: &str,
+    profile: &Profile,
+    programs: &BTreeMap<String, crate::Tool>,
+) -> Result<Ticket> {
     let selected = graph::select(plan, bindings, batch, id)?;
     context(&selected)?;
     let _runtime = handoff::runtime(&selected.profile.runtime)?;
+    let _programs = hold_programs(&selected.task.ticket.packet, programs)?;
     if selected.observed.state != State::Waiting {
         return Err(error(
             ErrorKind::Conflict,
@@ -151,6 +227,7 @@ pub fn prepare(
         &selected.task.ticket.packet,
         &selected.profile.binding.admission,
         batch,
+        programs,
     )?;
     let (profile, reservation, owner) = prepare_owned(
         profile,
@@ -166,6 +243,7 @@ pub fn prepare(
         batch: batch.clone(),
         task_id: id.into(),
         packet: selected.task.ticket.packet.clone(),
+        auxiliary_programs: programs.clone(),
     })
 }
 fn result_plan(base: &Plan, mut controls: BTreeMap<String, Vec<u8>>) -> Result<Plan> {
@@ -309,6 +387,7 @@ fn execute(
     let selected = graph::select(plan, bindings, &ticket.batch, &ticket.task_id)?;
     let tool = context(&selected)?;
     let _runtime = handoff::runtime(&selected.profile.runtime)?;
+    let _programs = hold_programs(&ticket.packet, &ticket.auxiliary_programs)?;
     if selected.task.ticket.packet != ticket.packet
         || selected.profile.binding.admission.operation_identity()?
             != ticket.admission.operation_identity()?
@@ -320,7 +399,12 @@ fn execute(
         &selected.profile.source,
         &selected.profile.admission,
     )?;
-    let base = intent(&ticket.packet, &ticket.admission, &ticket.batch)?;
+    let base = intent(
+        &ticket.packet,
+        &ticket.admission,
+        &ticket.batch,
+        &ticket.auxiliary_programs,
+    )?;
     let config = configuration(
         &ticket.profile,
         &selected.profile.admission.scope.coordination_root,
@@ -450,6 +534,18 @@ pub fn prepare_file(
     profile: &Profile,
     path: &Path,
 ) -> Result<()> {
+    prepare_file_with_programs(plan, bindings, batch, id, profile, path, &BTreeMap::new())
+}
+#[allow(clippy::too_many_arguments)]
+pub fn prepare_file_with_programs(
+    plan: &WorkflowPlan,
+    bindings: &graph::Bindings,
+    batch: &graph::PinnedFile,
+    id: &str,
+    profile: &Profile,
+    path: &Path,
+    programs: &BTreeMap<String, crate::Tool>,
+) -> Result<()> {
     if !path.is_absolute()
         || path
             .components()
@@ -458,6 +554,7 @@ pub fn prepare_file(
         return Err(error(ErrorKind::Invalid, "worker-explicit-ticket-path"));
     }
     let selected = graph::select(plan, bindings, batch, id)?;
+    validate_programs(&selected.task.ticket.packet, programs)?;
     let parent = open_workspace_directory(
         path.parent()
             .ok_or_else(|| error(ErrorKind::Invalid, "worker-ticket-parent"))?,
@@ -494,7 +591,7 @@ pub fn prepare_file(
         .create_new(true)
         .open(parent.path().join(name))
         .map_err(io_error)?;
-    let ticket = prepare(plan, bindings, batch, id, profile)?;
+    let ticket = prepare_with_programs(plan, bindings, batch, id, profile, programs)?;
     file.write_all(&ticket.canonical_bytes()?)
         .and_then(|_| file.sync_all())
         .map_err(|_| error(ErrorKind::NeedsRecovery, "worker-ticket-write-preserve"))

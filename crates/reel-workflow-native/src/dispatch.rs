@@ -15,6 +15,8 @@ pub struct Config {
     pub worker_staging: Option<staging::Profile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<crate::provider::Config>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub auxiliary_programs: std::collections::BTreeMap<String, crate::Tool>,
 }
 impl Config {
     pub(crate) fn check_operation(
@@ -25,6 +27,7 @@ impl Config {
         if self.schema != "reel.workflow-dispatch.v1"
             || self.worker_staging.is_some() != (operation == Operation::DeterministicTool)
             || (self.provider.is_some() && self.worker_staging.is_some())
+            || (!self.auxiliary_programs.is_empty() && self.worker_staging.is_none())
         {
             return Err(error(ErrorKind::Invalid, "dispatch-operation-mode"));
         }
@@ -77,6 +80,7 @@ fn check_config(
         packet.task.operation,
         packet.task.tool.as_ref().map(|t| t.capability),
     )?;
+    staging::worker::validate_programs(packet, &config.auxiliary_programs)?;
     if let Some(provider) = &config.provider {
         crate::provider::check(packet, provider)?;
     }
@@ -273,7 +277,15 @@ pub fn run(
     let state = if let Some(worker) = &config.worker_staging {
         let path = directory.join("worker-ticket.json");
         if !path.exists() {
-            staging::worker::prepare_file(plan, &staged, &batch, id, worker, &path)?;
+            staging::worker::prepare_file_with_programs(
+                plan,
+                &staged,
+                &batch,
+                id,
+                worker,
+                &path,
+                &config.auxiliary_programs,
+            )?;
         }
         let worker_pin = saved_pin(&path, &directory.join("worker-ticket-pin.json"))?;
         staging::worker::run_file(plan, &staged, &path, &worker_pin.sha256)?

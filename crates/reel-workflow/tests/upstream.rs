@@ -225,6 +225,7 @@ fn worker_receipt_requires_its_own_explicit_selector_and_input_identity() {
     producer.prompt.clear();
     producer.inputs = vec![publication.clone(), request.clone()];
     producer.tool = Some(ToolContract {
+        auxiliary_executables: BTreeMap::new(),
         schema: "reel.workflow-tool.v1".into(),
         capability: ToolCapability::ComicRender,
         executable: executable.clone(),

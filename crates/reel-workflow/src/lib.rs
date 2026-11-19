@@ -101,6 +101,10 @@ pub struct ToolContract {
     pub schema: String,
     pub capability: ToolCapability,
     pub executable: Artifact,
+    /// Portable identities of auxiliary installed programs; machine paths live
+    /// in the original worker invocation, never in this task contract.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub auxiliary_executables: BTreeMap<String, Artifact>,
     pub publication: Artifact,
     pub edition_id: String,
     pub request: Artifact,
@@ -243,6 +247,18 @@ fn task(value: &Task) -> Result<()> {
                 return fail(ErrorKind::Invalid, "deterministic-tool-contract");
             }
             artifact(&tool.executable)?;
+            if tool.auxiliary_executables.len() > 16 {
+                return fail(ErrorKind::Budget, "tool-auxiliary-program-count");
+            }
+            for (role, program) in &tool.auxiliary_executables {
+                if !token(role)
+                    || role.bytes().any(|b| b.is_ascii_uppercase())
+                    || program.bytes > 256 * 1024 * 1024
+                {
+                    return fail(ErrorKind::Invalid, "tool-auxiliary-program-contract");
+                }
+                artifact(program)?;
+            }
             artifact(&tool.publication)?;
             artifact(&tool.request)?;
             if let Some(part) = &tool.part {

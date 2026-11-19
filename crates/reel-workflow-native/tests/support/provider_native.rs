@@ -84,6 +84,7 @@ fn proxy_dispatch_requires_declared_evidence_and_native_inputs_before_network_ef
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
         let config = dispatch::Config {
+            auxiliary_programs: BTreeMap::new(),
             schema: "reel.workflow-dispatch.v1".into(),
             input_staging: stage(root.join("inputs")),
             worker_staging: None,
@@ -416,6 +417,7 @@ fn run_case(uncertain: bool, speech: bool) {
         stream.write_all(&raw).unwrap();
     });
     let config = dispatch::Config {
+        auxiliary_programs: BTreeMap::new(),
         schema: "reel.workflow-dispatch.v1".into(),
         input_staging: stage(root.join("inputs")),
         worker_staging: None,

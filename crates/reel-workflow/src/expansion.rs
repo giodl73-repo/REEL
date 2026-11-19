@@ -15,6 +15,8 @@ pub enum Input {
 pub struct Tool {
     pub capability: ToolCapability,
     pub executable: Artifact,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub auxiliary_executables: BTreeMap<String, Artifact>,
     pub publication: Input,
     pub edition_id: String,
     pub request: Input,
@@ -238,6 +240,7 @@ pub fn prepare(
             })
             .transpose()?;
         Some(ToolContract {
+            auxiliary_executables: tool.auxiliary_executables.clone(),
             schema: "reel.workflow-tool.v1".into(),
             capability: tool.capability,
             executable: tool.executable.clone(),

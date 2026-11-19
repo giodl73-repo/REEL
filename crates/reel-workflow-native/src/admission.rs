@@ -284,7 +284,7 @@ impl Prepared {
                 return Err(error(ErrorKind::Budget, "admission-runtime-pin-bytes"));
             }
             runtime.insert(
-                name,
+                name.to_owned(),
                 Object {
                     sha256: Digest::parse(&tool.sha256)
                         .map_err(|_| error(ErrorKind::Invalid, "admission-runtime-pin"))?,
@@ -294,13 +294,24 @@ impl Prepared {
         }
         if let Some(tool) = &packet.task.tool {
             runtime.insert(
-                "producer",
+                "producer".to_owned(),
                 Object {
                     sha256: Digest::parse(&tool.executable.sha256)
                         .map_err(|_| error(ErrorKind::Invalid, "admission-producer-pin"))?,
                     bytes: tool.executable.bytes,
                 },
             );
+            for (role, program) in &tool.auxiliary_executables {
+                runtime.insert(
+                    format!("aux/{role}"),
+                    Object {
+                        sha256: Digest::parse(&program.sha256).map_err(|_| {
+                            error(ErrorKind::Invalid, "admission-auxiliary-runtime-pin")
+                        })?,
+                        bytes: program.bytes,
+                    },
+                );
+            }
         }
         let mut memory = MemoryNodes::default();
         for (_, bytes) in snapshot.metadata.objects() {

@@ -3428,6 +3428,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
         native_inputs: Some(Fixture::declaration(&fixture.profile)),
         operation: Operation::DeterministicTool,
         tool: Some(ToolContract {
+            auxiliary_executables: BTreeMap::new(),
             part,
             schema: "reel.workflow-tool.v1".into(),
             capability: ToolCapability::ComicRender,
@@ -3897,6 +3898,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
             &executable,
             &result_path,
             &mut worker_controls,
+            &BTreeMap::new(),
         )
     } else if dispatch {
         use reel_workflow_native::{graph, staging, worker};

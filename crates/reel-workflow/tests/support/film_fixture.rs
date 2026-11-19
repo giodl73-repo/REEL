@@ -138,6 +138,7 @@ impl Fixture {
             upstream_inputs: None,
             operation: Operation::DeterministicTool,
             tool: Some(ToolContract {
+                auxiliary_executables: BTreeMap::new(),
                 schema: "reel.workflow-tool.v1".into(),
                 capability: ToolCapability::FilmSceneControl,
                 executable: Artifact {

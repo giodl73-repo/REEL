@@ -11,6 +11,7 @@ pub(super) fn run_comic(
     executable: &Path,
     result_path: &Path,
     controls: &mut Vec<(&'static str, Vec<u8>)>,
+    auxiliary_programs: &BTreeMap<String, Tool>,
 ) -> std::process::Output {
     let root = case.temp.path();
     let plan = Plan {
@@ -49,6 +50,7 @@ pub(super) fn run_comic(
         }
     };
     let config = dispatch::Config {
+        auxiliary_programs: auxiliary_programs.clone(),
         provider: None,
         schema: "reel.workflow-dispatch.v1".into(),
         input_staging: stage("automatic-inputs"),

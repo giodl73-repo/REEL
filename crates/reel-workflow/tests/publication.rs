@@ -190,6 +190,7 @@ fn build() -> (Plan, Memory, Receipt) {
         id: "render".into(),
         operation: Operation::DeterministicTool,
         tool: Some(ToolContract {
+            auxiliary_executables: BTreeMap::new(),
             part: None,
             schema: "reel.workflow-tool.v1".into(),
             capability: ToolCapability::ComicRender,

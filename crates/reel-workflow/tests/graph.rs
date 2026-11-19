@@ -413,6 +413,7 @@ fn expansion_fills_tool_request_and_source_roles_from_exact_parent_selectors() {
     plan.tasks[0].prompt.clear();
     plan.tasks[0].inputs = vec![publication.clone(), request.clone()];
     plan.tasks[0].tool = Some(ToolContract {
+        auxiliary_executables: BTreeMap::new(),
         schema: "reel.workflow-tool.v1".into(),
         capability: ToolCapability::ComicRender,
         executable: runtime.clone(),
@@ -443,6 +444,7 @@ fn expansion_fills_tool_request_and_source_roles_from_exact_parent_selectors() {
     template.task.operation = Operation::DeterministicTool;
     template.task.prompt.clear();
     template.task.tool = Some(expansion::Tool {
+        auxiliary_executables: BTreeMap::from([("ffmpeg".into(), artifact("tools/ffmpeg"))]),
         capability: ToolCapability::ComicIssueControl,
         executable: artifact("tool/runtime"),
         publication: expansion::Input::Fixed {
@@ -463,6 +465,10 @@ fn expansion_fills_tool_request_and_source_roles_from_exact_parent_selectors() {
     });
     let expanded = expansion::prepare(&plan, &template, &mut fixture).unwrap();
     let tool = expanded.packet.task.tool.as_ref().unwrap();
+    assert_eq!(
+        tool.auxiliary_executables["ffmpeg"].logical_id,
+        "tools/ffmpeg"
+    );
     assert_eq!(tool.request, expected_request);
     assert_eq!(
         tool.source_bindings["parts/opening/receipt.json"],

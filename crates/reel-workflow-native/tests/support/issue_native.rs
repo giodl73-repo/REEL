@@ -391,6 +391,7 @@ fn complete_issue(derived_control: bool) {
             upstream_inputs: None,
             operation: Operation::DeterministicTool,
             tool: Some(ToolContract {
+                auxiliary_executables: BTreeMap::new(),
                 schema: "reel.workflow-tool.v1".into(),
                 capability: ToolCapability::ComicRender,
                 executable: tool.clone(),
@@ -695,6 +696,7 @@ fn complete_issue(derived_control: bool) {
             }),
             operation: Operation::DeterministicTool,
             tool: Some(ToolContract {
+                auxiliary_executables: BTreeMap::new(),
                 schema: "reel.workflow-tool.v1".into(),
                 capability: ToolCapability::ComicIssueControl,
                 executable: tool.clone(),
@@ -943,6 +945,7 @@ fn complete_issue(derived_control: bool) {
         }),
         operation: Operation::DeterministicTool,
         tool: Some(ToolContract {
+            auxiliary_executables: BTreeMap::new(),
             schema: "reel.workflow-tool.v1".into(),
             capability: ToolCapability::ComicIssueAssembly,
             executable: tool.clone(),

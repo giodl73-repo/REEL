@@ -2,6 +2,51 @@
 mod support;
 use reel_workflow::*;
 use serde_json::json;
+use std::collections::BTreeMap;
+
+#[test]
+fn auxiliary_program_identity_changes_task_key_and_legacy_contract_omits_empty_map() {
+    let f = support::Fixture::new("es");
+    let mut task = f.packet.task.clone();
+    assert!(
+        serde_json::to_value(task.tool.as_ref().unwrap())
+            .unwrap()
+            .get("auxiliary_executables")
+            .is_none()
+    );
+    let mut runtime = task.tool.as_ref().unwrap().executable.clone();
+    runtime.logical_id = "tools/ffmpeg".into();
+    task.tool
+        .as_mut()
+        .unwrap()
+        .auxiliary_executables
+        .insert("ffmpeg".into(), runtime.clone());
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: f.packet.project.clone(),
+        source_commit: f.packet.source_commit.clone(),
+        tasks: vec![task.clone()],
+    };
+    let p = make_packet(&plan, &task.id, BTreeMap::new()).unwrap();
+    assert_ne!(p.task_key, f.packet.task_key);
+    let mut bad = plan.clone();
+    bad.tasks[0]
+        .tool
+        .as_mut()
+        .unwrap()
+        .auxiliary_executables
+        .insert("FFMPEG".into(), runtime.clone());
+    assert!(make_packet(&bad, &task.id, BTreeMap::new()).is_err());
+    runtime.bytes = 256 * 1024 * 1024 + 1;
+    bad = plan;
+    bad.tasks[0]
+        .tool
+        .as_mut()
+        .unwrap()
+        .auxiliary_executables
+        .insert("ffmpeg".into(), runtime);
+    assert!(make_packet(&bad, &task.id, BTreeMap::new()).is_err());
+}
 #[test]
 fn language_local_triggers_and_selected_take_clocks_compile_to_graph_and_review_ids() {
     for (lang, cut, end) in [("es", 2400, 8000), ("en", 4500, 12000)] {
