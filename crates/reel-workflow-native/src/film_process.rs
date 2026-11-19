@@ -23,6 +23,7 @@ use std::{
 enum Action {
     Render,
     Check,
+    Verify,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -38,6 +39,8 @@ struct Request {
     limits: Limits,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     expected_outputs: Option<BTreeSet<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    outputs: BTreeMap<String, FileRef>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -46,7 +49,7 @@ struct Outcome {
     request_sha256: String,
     error: Option<reel_workflow::Error>,
 }
-struct Files<'a>(&'a Request);
+struct Files<'a>(&'a Request, &'a BTreeMap<String, FileRef>);
 fn hash_file(path: &Path, bytes: u64) -> anyhow::Result<String> {
     anyhow::ensure!(bytes <= 512 * 1024 * 1024, "process input byte bound");
     let mut file = File::open(path)?.take(bytes + 1);
@@ -75,8 +78,7 @@ impl InputFiles for Files<'_> {
             .to_str()
             .ok_or_else(|| anyhow::anyhow!("reference encoding"))?;
         let physical = self
-            .0
-            .inputs
+            .1
             .get(name)
             .ok_or_else(|| anyhow::anyhow!("undeclared process input"))?;
         anyhow::ensure!(
@@ -179,6 +181,7 @@ fn request(
         workspace: workspace.into(),
         limits: limits.clone(),
         expected_outputs: None,
+        outputs: BTreeMap::new(),
     })
 }
 /// Exact response and guards remain live until the caller finishes importing.
@@ -301,6 +304,7 @@ fn launch(request: &Request, name: &str) -> Result<()> {
     let outcome_name = match request.action {
         Action::Render => "render-result.json",
         Action::Check => "check-result.json",
+        Action::Verify => "verify-result.json",
     };
     let (outcome, _outcome_guard) =
         crate::staging::read_held(&request.workspace.join(outcome_name), 65536).map_err(|_| {
@@ -411,6 +415,128 @@ pub fn recover(
     launch(&check, "check-request.json")?;
     Ok(rendered)
 }
+/// Independent check over caller-held exact output files; no rendered movie is
+/// produced and no original worker directory is required. The caller admits
+/// this separate empty scratch workspace and retains every supplied file guard.
+pub(crate) fn verify(
+    inputs: &Inputs,
+    job: &FileRef,
+    production: &FileRef,
+    outputs: &BTreeMap<String, FileRef>,
+    workspace: &Path,
+    runtime: &Tool,
+    limits: &Limits,
+) -> Result<()> {
+    let directory = directory(workspace)?;
+    if fs::read_dir(directory.path())
+        .map_err(io_error)?
+        .next()
+        .is_some()
+    {
+        return Err(error(
+            ErrorKind::NeedsRecovery,
+            "film-verification-original-workspace-exists",
+        ));
+    }
+    let mut request = request(
+        inputs,
+        job,
+        production,
+        directory.path(),
+        limits,
+        runtime,
+        Action::Verify,
+    )?;
+    request.expected_outputs = Some(
+        outputs
+            .keys()
+            .filter(|name| name.as_str() != "receipt.json")
+            .cloned()
+            .collect(),
+    );
+    request.outputs = outputs.clone();
+    launch(&request, "verify-request.json")
+}
+/// Producer evidence binds declared pins and parameters, never current machine
+/// locators or authenticated execution. Historical evidence paths are not opened.
+pub(crate) fn check_render_evidence(
+    packet: &reel_workflow::Packet,
+    bound: &reel_workflow::film_render::Bound,
+    raw: &[u8],
+    outcome_raw: &[u8],
+) -> Result<()> {
+    let evidence: Request = reel_workflow::decode(raw)?;
+    let outcome: Outcome = reel_workflow::decode(outcome_raw)?;
+    let tool = packet
+        .task
+        .tool
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Missing, "movie-tool"))?;
+    let reference_matches = |file: &FileRef, path: &str, asset: &reel_workflow::Artifact| {
+        file.path == Path::new(path) && file.sha256 == asset.sha256 && file.bytes == asset.bytes
+    };
+    let expected: BTreeSet<_> = bound
+        .request()
+        .output_paths
+        .values()
+        .filter_map(|p| p.strip_prefix("delivery/"))
+        .filter(|p| *p != "receipt.json")
+        .map(str::to_owned)
+        .collect();
+    if evidence.schema != "reel.workflow-film-process.v1"
+        || evidence.action != Action::Render
+        || !reference_matches(&evidence.job, &bound.request().job_path, bound.job())
+        || !reference_matches(
+            &evidence.production,
+            &bound.request().production_path,
+            bound.production(),
+        )
+        || evidence.limits != bound.request().limits
+        || evidence.expected_outputs.as_ref() != Some(&expected)
+        || !evidence.outputs.is_empty()
+        || !evidence.workspace.is_absolute()
+        || evidence.runtime.sha256 != tool.executable.sha256
+        || evidence.runtime.bytes != tool.executable.bytes
+        || !evidence.runtime.path.is_absolute()
+        || evidence.inputs.keys().ne(bound.aliases().keys())
+        || outcome.schema != "reel.workflow-film-process-outcome.v1"
+        || outcome.error.is_some()
+        || outcome.request_sha256 != reel_workflow::digest(raw)
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "movie-original-execution-evidence",
+        ));
+    }
+    for (name, id) in bound.aliases() {
+        let artifact = packet
+            .task
+            .inputs
+            .iter()
+            .find(|a| &a.logical_id == id)
+            .ok_or_else(|| error(ErrorKind::Missing, "movie-evidence-input"))?;
+        let file = &evidence.inputs[name];
+        if !file.path.is_absolute()
+            || file.sha256 != artifact.sha256
+            || file.bytes != artifact.bytes
+        {
+            return Err(error(ErrorKind::Conflict, "movie-evidence-input-binding"));
+        }
+    }
+    for (role, program) in [
+        ("ffmpeg", &evidence.programs.ffmpeg),
+        ("ffprobe", &evidence.programs.ffprobe),
+    ] {
+        let artifact = &tool.auxiliary_executables[role];
+        if !program.path.is_absolute()
+            || program.sha256 != artifact.sha256
+            || program.bytes != artifact.bytes
+        {
+            return Err(error(ErrorKind::Conflict, "movie-evidence-media-program"));
+        }
+    }
+    Ok(())
+}
 /// Internal trusted child port. The parent must hold source/program/output guards.
 /// A pinned request is execution intent, not an admission or retained-owner proof.
 pub fn child(path: &Path, pin: &str) -> Result<()> {
@@ -431,6 +557,7 @@ pub fn child(path: &Path, pin: &str) -> Result<()> {
     let request_name = match request.action {
         Action::Render => "render-request.json",
         Action::Check => "check-request.json",
+        Action::Verify => "verify-request.json",
     };
     if path.canonicalize().map_err(io_error)? != _directory.path().join(request_name) {
         return Err(error(ErrorKind::Conflict, "film-process-request-location"));
@@ -444,6 +571,7 @@ pub fn child(path: &Path, pin: &str) -> Result<()> {
     let outcome_name = match request.action {
         Action::Render => "render-result.json",
         Action::Check => "check-result.json",
+        Action::Verify => "verify-result.json",
     };
     let mut file = OpenOptions::new()
         .write(true)
@@ -468,7 +596,7 @@ fn perform(request: &Request) -> Result<()> {
         crate::hold_tool(&request.programs.ffmpeg)?,
         crate::hold_tool(&request.programs.ffprobe)?,
     ];
-    let inputs = Files(request);
+    let inputs = Files(request, &request.inputs);
     let (job, plan) = scene_delivery::plan_with_control_files(
         &request.job,
         &request.production,
@@ -524,6 +652,61 @@ fn perform(request: &Request) -> Result<()> {
                 &inputs,
             )
             .map_err(|_| error(ErrorKind::Integrity, "film-process-check"))?;
+        }
+        Action::Verify => {
+            if request.outputs.keys().cloned().collect::<BTreeSet<_>>()
+                != contract
+                    .names
+                    .iter()
+                    .cloned()
+                    .chain(std::iter::once("receipt.json".into()))
+                    .collect()
+                || request
+                    .outputs
+                    .values()
+                    .try_fold(0u64, |n, f| n.checked_add(f.bytes))
+                    .is_none_or(|n| n > request.limits.output_bytes)
+            {
+                return Err(error(ErrorKind::Budget, "film-verification-output-closure"));
+            }
+            let outputs = Files(request, &request.outputs);
+            let receipt = &request.outputs["receipt.json"];
+            let receipt = FileRef {
+                path: "receipt.json".into(),
+                sha256: receipt.sha256.clone(),
+                bytes: receipt.bytes,
+            };
+            scene_delivery::check_with_all_files(
+                &request.job,
+                &request.production,
+                &inputs,
+                &outputs,
+                &receipt,
+                &inputs,
+            )
+            .map_err(|_| error(ErrorKind::Integrity, "film-verification-media"))?;
+            let master = &request.outputs["master.mkv"];
+            let master = FileRef {
+                path: "master.mkv".into(),
+                sha256: master.sha256.clone(),
+                bytes: master.bytes,
+            };
+            reel::scene_primary_reference::compare_master_to_primaries(
+                &request.job,
+                &request.production,
+                &inputs,
+                &inputs,
+                &outputs,
+                &master,
+                &request.workspace,
+                &reel::scene_primary_reference::Budget {
+                    max_staged_bytes: request.limits.workspace_bytes,
+                    timeout_seconds: request.limits.timeout_seconds,
+                    max_picture_processes: (request.limits.processes - 2).max(2) as u16,
+                },
+            )
+            .map_err(|_| error(ErrorKind::Integrity, "film-verification-primary-reference"))?;
+            return Ok(());
         }
     }
     let rendered = collect(&request.workspace, &request.limits)?;

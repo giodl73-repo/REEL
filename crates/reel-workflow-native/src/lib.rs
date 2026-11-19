@@ -394,6 +394,8 @@ impl SnapshotInputs {
 /// Native provider handles remain held for this object's lifetime. This bridges
 /// exact record-to-leaf identity and byte access, not durable actor protection.
 pub struct NativeInputs {
+    #[cfg(all(windows, feature = "film"))]
+    repository: PathBuf,
     snapshot: SnapshotInputs,
     source: reader::Profile,
     held: Vec<reader::VerifiedRead>,
@@ -404,6 +406,19 @@ pub struct NativeInputs {
     _permit: Option<admission::InputPermit>,
 }
 impl NativeInputs {
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn movie_authority(&self) -> Result<(&admission::Profile, &str)> {
+        if let Some(claims) = &self._claims {
+            return Ok((claims.profile(), claims.attempt()));
+        }
+        if let Some(permit) = &self._permit {
+            return Ok((permit.profile(), permit.attempt()));
+        }
+        Err(error(
+            ErrorKind::Denied,
+            "movie-live-input-authority-required",
+        ))
+    }
     pub fn open(packet: &Packet, profile: &NativeProfile) -> Result<Self> {
         if packet.task.upstream_inputs.is_some() {
             return Err(error(
@@ -460,6 +475,8 @@ impl NativeInputs {
         }
         let guard = hold_tool(&profile.annex)?;
         Ok(Self {
+            #[cfg(all(windows, feature = "film"))]
+            repository: profile.snapshot.repository.clone(),
             snapshot,
             source: profile.source.clone(),
             held: Vec::new(),

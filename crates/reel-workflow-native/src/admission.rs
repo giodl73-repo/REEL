@@ -124,6 +124,14 @@ struct InputAuthority {
     _fences: Fences,
 }
 impl InputPermit {
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn profile(&self) -> &Profile {
+        &self.0.profile
+    }
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn attempt(&self) -> &str {
+        &self.0.attempt
+    }
     pub(crate) fn check_source(&self, packet: &Packet, source: &NativeProfile) -> Result<()> {
         let current = Prepared::open(packet, source, &self.0.profile, &self.0.attempt)?;
         if current.source_binding != self.0.source_binding || current.input != self.0.input {
@@ -133,6 +141,14 @@ impl InputPermit {
     }
 }
 impl ClaimsGuard {
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn profile(&self) -> &Profile {
+        &self._prepared.profile
+    }
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn attempt(&self) -> &str {
+        &self._prepared.attempt
+    }
     pub(crate) fn input_permit(&self) -> InputPermit {
         self._prepared.input_permit(self._fences.clone())
     }
