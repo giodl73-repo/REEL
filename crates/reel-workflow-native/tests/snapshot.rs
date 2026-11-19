@@ -238,6 +238,7 @@ impl Fixture {
     }
     fn repin(&mut self) {
         let mut task = self.packet.task.clone();
+        let id = task.id.clone();
         task.native_inputs = Some(Self::declaration(&self.profile));
         self.packet = make_packet(
             &Plan {
@@ -246,7 +247,7 @@ impl Fixture {
                 source_commit: self.profile.commit.clone(),
                 tasks: vec![task],
             },
-            "review",
+            &id,
             BTreeMap::new(),
         )
         .unwrap();
