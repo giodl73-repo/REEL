@@ -10,6 +10,10 @@ acknowledgement commands have separate boundaries below.
 
 Build/check this separate workspace explicitly:
 
+Optional feature `film` adds a
+[guarded native-file provider for the existing renderer](../../docs/handoff/2026-11-19-native-renderer-inputs.md).
+It does not yet add movie dispatch, output retention or task completion.
+
 ```text
 cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked
 cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked -- -D warnings

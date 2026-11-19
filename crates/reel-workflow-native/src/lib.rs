@@ -17,6 +17,8 @@ pub mod closing;
 mod comic;
 pub mod dispatch;
 pub mod expansion;
+#[cfg(feature = "film")]
+pub mod film_inputs;
 pub mod graph;
 pub mod handoff;
 mod issue;

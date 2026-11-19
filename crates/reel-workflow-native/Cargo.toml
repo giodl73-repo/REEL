@@ -9,7 +9,11 @@ description = "Exact native inputs and explicit durable input claims for REEL wo
 # Isolated dependency graph: do not upgrade existing REEL producer SDKs implicitly.
 [workspace]
 
+[features]
+film = ["dep:reel"]
+
 [dependencies]
+reel = { path = "../..", optional = true, default-features = false }
 anyhow = "1.0.100"
 base64 = "0.22.1"
 fs2 = "=0.4.3"

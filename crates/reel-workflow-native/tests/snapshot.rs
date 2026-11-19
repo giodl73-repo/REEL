@@ -21,6 +21,9 @@ mod close_native;
 #[allow(dead_code)]
 #[path = "../../reel-workflow/tests/support/film_fixture.rs"]
 mod film_fixture;
+#[cfg(all(windows, feature = "film"))]
+#[path = "support/film_inputs.rs"]
+mod film_inputs;
 #[cfg(windows)]
 #[path = "support/film_native.rs"]
 mod film_native;
