@@ -79,3 +79,27 @@ translation, rights or release approval follows from a technical receipt.
 Qualification evidence and remaining integration work are recorded separately;
 actual service behavior, cross-machine proxy uniqueness and fix/closure execution
 remain unqualified.
+
+## Qualification
+
+Source commit `0b161cf04191196de9606c47b8d5123f17eddd01` passed the 87
+workflow tests, 18 HTTP tests and 58 standard native tests, plus strict Clippy
+for the workflow/HTTP crates and native builds with and without film support.
+All 247 vendored SDK source pins and all 1,889 archived source files verified.
+The five tracker tests include CLI submission/reconciliation, no second create
+after a lost reply, original-response recovery, URL binding and ownership refusal.
+
+The explicit native fixture passed in 120.97 test seconds (121.78 wall seconds),
+reopening the existing retained synthetic comic-review report. It exported only
+explicit text, refused a mismatched repository before creating an output and
+left claims unchanged. Its preserved root is
+`F:/src/tig-dev-temp/.tmpiEvubc`; the original retained report remains at
+`F:/src/tig-dev-temp/.tmpYT3pCe`.
+
+The frozen tool/source/log manifest is
+`F:/src/tig-dev-temp/reel-issue-delivery-20261119-v1/qualified-tools.json`,
+SHA256 `3d9b1002b53ed9a373c0fe64ed4e2af65e656182fcd11fae2f21287d55dd4713`.
+Standard full-suite results were observed in tool output; the evidence directory
+contains the final tracker and selected build/lint logs, check summary and actual
+native fixture log. This qualification does not claim an end-to-end live tracker
+or a native-retained delivery task.
