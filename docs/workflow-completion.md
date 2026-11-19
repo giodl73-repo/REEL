@@ -34,7 +34,8 @@ now passes native retention, final assembly and editable history recovery. [Task
 now fills concrete tasks from verified retained parent selectors;
 [frozen expansion admission](handoff/2026-11-18-frozen-expansion.md) connects those
 proposals to exact source declarations, previews, acceptance and original receipt
-recovery. Complete their positive composite qualification and automatic recipe scheduling, then
+recovery, with positive composite qualification through native staging and a
+protected waiting prompt batch. Implement automatic recipe scheduling, then
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish

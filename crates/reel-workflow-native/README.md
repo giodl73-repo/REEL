@@ -730,3 +730,10 @@ preserving existing tasks. The [task expansion contract](../../docs/handoff/2026
 records positive native history verification and its explicit planning scope.
 The controller must still freeze the new source declaration and admit the child;
 expansion does not dispatch a provider, allocate an actor or grant custody.
+
+`prepare-expanded` freezes that task's exact configured source, original parent
+controls and admission preview into a new pinned package. `accept-expanded` and
+`recover-expanded` require its SHA256 and the exact base plan before using the
+existing qualified admission/recovery interfaces. The [frozen expansion contract](../../docs/handoff/2026-11-18-frozen-expansion.md)
+records the positive composite case through native staging and a protected
+waiting prompt batch. No provider execution or task completion follows from it.

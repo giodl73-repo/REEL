@@ -42,15 +42,32 @@ claims, exact acceptance and receipt recovery, stale base/packet refusal, altere
 preview refusal, wrong package hash, protected output paths and existing-file
 preservation. They establish no native payload availability. Strict native Clippy
 passes. All 40 default native tests and 57 workflow tests pass. Positive composite
-history-to-admission qualification is running separately in
+history-to-admission qualification passed separately in
 `F:/src/tig-dev-temp/reel-workflow-native-freeze-20261118-v1` against the explicitly
 enrolled unused test actor and existing qualified issue history. Its source pin
 is commit `070fb66`; all 1,813 archived files match, with manifest SHA256
 `128d85952ff0fb6e91cb77b511610bb94feca1e63f04c35c94ded8994979ad85`.
 The frozen runtime SHA256 is
 `495475ba18c01b2eff26b68eeb1c0df40fb060287c967017beafa7a758e4ae0a`.
-These are pins under test; positive composite acceptance/recovery is not yet
-reported as qualified.
+`qualified-tools.json` binds the bounded source/tool/evidence result. Preparation
+left claims and metadata headers unchanged, reported 38 resource objects and
+recomputed the task key after source binding. Explicit acceptance succeeded;
+receipt recovery reproduced the exact original WorkRef, activation and receipt.
+The existing protected handoff/staging path then copied both selected native
+inputs and exported one verified ready prompt task. Independent literal-path
+hash/length checks matched both inputs and the original task/attempt/workspace.
+
+The first independent PowerShell staging check was invalid: wildcard handling of
+a Windows long path produced non-terminating errors. Its output is preserved as
+`staging-verification-invalid-long-path.json` and explicitly invalidated in the
+qualification record. The replacement uses literal paths and terminating errors.
+It passed; the native staging/export checks also passed independently.
+
+The resulting review task is **Waiting**, with claims, capacity reservation and
+owned scratch preserved. No provider ran and no review candidate was returned,
+retained or selected. This qualifies the controller seam through a protected
+manual handoff, not completion of that task, automatic recipe scheduling or
+project/film/provider adoption.
 
 Producer-applied provenance/recovery checks retain origin/result fingerprints,
 original work and activation, explicit actors and preserved failure evidence.
