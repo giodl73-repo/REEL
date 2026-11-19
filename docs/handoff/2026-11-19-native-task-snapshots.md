@@ -32,6 +32,14 @@ Strict all-target Clippy with/without film passes before the run. The standard
 source; this change adds an explicitly ignored existing-pool fixture only. Its
 actual result and source/tool evidence will be recorded after execution.
 
+The first read-only run at source `0b2ec93` stopped after 45.85 seconds when the
+fixture held A's native readers while opening the same objects for B. Original
+retained-copy verification and both exact snapshot opens had already passed;
+the second live read returned `NeedsRecovery/native-input-io`. Its evidence/root
+are preserved. The fixture now reads the bounded historical inputs, drops that
+reader's gates, then opens B sequentially. No SDK guard or production check is
+relaxed. The corrected run must still establish all remaining checks above.
+
 Producer-applied editor and rights/provenance checks require unchanged IDs,
 immutable lineage, separate language authority and no selection/release claim.
 These checklists do not supply independent review or creative approval.

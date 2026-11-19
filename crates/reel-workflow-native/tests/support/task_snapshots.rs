@@ -258,14 +258,20 @@ fn retained_task_survives_real_revision_and_rollback_without_rebinding_or_claim_
     assert!(SnapshotInputs::open(&new_affected, &profile.source.snapshot).is_err());
     assert!(SnapshotInputs::open(&old_affected, &new_source.snapshot).is_err());
     let mut a = NativeInputs::open(&old_affected, &profile.source).unwrap();
+    let historical: BTreeMap<_, _> = packet
+        .task
+        .inputs
+        .iter()
+        .map(|pin| (pin.logical_id.clone(), a.read(pin, pin.bytes).unwrap()))
+        .collect();
+    drop(a);
+    // Each NativeInputs retains its native object gates until dropped. Compare
+    // these small fixture inputs sequentially rather than opening the same
+    // gated objects again while the historical readers are still live.
     let mut b = NativeInputs::open(&new_affected, &new_source).unwrap();
     for pin in &packet.task.inputs {
-        assert_eq!(
-            a.read(pin, pin.bytes).unwrap(),
-            b.read(pin, pin.bytes).unwrap()
-        );
+        assert_eq!(historical[&pin.logical_id], b.read(pin, pin.bytes).unwrap());
     }
-    drop(a);
     drop(b);
     let bindings = graph::Bindings {
         schema: "reel.workflow-run-bindings.v1".into(),
