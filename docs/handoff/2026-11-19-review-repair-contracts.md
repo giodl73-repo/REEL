@@ -65,6 +65,13 @@ commands, including preservation of existing exports. Test logs and qualificatio
 pins are recorded under
 `F:/src/tig-dev-temp/reel-review-repair-contracts-20261119-v1`.
 
+Qualification passed at source `fdb63c6`: all 77 workflow tests, 57 default native
+tests, the 247 SDK source pins and strict Clippy for workflow and native
+with/without `film`. Formatting and `git diff --check` pass. All 1,874 archived
+source files match. Exact tool/log/source hashes are pinned in that directory's
+`qualified-tools.json` (SHA256
+`c5dd57d4f7bfee0ea0aed2ae02433932695bed38aced102b316de3bcd945343b`).
+
 Producer-applied editor, comics editor and rights/provenance checklists: full
 context remains a review requirement; declared modality is not proof of watching
 or listening. Canon/translation, performance/voice, fonts, selection and release

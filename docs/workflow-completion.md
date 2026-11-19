@@ -164,6 +164,9 @@ cross-edition rebuilds while retaining full contextual review requirements.
 This is metadata/candidate validation and local planning, not renderer-map
 authentication, native structured-review ingestion, tracker delivery, repair
 execution or closure. Those integrations remain required.
+All 77 workflow tests, 57 default native tests, 247 SDK source pins and strict
+Clippy checks pass; the nine new review tests cover both formats and all four
+local commands. Exact source and log pins are linked from the contract document.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
