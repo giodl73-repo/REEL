@@ -43,8 +43,12 @@ strict Clippy passes for workflow and native with/without film; `git diff --chec
 passes. These native component fixtures use bounded synthetic metadata, separate
 from the effectful completed-render qualification at its frozen earlier source.
 
-The required actual A -> B native project/profile adoption and rollback fixture
-remains open. S5WF-03 also still needs immutable drawing/story identity and exact
+The [actual A -> B native history fixture](2026-11-19-native-task-snapshots.md)
+now passes retained native graph observations, exact reads from the new bare
+commit, unchanged task/consumer packets, stale retargeting refusal and restored
+baseline packets, with identical claims, journal and review copy/IDs. Effectful
+owned project/profile adoption and rollback remain open.
+S5WF-03 also still needs immutable drawing/story identity and exact
 approval/consumer integration; this change addresses plan-wide key churn only.
 No S4/S5 production, selected take, approval, current selection or existing job is
 changed. All v1 resource and execution bounds remain.

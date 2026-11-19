@@ -47,6 +47,27 @@ output size and lifecycle transaction changes distinct during admission.
 
 ## Required implementation and evidence
 
+### Locally observed E7 preparation receipt
+
+The named existing `parent-preparation-v1/prepared-resources-es-v1.json` was
+read without a cache census, media processing or job mutation. It is 1,673 bytes,
+SHA256 `9b93fe6f19284ca8e2e344cecdd006e760a1fd76c9695915d0b35ba333002059`.
+Its summary records 7 components, 600 resource objects and 7,936,104,893 logical
+resource bytes. This confirms the receipt's recorded scope, not independent
+verification of those payloads or their current production validity.
+
+The receipt declares 18,000 seconds (five hours), 12 GiB reference staging,
+12 GiB scratch and a 32 GiB workspace. Output ceilings are 8 GiB for the master,
+1 GiB for the episode MP4 and 65,536 bytes for its receipt, totaling 9,663,741,952
+bytes. These explicit bounds, rather than only the observed individual master
+sizes, must enter the versioned production/admission contract and its tests.
+The receipt itself sets production authorization, job adoption, capacity
+reservation, component-payload verification, production-currency verification,
+media-rendered and eviction authorization flags false. Reading it changes none
+of those states and does not adopt an S4 or S5 job.
+
+### Required qualification
+
 1. Define a streamed producer/return contract over guarded exact native objects,
    with explicit total/per-object/output/scratch/time/process bounds. Inputs and
    output hashing must use bounded buffers; no whole-master `Vec` requirement.
@@ -102,8 +123,8 @@ Legacy v2 `make_packet` copies the plan-wide `source_commit` into every packet;
 `packet_key` includes that commit. Thus advancing a v2 plan's commit changes
 otherwise identical task identities. The new [v3 task snapshot contract](2026-11-19-task-snapshots.md)
 preserves explicit per-task snapshots, with versioned repair/upstream behavior
-and protocol tests for unchanged packets and stale affected jobs. These tests
-do not establish S5WF-03 across a real native Git revision.
+and protocol tests for unchanged packets and stale affected jobs. These protocol
+tests alone do not establish S5WF-03.
 
 Project adoption needs explicit task/producer snapshot and retained-result
 adoption semantics, so unchanged consumers can stay bound to their original
@@ -113,3 +134,10 @@ which an affected-language task changes, the unaffected task/result/native
 binding stays identical, and only its actual downstream dependents rebuild.
 Keep exact commit/record/annex-leaf identities in all keys and checks; dropping
 the commit pin or substituting current/latest is not selective invalidation.
+
+The [native revision/history fixture](2026-11-19-native-task-snapshots.md) now
+passes the read-only A -> B -> restored-A boundary with actual retained bytes,
+native graph verification, identical unaffected packets and unchanged claims,
+journal and review IDs. It does not execute/retain the changed task or adopt an
+owned Melena profile. Effectful adoption/rollback, approval scope and full
+affected-language/consumer production evidence remain required.

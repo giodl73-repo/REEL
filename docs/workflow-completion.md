@@ -45,6 +45,15 @@ semantics. Protocol tests preserve unaffected packets while refusing stale
 affected jobs and snapshot tampering. Native A -> B adoption/rollback and real
 affected-language/consumer integration remain open; this does not close S5WF-03.
 
+The [native task snapshot fixture](handoff/2026-11-19-native-task-snapshots.md)
+now passes actual A -> B -> restored-A retained graph/history checks in 179.16
+seconds. Exact native bytes open from the new bare commit, unchanged producer
+and downstream-consumer packets stay identical, retargeting refuses, and claims,
+journal and review IDs remain unchanged. The initial duplicate-live-reader
+failure and corrected sequential-reader fixture are both retained. No new job,
+render or selection is performed; effectful profile adoption/rollback and the
+changed language task's execution remain open.
+
 | Requirement | Authoritative implementation/evidence | Work still required |
 | --- | --- | --- |
 | Reusable Rust orchestration in REEL | `reel-workflow` verified frontier, native run bindings/inspection, protected multi-job batches, original-operation return/recovery, owned comic/issue workers, upstream bindings/borrowed reads and composite child-owned input admission/staging/replay | Broader execution/admission scheduling, automatic derived controls and project configuration; preserve existing producers. |
