@@ -44,10 +44,22 @@ Neither command registers a candidate, publishes/retains a result, completes a
 task, selects an asset, files an issue or releases claims. Import/recovery still
 uses the original pinned lifecycle runtime and existing returned-file bindings.
 
-Qualification is pending. The ignored fixture supplements the previously staged
-Waiting review using a new read-only frontend, packs an empty technical fixture
-report, rejects a stale report, refuses overwrite and verifies unchanged claims
-and Waiting journal. It makes no provider call or creative-review claim.
+Qualification passed in 30.55 seconds at source `43929b3`. The fixture supplements
+the previously staged Waiting review in `.tmp1KAuie/review` using a new read-only
+frontend, packs an empty technical fixture report, rejects a stale report before
+output creation, refuses overwrite and verifies unchanged claims and Waiting
+journal. Its preserved root is `.tmp4vUhZd`. It makes no provider call or
+creative-review claim, and does not retarget the original lifecycle runtime.
+
+All 86 workflow tests, 58 default native tests, the 247 SDK source pins and strict
+Clippy for workflow/native with and without `film` pass. Formatting and
+`git diff --check` pass. All 1,884 archived source files match. Exact tools,
+source, control and log pins are recorded in
+`F:/src/tig-dev-temp/reel-model-review-brief-20261119-v1/qualified-tools.json`
+(SHA256 `090391f7d8415d4ad9b0f0ea4f0d2e4b80fa822238d235f2e608a4900f780385`).
+This is bounded Windows/NTFS manual-brief/packing qualification. Proxy v1 byte
+preservation and v2 extension are component-tested; no live v2 proxy/model call
+or returned-report import is established by this fixture.
 
 Producer-applied editor, comics editor and rights/provenance review: exact
 language/version and evidence stay explicit; actual viewing/listening and human

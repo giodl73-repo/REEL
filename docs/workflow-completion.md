@@ -186,6 +186,16 @@ tests, 57 default native tests, 247 SDK pins and strict Clippy pass. This qualif
 the bounded single-page comic lineage/staging path; film and complete issue
 lineage, composite-review return/completion, providers, larger-issue throughput,
 issue effects, repairs and evidenced closure remain open.
+The [model-facing review brief and packer](handoff/2026-11-19-model-review-brief.md)
+now supply exact copy/unit/evidence and return-schema instructions to manual
+handoffs and explicitly selected proxy inputs. New review proxy requests use v2;
+legacy requests remain byte-identical v1. Rust validates a returned report and
+hashes its exact bytes into a Handoff envelope without candidate registration or
+task completion. Its 30.55-second existing-Waiting-job fixture passes export,
+packing, stale refusal, overwrite refusal and unchanged claims/journal/runtime
+binding. All 86 workflow tests, 58 default native tests, 247 SDK pins and strict
+Clippy pass. A live v2 model/proxy call, actual review, import of the composite
+return and the remaining lineage/issue/fix/project requirements remain open.
 The [protected structured review operation](handoff/2026-11-19-native-structured-review.md)
 now explicitly pins the reviewed production commit separately from the consumer
 admission snapshot. It validates request/copy metadata before dispatch and
