@@ -41,3 +41,10 @@ All 70 shared tests and strict shared Clippy passed, including canonical framing
 malformed/corrupt carrier refusal, same-byte logical-origin refusal and complete
 editable issue replay. Native end-to-end qualification is running in
 `F:/src/tig-dev-temp/reel-workflow-native-issue-20261118-v4`.
+The native fixture admitted the packed child with 61 resource objects, compared
+with 119 for the loose representation. All 37 default native tests and strict
+native Clippy passed. The original-operation refusal fixture also passed: the
+expected close-budget error leaves the index unchanged, original input claims
+reopenable, scratch preserved and the journal in `ImportPending`. Neither loose
+attempt is reported as completed. Packed task completion and history/export
+checks, plus the final ten native regression cases, remain in progress.
