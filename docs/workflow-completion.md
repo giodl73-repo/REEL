@@ -146,6 +146,16 @@ for explicitly pinned Windows film-capable runtimes; legacy task runtime pins
 are not upgraded. Partial/missing-outcome recovery, completed-render adoption
 qualification, controller crashes, post-close/slot-reuse movie history and full
 project/edition qualification remain open.
+The [movie slot-history qualification](handoff/2026-11-19-movie-slot-history.md)
+now closes the earlier post-close/slot-reuse movie history gate. It interrupts and
+recovers the original close handoff, admits an unrelated replacement input into
+the same slot, refuses the old activation and verifies that stale close replay
+leaves replacement claims unchanged. Native retained movie verification then
+passes after reuse, also with unchanged claims. The actual fixture passed in
+182.98 seconds; all 57 default native tests, 247 SDK pins and strict Clippy with
+and without `film` pass. No selection, scratch retirement or replacement-task
+execution occurs. Completed-render adoption, partial/missing-outcome and controller
+recovery and full project/edition qualification remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
