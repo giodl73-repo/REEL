@@ -49,7 +49,27 @@ native guarded paths, without exporting source copies for the renderer. It check
 48 frames, the frame-24 cel transition, source mutation refusal, unknown/stale
 reference refusal and unchanged claims. Its rendered output remains local and
 unselected; no movie is admitted as a retained task result by this fixture.
-The actual fixture result is recorded separately once run.
+The fixture passes in 59.13 seconds: nine distinct native objects, 48 actual
+frames, the frame-24 cel transition, refusal of a write-open against a live native
+source, unknown/stale reference refusal and unchanged claims. The generated
+contact image was inspected: `CEL red` and `CEL blue` remain legible. All 49
+non-opt-in tests with feature `film`, strict Clippy and the original 247-file SDK
+and managed-slot source-pin checks pass. The first negative fixture run failed
+because its fake Annex descriptor had no installed bytes; it now uses a byte-valid
+descriptor and proves refusal before any Annex/program/payload access. No real
+project media or voices were used.
+
+Evidence:
+`F:/src/tig-dev-temp/reel-native-render-inputs-20261119-v1/qualified-tools.json`.
+Source `25ef0af7f4ec5d2f51773bd72937ea98dcca40cd`; all 1,853 archived files
+match. Runtime SHA256:
+`c51fa45bf0ae69b2edf26a347723040c2c1bb30c27476aacccfbbd31de7bc684`.
+Fixture SHA256:
+`df1c953b11a02b83e7a72e8024eeb43afb182ac016df8151a510df9d1392855b`.
+Preserve controller `F:/src/tig-dev-temp/.tmpkr4voL`, source
+`F:/src/tig-dev-temp/.tmpI2P6r5`, original admission/claims and the local
+`review-film` output. The original job remains protected; this input/renderer
+qualification neither retains the movie nor closes/reuses its slot.
 
 Producer-applied custody/recovery checks preserve original claims and receipts;
 editing/sound checks retain compiled frame/sample clocks and the existing media

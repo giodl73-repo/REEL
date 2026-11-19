@@ -14,7 +14,7 @@ checked again before closing the objective.
 | Exact Tig input/candidate/history lifecycle | Exact SDK/source pins, native input admission/staging, immutable result work, retained proof and completion fixtures | Explicit approved selection CAS/new-path admission, guarded close/retirement and full workflow retry/error qualification. No new cache engine. |
 | Image generation and other intelligence | Typed text/image/review operations and named output contracts | Provider execution, response normalization, model/config/provenance recording and operation-specific verification. |
 | Speech recording, including requested ElevenLabs integration | [Built-in timed adapter](handoff/2026-11-19-elevenlabs-adapter.md), frozen source/catalogue/scope checks, candidate WAV/original alignment/language-local timing; bounded native complete-response staging/retention/replay passes after one HTTP call | Actual account/model/voice entitlement and real-service qualification; selected-take film integration and reuse of existing season-5 cues without regeneration. |
-| Film production | Existing root producers; [deterministic film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) connects exact selected recordings, authored semantic triggers and candidate graph/pointer generation to owned native dispatch | Native scene-control retention/replay now passes. Connect actual audiovisual rendering and full film/review derivatives; controls alone are not a rendered film. |
+| Film production | Existing root producers; [deterministic film-scene control adapter](handoff/2026-11-19-film-scene-controls.md) connects exact selected recordings, authored semantic triggers and candidate graph/pointer generation to owned native dispatch | Native scene-control retention/replay passes. The optional guarded renderer-input bridge now renders directly from admitted native files. Connect owned movie dispatch, result registration/retention/recovery and full film/review derivatives. |
 | Cel/cue pacing and animation styles | Existing scene policies/exposure sheets; orchestration plan distinguishes shot hold, drawing cadence and delivery frame rate | Expose/freeze settings, density/cost previews, renderer-specific adapters and tests for both held cels and multiple drawings per second. |
 | Language-local semantic triggers and cue lengths | Film-scene workflow controls verify exact source text, selected take hash and measured PCM sample clock; ES/EN component fixtures produce different phrase-triggered cuts and cue lengths | Native film-control lifecycle passes for the bounded ES fixture. Complete rendered multilingual editions and actual listening/translation approval remain open. |
 | Review copies with stable cel IDs | [Root scene renderer review-ID policy](handoff/2026-11-19-review-cel-ids.md) burns compiled cel/shot IDs into review MP4s, with an exact selected font and retained source/frame/sample map; synthetic render, master parity, borrowed inputs/scattered outputs and tamper rejection pass | Translate workflow film controls into the renderer, qualify the complete native movie worker, then connect findings, fixes and affected-consumer invalidation. |
@@ -81,6 +81,13 @@ native deterministic replay and unchanged claims on redispatch. ES/EN component
 tests use different trigger words, cut samples and cue lengths. No movie is
 rendered by this capability. The root renderer now has a qualified review-ID
 overlay; full audiovisual workflow integration remains open.
+The optional [native renderer-input bridge](handoff/2026-11-19-native-renderer-inputs.md)
+now feeds the existing renderer directly from nine admitted native objects with
+exact path/file/program guards. Its 48-frame review fixture passes mutation and
+stale/unknown-reference refusal with unchanged claims. All 49 non-opt-in native
+tests with `film` and strict Clippy pass. This supplies guarded inputs; the local
+movie is not a retained task result. Owned movie dispatch, auxiliary-tool binding,
+result retention and interrupted-production recovery remain open.
 Continue to
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
