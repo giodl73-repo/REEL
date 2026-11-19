@@ -16,6 +16,10 @@ fn capability(packet: &Packet) -> Result<ToolCapability> {
 }
 pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> Result<u64> {
     match capability(packet)? {
+        ToolCapability::FilmRender => {
+            let bound = reel_workflow::film_render::bind(packet, inputs)?;
+            Ok(bound.request().limits.output_bytes)
+        }
         ToolCapability::FilmSceneControl => {
             reel_workflow::film::generate(packet, inputs)?;
             Ok(6 * reel_workflow::MAX_CONTROL_BYTES as u64)
@@ -81,6 +85,10 @@ impl Generated {
 }
 pub(crate) fn generate(packet: &Packet, inputs: NativeInputs) -> Result<Generated> {
     match capability(packet)? {
+        ToolCapability::FilmRender => Err(crate::error(
+            ErrorKind::Unsupported,
+            "film-owned-dispatch-not-integrated",
+        )),
         ToolCapability::ComicRender => {
             crate::comic::generate(packet, inputs).map(|g| Generated::Comic(Box::new(g)))
         }
@@ -99,6 +107,10 @@ pub(crate) fn check_returned(
     paths: &BTreeMap<String, String>,
 ) -> Result<(Vec<File>, Vec<reel_assets::jobs::WorkspaceDirectory>)> {
     match capability(packet)? {
+        ToolCapability::FilmRender => Err(crate::error(
+            ErrorKind::Unsupported,
+            "film-independent-return-check-required",
+        )),
         ToolCapability::ComicRender => {
             crate::comic::check_returned(packet, inputs, result, root, paths)
         }
@@ -148,6 +160,10 @@ fn native(
         return Ok(None);
     }
     match capability(packet)? {
+        ToolCapability::FilmRender => Err(crate::error(
+            ErrorKind::Unsupported,
+            "film-native-media-proof-required",
+        )),
         ToolCapability::ComicRender => if capture {
             crate::comic::capture_native(packet, source, result, permit)
         } else {

@@ -24,6 +24,8 @@ pub mod film_process;
 pub mod graph;
 pub mod handoff;
 mod issue;
+#[cfg(all(windows, feature = "film"))]
+pub mod movie;
 mod output_layout;
 mod producer;
 mod qualified;

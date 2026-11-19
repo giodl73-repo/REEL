@@ -6,6 +6,7 @@ use crate::{
     io_error,
 };
 use reel::scene_delivery::{self, FileRef, InputFiles, MediaProgram};
+pub use reel_workflow::film_render::Limits;
 use reel_workflow::{ErrorKind, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -17,39 +18,6 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Limits {
-    pub timeout_seconds: u64,
-    pub memory_bytes: u64,
-    pub processes: u32,
-    pub workspace_bytes: u64,
-    pub output_bytes: u64,
-    pub frames: u64,
-    pub samples: u64,
-    pub raw_rgb_bytes: u64,
-}
-impl Limits {
-    fn validate(&self) -> Result<()> {
-        if !(1..=3600).contains(&self.timeout_seconds)
-            || !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&self.memory_bytes)
-            || !(2..=32).contains(&self.processes)
-            || self.output_bytes == 0
-            || self.output_bytes > 128 * 1024 * 1024
-            || self.workspace_bytes < self.output_bytes
-            || self.workspace_bytes > 512 * 1024 * 1024
-            || self.frames == 0
-            || self.frames > 1_000_000
-            || self.samples == 0
-            || self.samples > 384_000 * 3600
-            || self.raw_rgb_bytes == 0
-            || self.raw_rgb_bytes > 16 * 1024 * 1024 * 1024
-        {
-            return Err(error(ErrorKind::Budget, "film-process-limits"));
-        }
-        Ok(())
-    }
-}
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 enum Action {
@@ -68,6 +36,8 @@ struct Request {
     runtime: Tool,
     workspace: PathBuf,
     limits: Limits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_outputs: Option<BTreeSet<String>>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -208,6 +178,7 @@ fn request(
         runtime: runtime.clone(),
         workspace: workspace.into(),
         limits: limits.clone(),
+        expected_outputs: None,
     })
 }
 /// Exact response and guards remain live until the caller finishes importing.
@@ -370,6 +341,17 @@ pub fn render(
     runtime: &Tool,
     limits: &Limits,
 ) -> Result<Rendered> {
+    render_declared(inputs, job, production, workspace, runtime, limits, None)
+}
+pub(crate) fn render_declared(
+    inputs: &Inputs,
+    job: &FileRef,
+    production: &FileRef,
+    workspace: &Path,
+    runtime: &Tool,
+    limits: &Limits,
+    expected_outputs: Option<BTreeSet<String>>,
+) -> Result<Rendered> {
     let directory = directory(workspace)?;
     if fs::read_dir(directory.path())
         .map_err(io_error)?
@@ -381,7 +363,7 @@ pub fn render(
             "film-process-empty-owned-workspace-required",
         ));
     }
-    let request = request(
+    let mut request = request(
         inputs,
         job,
         production,
@@ -390,6 +372,7 @@ pub fn render(
         runtime,
         Action::Render,
     )?;
+    request.expected_outputs = expected_outputs;
     launch(&request, "render-request.json")?;
     collect(directory.path(), limits)
 }
@@ -495,6 +478,16 @@ fn perform(request: &Request) -> Result<()> {
     .map_err(|_| error(ErrorKind::Integrity, "film-process-plan"))?;
     let contract = scene_delivery::output_contract(&job, &plan)
         .map_err(|_| error(ErrorKind::Integrity, "film-process-output-contract"))?;
+    if request
+        .expected_outputs
+        .as_ref()
+        .is_some_and(|names| names != &contract.names)
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "film-process-declared-output-contract",
+        ));
+    }
     if plan.frame_count > request.limits.frames
         || plan.duration_samples > request.limits.samples
         || contract.raw_rgb24_video_bytes > request.limits.raw_rgb_bytes

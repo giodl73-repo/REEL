@@ -36,6 +36,14 @@ fn renderer_file_bridge_refuses_unadmitted_reader_before_program_or_payload_acce
 #[test]
 #[ignore = "Explicit existing native pool and previously qualified synthetic film files; protected path/renderer bridge only, no output publication"]
 fn admitted_native_inputs_render_review_ids_without_staging_or_path_fallback() {
+    run(false);
+}
+#[test]
+#[ignore = "Explicit existing native pool and synthetic film files; task-bound movie candidate packet only, preserves original admission and owned capacity"]
+fn movie_task_binds_native_controls_programs_and_complete_candidate_outputs() {
+    run(true);
+}
+fn run(movie: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -58,10 +66,60 @@ fn admitted_native_inputs_render_review_ids_without_staging_or_path_fallback() {
     fixture.profile.bindings.clear();
     fixture.profile.input_streams.clear();
     fixture.packet.task.inputs.clear();
-    let mut aliases = BTreeMap::new();
+    let mut aliases: BTreeMap<String, String> = BTreeMap::new();
     let mut raw_inputs = Vec::new();
     let mut refs = BTreeMap::new();
-    for (i, item) in source_value["files"].as_array().unwrap().iter().enumerate() {
+    let mut items = source_value["files"].as_array().unwrap().clone();
+    let request = reel_workflow::film_render::Request {
+        schema: "reel.workflow-film-render.v1".into(),
+        job_path: "job.json".into(),
+        production_path: "production.json".into(),
+        output_paths: [
+            ("picture", "delivery/picture.mkv"),
+            ("dialogue", "delivery/D.wav"),
+            ("music", "delivery/M.wav"),
+            ("effects", "delivery/E.wav"),
+            ("mix", "delivery/mix.wav"),
+            ("master", "delivery/master.mkv"),
+            ("review", "delivery/review.mp4"),
+            ("review-ids", "delivery/review-ids.json"),
+            ("review-font", "delivery/review-id-font.ttf"),
+            ("delivery-receipt", "delivery/receipt.json"),
+            ("execution-request", "render-request.json"),
+            ("execution-result", "render-result.json"),
+        ]
+        .into_iter()
+        .map(|(name, path)| (name.into(), path.into()))
+        .collect(),
+        limits: reel_workflow::film_render::Limits {
+            timeout_seconds: 120,
+            memory_bytes: 4 * 1024 * 1024 * 1024,
+            processes: 8,
+            workspace_bytes: 128 * 1024 * 1024,
+            output_bytes: 32 * 1024 * 1024,
+            frames: 48,
+            samples: 96000,
+            raw_rgb_bytes: 64 * 1024 * 1024,
+        },
+    };
+    let runtime = movie.then(|| {
+        let path = PathBuf::from(
+            std::env::var_os("REEL_NATIVE_HANDOFF_TOOL").expect("Set REEL_NATIVE_HANDOFF_TOOL"),
+        );
+        let raw = fs::read(&path).unwrap();
+        Tool {
+            path,
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+        }
+    });
+    if movie {
+        let raw = serde_json::to_vec(&request).unwrap();
+        let path = root.join("movie-request.json");
+        fs::write(&path, &raw).unwrap();
+        items.push(json!({"alias":"request.json","path":path,"sha256":digest(&raw),"bytes":raw.len(),"media_type":"application/json"}));
+    }
+    for (i, item) in items.iter().enumerate() {
         let name = item["alias"].as_str().unwrap();
         let bytes = fs::read(item["path"].as_str().unwrap()).unwrap();
         assert_eq!(digest(&bytes), item["sha256"]);
@@ -106,6 +164,61 @@ fn admitted_native_inputs_render_review_ids_without_staging_or_path_fallback() {
         );
         fixture.packet.task.inputs.push(a);
         raw_inputs.push((format!("input-{i}.bin"), bytes));
+    }
+    if let Some(runtime) = &runtime {
+        let artifact = |id: &str, tool: &Tool| Artifact {
+            logical_id: id.into(),
+            sha256: tool.sha256.clone(),
+            bytes: tool.bytes,
+            media_type: "application/octet-stream".into(),
+        };
+        let selected = |name: &str| {
+            fixture
+                .packet
+                .task
+                .inputs
+                .iter()
+                .find(|a| a.logical_id == aliases[name])
+                .unwrap()
+                .clone()
+        };
+        fixture.packet.task.tool = Some(ToolContract {
+            schema: "reel.workflow-tool.v1".into(),
+            capability: ToolCapability::FilmRender,
+            executable: artifact("tools/native", runtime),
+            auxiliary_executables: BTreeMap::from([
+                ("ffmpeg".into(), artifact("tools/ffmpeg", &programs.ffmpeg)),
+                (
+                    "ffprobe".into(),
+                    artifact("tools/ffprobe", &programs.ffprobe),
+                ),
+            ]),
+            publication: selected("job.json"),
+            request: selected("request.json"),
+            edition_id: "synthetic-es".into(),
+            source_bindings: aliases
+                .iter()
+                .filter(|(name, _)| name.as_str() != "request.json")
+                .map(|(a, b)| (a.clone(), b.clone()))
+                .collect(),
+            part: None,
+        });
+        fixture.packet.task.operation = Operation::DeterministicTool;
+        fixture.packet.task.prompt.clear();
+        fixture.packet.task.outputs = request
+            .output_paths
+            .iter()
+            .map(|(name, path)| {
+                (
+                    name.clone(),
+                    OutputContract {
+                        media_type: reel_workflow::film_render::media_type(path).unwrap().into(),
+                        max_bytes: 4 * 1024 * 1024,
+                        required: true,
+                    },
+                )
+            })
+            .collect();
     }
     git(root, &["add", "."]);
     git(
@@ -185,6 +298,74 @@ fn admitted_native_inputs_render_review_ids_without_staging_or_path_fallback() {
         .unwrap();
     }
     let before = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+    if let Some(runtime) = runtime {
+        let parent = root.join("movie-owned-parent");
+        fs::create_dir(&parent).unwrap();
+        let ticket = reel_workflow_native::staging::prepare(
+            &fixture.packet,
+            &case.source,
+            &case.profile,
+            &receipt,
+            &reel_workflow_native::staging::Profile {
+                schema: "reel.workflow-staging.v1".into(),
+                parent,
+                maximum_bytes: 256 * 1024 * 1024,
+                capacity_policy: reel_assets::admission::Policy {
+                    minimum_free_bytes: 100 * 1024 * 1024,
+                    minimum_free_basis_points: 0,
+                    max_object_bytes: 512 * 1024 * 1024,
+                    ..Default::default()
+                },
+            },
+        )
+        .unwrap();
+        fs::write(
+            root.join("movie-owned-ticket.json"),
+            ticket.canonical_bytes().unwrap(),
+        )
+        .unwrap();
+        let workspace = ticket.directory().join("movie");
+        fs::create_dir(&workspace).unwrap();
+        let read =
+            NativeInputs::open_admitted(&fixture.packet, &case.source, &case.profile, &receipt)
+                .unwrap();
+        let generated = reel_workflow_native::movie::generate(
+            &fixture.packet,
+            read,
+            &BTreeMap::from([
+                ("ffmpeg".into(), programs.ffmpeg.clone()),
+                ("ffprobe".into(), programs.ffprobe.clone()),
+            ]),
+            &runtime,
+            &workspace,
+        )
+        .unwrap();
+        assert_eq!(generated.outputs.len(), 12);
+        assert_eq!(generated.files.len(), 13);
+        assert_eq!(generated.paths, request.output_paths);
+        assert!(!generated.receipt.human_approval);
+        assert!(!generated.receipt.retained_owner_acknowledged);
+        assert_eq!(generated.receipt.task_key, fixture.packet.task_key);
+        let delivery: scene_delivery::Receipt =
+            serde_json::from_slice(&generated.files["delivery/receipt.json"]).unwrap();
+        assert_eq!(delivery.delivery_frames, 48);
+        assert_eq!(delivery.plan.review_ids[1].start_frame, 24);
+        for (name, artifact) in &generated.outputs {
+            let raw = &generated.files[&generated.paths[name]];
+            assert_eq!(artifact.sha256, digest(raw));
+            assert_eq!(artifact.bytes, raw.len() as u64);
+        }
+        assert_eq!(
+            before,
+            fs::read(case.profile.index_root.join("claims.json")).unwrap()
+        );
+        if let Some(e) = evidence {
+            fs::write(e.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,
+                "task_key":fixture.packet.task_key,"outputs":12,"packet_files":13,"frames":48,"cut_frame":24,"claims_unchanged":true,
+                "owned_capacity_preserved":true,"output_retained":false,"task_completed":false,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
+        }
+        return;
+    }
     let read = NativeInputs::open_admitted(&fixture.packet, &case.source, &case.profile, &receipt)
         .unwrap();
     let inputs = Inputs::prepare(&fixture.packet, read, &aliases, programs.clone()).unwrap();

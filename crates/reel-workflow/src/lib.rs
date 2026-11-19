@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod expansion;
 pub mod film;
+pub mod film_render;
 pub mod graph;
 pub mod handoff;
 pub mod issue;
@@ -89,6 +90,7 @@ pub enum Operation {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolCapability {
+    FilmRender,
     FilmSceneControl,
     ComicRender,
     ComicIssueAssembly,
