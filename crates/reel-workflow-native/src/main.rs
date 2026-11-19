@@ -2,11 +2,11 @@ use reel_workflow_native::{
     NativeInputs, NativeProfile, SnapshotInputs, SnapshotProfile, read_control,
 };
 use std::{path::Path, process::ExitCode};
-fn new_receipt(
+fn check_receipt_scope(
     path: &Path,
     source: &NativeProfile,
     profile: &reel_workflow_native::admission::Profile,
-) -> reel_workflow::Result<std::fs::File> {
+) -> reel_workflow::Result<()> {
     let invalid = || reel_workflow::Error {
         kind: reel_workflow::ErrorKind::Denied,
         code: "admission-private-receipt-scope".into(),
@@ -48,6 +48,14 @@ fn new_receipt(
             return Err(invalid());
         }
     }
+    Ok(())
+}
+fn new_receipt(
+    path: &Path,
+    source: &NativeProfile,
+    profile: &reel_workflow_native::admission::Profile,
+) -> reel_workflow::Result<std::fs::File> {
+    check_receipt_scope(path, source, profile)?;
     std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -121,6 +129,73 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             let preview: serde_json::Value = reel_workflow::decode(raw)?;
             Ok(
                 serde_json::json!({"ok":true,"scope":"private-native-film-direction-preview","preview":preview,"claims_accepted":false,"provider_called":false,"rendered":false,"selected":false}),
+            )
+        }
+        [
+            command,
+            before,
+            plan,
+            repair,
+            revision,
+            rebuilds,
+            after,
+            decision,
+            output,
+            apply,
+        ] if command == "export-resolution" && apply == "--apply" => {
+            use std::io::Write;
+            let before: reel_workflow_native::resolution::RetainedReview =
+                read_control(Path::new(before))?;
+            let after: std::collections::BTreeMap<
+                String,
+                reel_workflow_native::resolution::RetainedReview,
+            > = read_control(Path::new(after))?;
+            let rebuilds: reel_workflow_native::graph::Bindings =
+                read_control(Path::new(rebuilds))?;
+            let proposal = reel_workflow_native::resolution::propose(
+                &before,
+                &read_control(Path::new(plan))?,
+                &read_control(Path::new(repair))?,
+                &read_control(Path::new(revision))?,
+                &rebuilds,
+                &after,
+                &read_control(Path::new(decision))?,
+            )?;
+            let raw = serde_json::to_vec(&proposal).map_err(|_| reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "resolution-json".into(),
+            })?;
+            if raw.len() > reel_workflow::MAX_CONTROL_BYTES {
+                return Err(reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Budget,
+                    code: "resolution-control-bytes".into(),
+                });
+            }
+            for review in after.values() {
+                check_receipt_scope(Path::new(output), &review.source, &review.admission)?;
+            }
+            let parent = Path::new(output).parent().ok_or(reel_workflow::Error {
+                kind: reel_workflow::ErrorKind::Invalid,
+                code: "resolution-output-parent".into(),
+            })?;
+            let _directory = reel_assets::jobs::open_workspace_directory(parent).map_err(|_| {
+                reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Denied,
+                    code: "resolution-output-directory".into(),
+                }
+            })?;
+            let _profiles = reel_workflow_native::resolution::check_destination(
+                parent, &before, &after, &rebuilds,
+            )?;
+            let mut file = new_receipt(Path::new(output), &before.source, &before.admission)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "resolution-write-preserve-partial".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-retained-resolution-proposal","findings":proposal.proposal.finding_keys.len(),"issues_closed":false,"selected":false,"approved":false}),
             )
         }
         [
@@ -1149,6 +1224,7 @@ fn main() -> ExitCode {
             "reel-workflow-native verify-retained PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK\n",
             "reel-workflow-native export-issue-draft PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK ROUTES ISSUE_TEXT NEW_DRAFT --apply\n",
             "reel-workflow-native export-repair-plan PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK PLAN REPAIR REVISION NEW_CANDIDATE --apply\n",
+            "reel-workflow-native export-resolution BASELINE_RETAINED_REVIEW PLAN REPAIR REVISION REBUILD_BINDINGS CORRECTED_RETAINED_REVIEWS DECISION NEW_PROPOSAL --apply\n",
             "reel-workflow-native export-review-brief PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT NEW_BRIEF --apply\n",
             "reel-workflow-native pack-review-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT REPORT NEW_RESULT --apply\n",
             "reel-workflow-native export-review-copy PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RESULT ACK NEW_COPY [NEW_COMIC_MANIFEST] --apply\n",

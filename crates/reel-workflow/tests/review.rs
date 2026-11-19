@@ -336,6 +336,278 @@ fn repair(checked: &CheckedReport, before: Artifact) -> Repair {
     }
 }
 
+struct ResolutionCase {
+    plan: Plan,
+    before: CheckedReport,
+    repair: Repair,
+    revision: reel_workflow::repair::Revision,
+    after: BTreeMap<String, CheckedReport>,
+    decision: reel_workflow::resolution::Decision,
+}
+impl ResolutionCase {
+    fn new(comic: bool) -> Self {
+        let mut old = copy(comic, "es");
+        if comic {
+            for page in ["page-1", "page-2"] {
+                old.units.insert(
+                    page.into(),
+                    Unit::Comic {
+                        page_id: page.into(),
+                        panel_id: None,
+                        balloon_id: None,
+                    },
+                );
+            }
+        } else {
+            old.units.insert(
+                "neighbor".into(),
+                Unit::Shot {
+                    shot_id: "neighbor-shot".into(),
+                    start_frame: 24,
+                    end_frame: 48,
+                },
+            );
+        }
+        let before = check_report(&old, &report(&old)).unwrap();
+        let plan = plan();
+        let repair = repair(&before, pin("input/art", b"shared art"));
+        let revision = reel_workflow::repair::Revision {
+            schema: "reel.workflow-repair-revision.v1".into(),
+            source_commit: "b".repeat(40),
+            native_inputs: BTreeMap::new(),
+        };
+        let candidate =
+            reel_workflow::repair::materialize(&plan, &before, &repair, &revision).unwrap();
+        let mut after = BTreeMap::new();
+        let mut contexts = BTreeMap::new();
+        for language in ["es", "en"] {
+            let mut copy = old.clone();
+            copy.language = language.into();
+            copy.source_commit = revision.source_commit.clone();
+            copy.publication = pin("publication/source", b"corrected source");
+            copy.review = pin(
+                "review/copy",
+                format!("corrected {language} proof").as_bytes(),
+            );
+            let checked = check_report(
+                &copy,
+                &Report {
+                    schema: "reel.workflow-review-report.v1".into(),
+                    copy_sha256: canonical_digest(&copy).unwrap(),
+                    findings: vec![],
+                },
+            )
+            .unwrap();
+            contexts.insert(
+                language.into(),
+                reel_workflow::resolution::Context {
+                    report_sha256: checked.report_sha256().into(),
+                    unit_modalities: copy
+                        .units
+                        .keys()
+                        .map(|k| (k.clone(), vec![Modality::Text]))
+                        .collect(),
+                },
+            );
+            after.insert(language.into(), checked);
+        }
+        let decision=reel_workflow::resolution::Decision{schema:"reel.workflow-resolution-decision.v1".into(),baseline_report_sha256:before.report_sha256().into(),candidate_plan_sha256:candidate.plan_sha256,contexts,unit_map:old.units.keys().map(|k|(k.clone(),k.clone())).collect(),evaluations:vec![reel_workflow::resolution::Evaluation{finding_key:before.findings().keys().next().unwrap().clone(),corrected_unit:"stable-unit".into(),rationale:"Explicit synthetic follow-up review declaration, not inferred from an empty report.".into(),evidence:vec![after["es"].copy().review.clone()]}]};
+        Self {
+            plan,
+            before,
+            repair,
+            revision,
+            after,
+            decision,
+        }
+    }
+    fn propose(&self) -> Result<reel_workflow::resolution::Proposal> {
+        reel_workflow::resolution::propose(
+            &self.plan,
+            &self.before,
+            &self.repair,
+            &self.revision,
+            &self.after,
+            &self.decision,
+        )
+    }
+    fn update_report(&mut self, language: &str, copy: review::Copy, findings: Vec<Finding>) {
+        let r = check_report(
+            &copy,
+            &Report {
+                schema: "reel.workflow-review-report.v1".into(),
+                copy_sha256: canonical_digest(&copy).unwrap(),
+                findings,
+            },
+        )
+        .unwrap();
+        let context = self.decision.contexts.get_mut(language).unwrap();
+        context.report_sha256 = r.report_sha256().into();
+        context.unit_modalities = copy
+            .units
+            .keys()
+            .map(|k| (k.clone(), vec![Modality::Text]))
+            .collect();
+        self.after.insert(language.into(), r);
+    }
+}
+#[test]
+fn resolution_requires_explicit_bilingual_context_and_keeps_remote_authority_separate() {
+    for comic in [true, false] {
+        let c = ResolutionCase::new(comic);
+        let p = c.propose().unwrap();
+        assert_eq!(p.corrected_reports.len(), 2);
+        assert_eq!(p.finding_keys, c.repair.finding_keys);
+        assert!(!p.remote_issues_closed && !p.selected && !p.approved);
+        let mut c = ResolutionCase::new(comic);
+        c.after.remove("en");
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-context-languages"
+        );
+        let mut c = ResolutionCase::new(comic);
+        c.decision.evaluations.clear();
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-explicit-evaluations"
+        );
+        let mut c = ResolutionCase::new(comic);
+        c.decision
+            .contexts
+            .get_mut("es")
+            .unwrap()
+            .unit_modalities
+            .remove("stable-unit");
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-full-context-required"
+        );
+    }
+}
+#[test]
+fn resolution_refuses_stale_editions_missing_neighborhood_and_unbound_evidence() {
+    for comic in [true, false] {
+        let mut c = ResolutionCase::new(comic);
+        c.decision.candidate_plan_sha256 = "f".repeat(64);
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-baseline-or-candidate"
+        );
+        let mut c = ResolutionCase::new(comic);
+        let mut copy = c.after["en"].copy().clone();
+        copy.source_commit = "c".repeat(40);
+        c.update_report("en", copy, vec![]);
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-corrected-edition"
+        );
+        let mut c = ResolutionCase::new(comic);
+        let mut copy = c.after["es"].copy().clone();
+        copy.units.remove(if comic { "page-2" } else { "neighbor" });
+        c.update_report("es", copy, vec![]);
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            if comic {
+                "resolution-whole-page-context"
+            } else {
+                "resolution-whole-film-context"
+            }
+        );
+        let mut c = ResolutionCase::new(comic);
+        c.decision.evaluations[0].evidence = vec![c.before.copy().review.clone()];
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-corrected-review-evidence"
+        );
+        let mut c = ResolutionCase::new(comic);
+        c.decision.evaluations[0].rationale.clear();
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-finding-evaluation"
+        );
+        let mut c = ResolutionCase::new(comic);
+        c.decision
+            .contexts
+            .get_mut("es")
+            .unwrap()
+            .unit_modalities
+            .get_mut("stable-unit")
+            .unwrap()[0] = Modality::Visual;
+        assert_eq!(c.propose().unwrap_err().code, "resolution-finding-modality");
+    }
+}
+#[test]
+fn resolution_cannot_hide_a_persisting_finding_behind_an_aliased_unit_key() {
+    for alias in [false, true] {
+        let mut c = ResolutionCase::new(true);
+        let mut copy = c.after["es"].copy().clone();
+        let mut finding = report(&copy).findings.remove(0);
+        if alias {
+            copy.units
+                .insert("alias".into(), copy.units["stable-unit"].clone());
+            finding.unit = "alias".into();
+        }
+        c.update_report("es", copy, vec![finding]);
+        assert_eq!(
+            c.propose().unwrap_err().code,
+            "resolution-finding-still-reported"
+        );
+    }
+    let mut c = ResolutionCase::new(true);
+    let copy = c.after["es"].copy().clone();
+    let mut finding = report(&copy).findings.remove(0);
+    finding.code = "another-defect".into();
+    c.update_report("es", copy, vec![finding]);
+    assert_eq!(c.propose().unwrap().remaining_findings["es"].len(), 1);
+}
+#[test]
+fn resolution_supports_explicit_retiming_and_refuses_identity_changes_or_page_reordering() {
+    let mut c = ResolutionCase::new(false);
+    let mut copy = c.after["es"].copy().clone();
+    copy.format = Format::Film { frames: 60 };
+    copy.units = BTreeMap::from([
+        (
+            "retimed".into(),
+            Unit::Film {
+                cel_id: "existing-cel-id".into(),
+                shot_id: None,
+                cue_id: Some("cue-1".into()),
+                start_frame: 0,
+                end_frame: 30,
+            },
+        ),
+        (
+            "retimed-neighbor".into(),
+            Unit::Shot {
+                shot_id: "neighbor-shot".into(),
+                start_frame: 30,
+                end_frame: 60,
+            },
+        ),
+    ]);
+    c.update_report("es", copy, vec![]);
+    c.decision.unit_map = BTreeMap::from([
+        ("stable-unit".into(), "retimed".into()),
+        ("neighbor".into(), "retimed-neighbor".into()),
+    ]);
+    c.decision.evaluations[0].corrected_unit = "retimed".into();
+    c.propose().unwrap();
+    c.decision
+        .unit_map
+        .insert("stable-unit".into(), "retimed-neighbor".into());
+    assert!(c.propose().is_err());
+    let mut c = ResolutionCase::new(true);
+    let mut copy = c.after["es"].copy().clone();
+    if let Format::Comic { page_order } = &mut copy.format {
+        page_order.reverse();
+    }
+    c.update_report("es", copy, vec![]);
+    assert_eq!(
+        c.propose().unwrap_err().code,
+        "resolution-context-page-order"
+    );
+}
+
 #[test]
 fn returned_review_binds_task_language_source_bytes_and_evidence() {
     for comic in [false, true] {

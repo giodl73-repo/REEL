@@ -30,6 +30,7 @@ pub mod movie;
 mod output_layout;
 mod producer;
 mod qualified;
+pub mod resolution;
 pub mod response;
 pub mod retention;
 mod review;
