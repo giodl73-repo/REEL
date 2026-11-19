@@ -43,6 +43,80 @@ fn admitted_native_inputs_render_review_ids_without_staging_or_path_fallback() {
 fn movie_task_binds_native_controls_programs_and_complete_candidate_outputs() {
     run(true);
 }
+#[test]
+#[ignore = "Explicit original admitted movie failure and unchanged pinned runtime; resumes original owned capacity, never creates another job"]
+fn original_movie_metadata_binding_failure_resumes_existing_custody_and_capacity() {
+    let root = PathBuf::from(
+        std::env::var_os("REEL_MOVIE_RECOVERY_FIXTURE").expect("Set REEL_MOVIE_RECOVERY_FIXTURE"),
+    );
+    let packet: Packet =
+        serde_json::from_slice(&fs::read(root.join("packet.json")).unwrap()).unwrap();
+    let source: NativeProfile =
+        serde_json::from_slice(&fs::read(root.join("source.json")).unwrap()).unwrap();
+    let profile: reel_workflow_native::admission::Profile =
+        serde_json::from_slice(&fs::read(root.join("admission-profile.json")).unwrap()).unwrap();
+    let receipt: reel_workflow_native::admission::Receipt =
+        serde_json::from_slice(&fs::read(root.join("admission-receipt.json")).unwrap()).unwrap();
+    let ticket: reel_workflow_native::staging::Ticket =
+        serde_json::from_slice(&fs::read(root.join("movie-owned-ticket.json")).unwrap()).unwrap();
+    let programs: Programs =
+        serde_json::from_slice(&fs::read(root.join("programs.json")).unwrap()).unwrap();
+    let runtime_path = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_HANDOFF_TOOL")
+            .expect("Set original REEL_NATIVE_HANDOFF_TOOL"),
+    );
+    let raw = fs::read(&runtime_path).unwrap();
+    let runtime = Tool {
+        path: runtime_path,
+        sha256: digest(&raw),
+        bytes: raw.len() as u64,
+    };
+    let before = fs::read(profile.index_root.join("claims.json")).unwrap();
+    let owner = ticket
+        .resume_workspace(&packet, &source, &profile, &receipt)
+        .unwrap();
+    let workspace = owner.path().join("movie");
+    assert!(workspace.is_dir());
+    assert!(
+        fs::read_dir(&workspace).unwrap().next().is_none(),
+        "original render already has effects; reconcile instead"
+    );
+    let read = NativeInputs::open_admitted(&packet, &source, &profile, &receipt).unwrap();
+    let generated = reel_workflow_native::movie::generate(
+        &packet,
+        read,
+        &BTreeMap::from([
+            ("ffmpeg".into(), programs.ffmpeg),
+            ("ffprobe".into(), programs.ffprobe),
+        ]),
+        &runtime,
+        &workspace,
+    )
+    .unwrap();
+    assert_eq!(generated.outputs.len(), 12);
+    assert_eq!(generated.files.len(), 13);
+    let delivery: scene_delivery::Receipt =
+        serde_json::from_slice(&generated.files["delivery/receipt.json"]).unwrap();
+    assert_eq!(delivery.delivery_frames, 48);
+    assert_eq!(delivery.plan.review_ids[1].start_frame, 24);
+    for (name, artifact) in &generated.outputs {
+        let raw = &generated.files[&generated.paths[name]];
+        assert_eq!(artifact.sha256, digest(raw));
+        assert_eq!(artifact.bytes, raw.len() as u64);
+    }
+    assert_eq!(
+        before,
+        fs::read(profile.index_root.join("claims.json")).unwrap()
+    );
+    assert!(!generated.receipt.human_approval);
+    assert!(!generated.receipt.retained_owner_acknowledged);
+    if let Some(e) = std::env::var_os("REEL_FILM_EVIDENCE_DIRECTORY").map(PathBuf::from) {
+        fs::write(e.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":source.snapshot.repository,"workspace":workspace,
+            "task_key":packet.task_key,"outputs":12,"packet_files":13,"frames":48,"cut_frame":24,"claims_unchanged":true,
+            "original_admission_reused":true,"original_owned_capacity_reopened":true,"runtime":runtime,
+            "output_retained":false,"task_completed":false,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
+    }
+}
 fn run(movie: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
@@ -324,7 +398,10 @@ fn run(movie: bool) {
             ticket.canonical_bytes().unwrap(),
         )
         .unwrap();
-        let workspace = ticket.directory().join("movie");
+        let owner = ticket
+            .resume_workspace(&fixture.packet, &case.source, &case.profile, &receipt)
+            .unwrap();
+        let workspace = owner.path().join("movie");
         fs::create_dir(&workspace).unwrap();
         let read =
             NativeInputs::open_admitted(&fixture.packet, &case.source, &case.profile, &receipt)

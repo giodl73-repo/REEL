@@ -70,8 +70,53 @@ impl Ticket {
     pub fn directory(&self) -> PathBuf {
         self.profile.parent.join(&self.owner.name)
     }
+    /// Reopen the original custody, directory identity/intent and preserved
+    /// capacity. This does not validate children, stage inputs or complete work.
+    /// Trusted production ports must verify their own complete child namespace.
+    pub fn resume_workspace(
+        &self,
+        packet: &Packet,
+        source: &NativeProfile,
+        admission: &admission::Profile,
+        receipt: &Receipt,
+    ) -> Result<OwnedWorkspace> {
+        if self.schema != "reel.workflow-staging-ticket.v1" || !self.matches(receipt)? {
+            return Err(error(
+                ErrorKind::Conflict,
+                "staging-original-workspace-ticket",
+            ));
+        }
+        let _claims = admission::Prepared::open(packet, source, admission, &receipt.attempt_id)?
+            .reopen(receipt)?;
+        check_parent(&self.profile.parent, source, admission)?;
+        let plan = plan(packet, source, receipt)?;
+        let config = configuration(&self.profile, &admission.scope.coordination_root)?;
+        checked_budget(&self.profile, &plan)?;
+        let view = open_owner(&self.profile, &self.owner, &plan)?;
+        let reservation = capacity::resume_preserved_on(
+            &config,
+            &self.profile.parent,
+            &self.reservation.id,
+            &self.reservation.volume,
+            self.profile.maximum_bytes,
+        )
+        .map_err(scoped_error)?;
+        Ok(OwnedWorkspace {
+            view,
+            _reservation: reservation,
+        })
+    }
     pub(crate) fn matches(&self, receipt: &Receipt) -> Result<bool> {
         Ok(self.admission.operation_identity()? == receipt.operation_identity()?)
+    }
+}
+pub struct OwnedWorkspace {
+    view: View,
+    _reservation: capacity::Reservation,
+}
+impl OwnedWorkspace {
+    pub fn path(&self) -> &Path {
+        self.view.root.path()
     }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]

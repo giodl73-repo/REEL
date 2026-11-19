@@ -146,10 +146,15 @@ impl Inputs {
             } else {
                 // This verifies the enrolled store/key and keeps its object and
                 // native namespace gates alive before resolving an executable path.
-                native.held.push(
-                    tig_git::annex::workflow::reader::open(&native.source, object)
-                        .map_err(io_error)?,
-                );
+                // Metadata binding may already own this exact operation's gate.
+                // captured() is populated only after a successful guarded read;
+                // reopening that non-reentrant gate would conflict with itself.
+                if native.captured(object).is_none() {
+                    native.held.push(
+                        tig_git::annex::workflow::reader::open(&native.source, object)
+                            .map_err(io_error)?,
+                    );
+                }
                 let key = Key::from_object(object);
                 let location = runner
                     .run(Command::ContentLocation(&key))

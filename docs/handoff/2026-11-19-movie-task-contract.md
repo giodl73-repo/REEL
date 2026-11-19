@@ -40,6 +40,23 @@ prepares an original job and owned capacity through existing Rust interfaces,
 then checks all twelve candidate outputs/thirteen packet files and unchanged
 claims. Actual fixture evidence will be recorded after execution.
 
+The first native attempt at source `d2f8a28e054c9983e57ca2ae554ebc65cc815294`
+stopped with NeedsRecovery after admission/owned-capacity preparation and before
+render launch. Metadata binding had already retained three exact input gates;
+the file bridge tried to reopen those non-reentrant gates. It now reuses the
+operation's existing guarded metadata reads. No guard is released or substituted.
+The refused evidence remains at
+`F:/src/tig-dev-temp/reel-movie-task-20261119-v1`; original roots `.tmpUu8trF`
+and `.tmpGMc7Jc`, original admission and owned ticket remain intact.
+
+`staging::Ticket::resume_workspace` reopens original job custody, directory
+identity/intent and preserved capacity before returning a namespace/capacity
+guard. It neither validates child contents nor grants staging/task completion.
+Trusted ports still verify their complete child namespace. The recovery fixture
+requires the original empty movie directory and original renderer executable;
+it does not prepare another job or reservation. Recovery evidence will be recorded
+separately after running it.
+
 Producer-applied editor and rights/provenance review: limits must refuse instead
 of shortening the film; authored timing and selected cue recordings remain exact
 inputs. Candidate receipts explicitly leave human approval and retained-owner
