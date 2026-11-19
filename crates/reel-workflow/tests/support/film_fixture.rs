@@ -54,7 +54,35 @@ pub fn wave(frames: u32) -> Vec<u8> {
     raw.resize(44 + frames as usize * 2, 0);
     raw
 }
+#[allow(dead_code)]
+pub fn direction_settings() -> Value {
+    json!({"schema":"reel.workflow-film-direction-settings.v1","policy":{"schema":"reel.scene-policy.v1","policy_id":"policy","target_composition_seconds_min":0.1,"target_composition_seconds_max":2.0,"hard_unchanged_composition_seconds_max":4.0,"semantic_cuts_required":true},"desired_seconds_per_cel":{"numerator":1,"denominator":3},"delivery_fps":{"numerator":24,"denominator":1},"cadence":{"kind":"held-cels"},"raster_size":[1920,1080],"visual_school":"realistic","performance_style":"theatrical","animation_technique":"held illustrations","references":[],"budget":{"drawing_slots":1024,"stored_bytes":16777216,"raw_rgb_bytes":1073741824,"estimated_bytes_per_candidate":1000,"cost":{"unit":"authored-test-units","microunits_per_candidate":7}}})
+}
 impl Fixture {
+    #[allow(dead_code)]
+    pub fn add_direction(&mut self, settings: Value) {
+        let pin = json_put(&mut self.values, "direction-settings.json", settings);
+        self.packet.task.inputs.push(pin.clone());
+        self.packet
+            .task
+            .tool
+            .as_mut()
+            .unwrap()
+            .source_bindings
+            .insert("direction-settings.json".into(), pin.logical_id);
+        self.packet.task.outputs.insert(
+            film::DIRECTION_OUTPUT.into(),
+            OutputContract {
+                media_type: "application/json".into(),
+                max_bytes: MAX_CONTROL_BYTES as u64,
+                required: true,
+            },
+        );
+        self.change_json("request.json", |v| {
+            v["schema"] = json!("reel.workflow-film-scene-control.v2");
+            v["direction_path"] = json!("direction-settings.json");
+        });
+    }
     pub fn new(language: &str) -> Self {
         let mut values = BTreeMap::new();
         let (text, cut, frames) = if language == "es" {

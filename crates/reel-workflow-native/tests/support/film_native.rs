@@ -44,14 +44,19 @@ fn auxiliary_program_roles_and_pins_are_checked_without_opening_program_paths() 
 #[test]
 #[ignore = "Existing declared native pool: synthetic scene control retention/replay only; preserves original roots"]
 fn selected_takes_drive_retained_language_local_scene_controls() {
-    run_scene_controls(false);
+    run_scene_controls(false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool: auxiliary runtime binding, retained scene controls and original-ticket replay; preserves roots"]
 fn auxiliary_program_binding_survives_retention_and_refuses_tool_substitution() {
-    run_scene_controls(true);
+    run_scene_controls(true, false);
 }
-fn run_scene_controls(auxiliary: bool) {
+#[test]
+#[ignore = "Existing declared synthetic pool: v2 direction/cadence demand, six retained controls and original-ticket replay; no media rendering"]
+fn direction_and_density_are_frozen_in_retained_scene_controls() {
+    run_scene_controls(false, true);
+}
+fn run_scene_controls(auxiliary: bool, directed: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -59,7 +64,12 @@ fn run_scene_controls(auxiliary: bool) {
         serde_json::from_value(value["source"].clone()).unwrap();
     let mut fixture = Fixture::new();
     fixture.temp.disable_cleanup(true);
-    let film = film_fixture::Fixture::new("es");
+    let mut film = film_fixture::Fixture::new("es");
+    if directed {
+        let mut settings = film_fixture::direction_settings();
+        settings["cadence"] = json!({"kind":"every-frames","frames":2});
+        film.add_direction(settings);
+    }
     let executable = std::env::var_os("REEL_NATIVE_HANDOFF_TOOL")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native")));
@@ -235,6 +245,29 @@ fn run_scene_controls(auxiliary: bool) {
         )
         .unwrap();
     }
+    if directed {
+        let before = fs::read(case.profile.index_root.join("claims.json")).unwrap();
+        let preview = Command::new(&executable)
+            .arg("preview-film-direction")
+            .arg(root.join("packet.json"))
+            .arg(root.join("source.json"))
+            .output()
+            .unwrap();
+        assert!(
+            preview.status.success(),
+            "{}",
+            String::from_utf8_lossy(&preview.stdout)
+        );
+        let value: serde_json::Value = decode(&preview.stdout).unwrap();
+        assert_eq!(value["claims_accepted"], false);
+        assert_eq!(value["provider_called"], false);
+        assert_eq!(value["preview"]["target_drawing_slots_upper_bound"], 14);
+        assert_eq!(
+            before,
+            fs::read(case.profile.index_root.join("claims.json")).unwrap()
+        );
+        fs::write(root.join("preflight-direction.json"), preview.stdout).unwrap();
+    }
     let profile = handoff_profile(&case, receipt, executable.clone());
     let profile_path = root.join("profile.json");
     let packet_path = root.join("packet.json");
@@ -268,7 +301,7 @@ fn run_scene_controls(auxiliary: bool) {
         &programs,
     );
     let result: ReturnedResult = serde_json::from_slice(&fs::read(result_path).unwrap()).unwrap();
-    assert_eq!(result.artifacts.len(), 5);
+    assert_eq!(result.artifacts.len(), if directed { 6 } else { 5 });
     assert_eq!(result.provenance.mode, Mode::Tool);
     assert_eq!(
         reel_workflow::handoff::Journal::open(&journal)
@@ -291,6 +324,33 @@ fn run_scene_controls(auxiliary: bool) {
     assert_eq!(map["events"][0]["end_sample"], 2400);
     assert_eq!(map["events"][1]["end_sample"], 8000);
     assert_eq!(map["events"][1]["cel"]["logical_id"], "film/two.svg");
+    if directed {
+        use std::io::Read;
+        let pin = &result.artifacts[reel_workflow::film::DIRECTION_OUTPUT];
+        let object = Object {
+            sha256: tig_core::Digest::parse(&pin.sha256).unwrap(),
+            bytes: pin.bytes,
+        };
+        let mut held =
+            tig_git::annex::workflow::reader::open(&case.source.source, &object).unwrap();
+        let mut bytes = Vec::new();
+        Read::by_ref(&mut held)
+            .take(pin.bytes + 1)
+            .read_to_end(&mut bytes)
+            .unwrap();
+        assert_eq!(digest(&bytes), pin.sha256);
+        assert_eq!(bytes.len() as u64, pin.bytes);
+        let preview: serde_json::Value = decode(&bytes).unwrap();
+        assert_eq!(preview["delivery_frames"], 24);
+        assert_eq!(preview["desired_composition_count"], 3);
+        assert_eq!(preview["actual_run_drawing_slots"], 13);
+        assert_eq!(preview["target_drawing_slots_upper_bound"], 14);
+        assert_eq!(preview["settings"]["visual_school"], "realistic");
+        assert_eq!(preview["settings"]["performance_style"], "theatrical");
+        assert_eq!(preview["exposure_asset_binding_required"], true);
+        assert_eq!(preview["rendered"], false);
+        controls.push(("native-direction-preview.json", bytes));
+    }
     if auxiliary {
         let ticket_path = root.join("automatic-dispatch/worker-ticket.json");
         let ticket_raw = fs::read(&ticket_path).unwrap();
@@ -373,6 +433,6 @@ fn run_scene_controls(auxiliary: bool) {
         for (name, raw) in controls {
             fs::write(e.join(name), raw).unwrap();
         }
-        fs::write(e.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,"retained_outputs":5,"language":"es","cut_sample":2400,"cue_end_sample":8000,"replay_without_effects":true,"auxiliary_runtime":auxiliary,"tool_substitution_refused":auxiliary,"original_tool_restored":auxiliary,"rendered":false,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
+        fs::write(e.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,"retained_outputs":if directed {6} else {5},"language":"es","cut_sample":2400,"cue_end_sample":8000,"replay_without_effects":true,"direction_and_density_frozen":directed,"native_direction_reopened":directed,"auxiliary_runtime":auxiliary,"tool_substitution_refused":auxiliary,"original_tool_restored":auxiliary,"rendered":false,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
     }
 }

@@ -22,8 +22,8 @@ pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> R
             Ok(bound.request().limits.output_bytes)
         }
         ToolCapability::FilmSceneControl => {
-            reel_workflow::film::generate(packet, inputs)?;
-            Ok(6 * reel_workflow::MAX_CONTROL_BYTES as u64)
+            let generated = reel_workflow::film::generate(packet, inputs)?;
+            Ok((generated.outputs.len() as u64 + 1) * reel_workflow::MAX_CONTROL_BYTES as u64)
         }
         ToolCapability::ComicRender => {
             reel_workflow::publication::bind_comic(packet, inputs)?;

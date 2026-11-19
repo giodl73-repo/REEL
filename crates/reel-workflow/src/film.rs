@@ -9,6 +9,7 @@ pub const OUTPUTS: [&str; 5] = [
     "alignments.json",
     "review-map.json",
 ];
+pub const DIRECTION_OUTPUT: &str = "direction.json";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CueInputs {
@@ -26,6 +27,8 @@ pub struct Request {
     pub scope_paths: [String; 3],
     pub cues: BTreeMap<String, CueInputs>,
     pub next_lock_logical_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction_path: Option<String>,
 }
 pub struct Generated {
     pub outputs: ArtifactSet,
@@ -74,8 +77,11 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         MAX_CONTROL_BYTES as u64,
     )?)?;
     let request: Request = decode(&checked(reader, &tool.request, MAX_CONTROL_BYTES as u64)?)?;
-    if request.schema != "reel.workflow-film-scene-control.v1"
-        || !(1..=32).contains(&request.cues.len())
+    if !matches!(
+        (request.schema.as_str(), request.direction_path.as_ref()),
+        ("reel.workflow-film-scene-control.v1", None)
+            | ("reel.workflow-film-scene-control.v2", Some(_))
+    ) || !(1..=32).contains(&request.cues.len())
     {
         return fail(ErrorKind::Invalid, "film-control-request");
     }
@@ -186,6 +192,35 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
             compilation(scene::resolve_text_triggers(&words, &triggers))?,
         );
     }
+    let direction: Option<crate::direction::Settings> = request
+        .direction_path
+        .as_ref()
+        .map(|p| source(p, "application/json").and_then(|(_, raw)| decode(raw)))
+        .transpose()?;
+    if let Some(settings) = &direction {
+        settings.check()?;
+        if settings.policy.policy_id
+            != materialized
+                .scene_policy_override_id
+                .as_deref()
+                .unwrap_or(&episode.scene_policy_id)
+        {
+            return fail(ErrorKind::Conflict, "film-control-direction-policy");
+        }
+        for reference in &settings.references {
+            let (path, (actual, _)) = values
+                .iter()
+                .find(|(_, (a, _))| a.logical_id == reference.logical_id)
+                .ok_or(Error {
+                    kind: ErrorKind::Missing,
+                    code: "film-control-direction-reference".into(),
+                })?;
+            if *actual != reference {
+                return fail(ErrorKind::Integrity, "film-control-direction-reference-pin");
+            }
+            used.insert((*path).into());
+        }
+    }
     // Resolve selected picture bytes as declared inputs, rather than trusting
     // matching metadata inside a scope document alone.
     let mut pictures = BTreeMap::new();
@@ -239,7 +274,15 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         ("alignments.json".into(), json(&alignments)?),
         ("review-map.json".into(), json(&review)?),
     ]);
-    if packet.task.outputs.len() != OUTPUTS.len() {
+    if let Some(settings) = &direction {
+        files.insert(
+            DIRECTION_OUTPUT.into(),
+            json(&crate::direction::preview(
+                settings, lang, &spans, &pictures,
+            )?)?,
+        );
+    }
+    if packet.task.outputs.len() != OUTPUTS.len() + usize::from(direction.is_some()) {
         return fail(ErrorKind::Conflict, "film-control-output-set");
     }
     let mut outputs = BTreeMap::new();

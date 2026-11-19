@@ -63,6 +63,23 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, packet, source] if command == "preview-film-direction" => {
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let mut inputs = NativeInputs::open(&packet, &source)?;
+            let generated = reel_workflow::film::generate(&packet, &mut inputs)?;
+            let raw = generated
+                .files
+                .get(reel_workflow::film::DIRECTION_OUTPUT)
+                .ok_or(reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Unsupported,
+                    code: "film-direction-v2-required".into(),
+                })?;
+            let preview: serde_json::Value = reel_workflow::decode(raw)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-film-direction-preview","preview":preview,"claims_accepted":false,"provider_called":false,"rendered":false,"selected":false}),
+            )
+        }
         [
             command,
             packet,
@@ -1072,6 +1089,7 @@ fn main() -> ExitCode {
             "reel-workflow-native comic-check REQUEST DIRECTORY\n",
             "reel-workflow-native check-publication-native PACKET PROFILE\n",
             "reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\n",
+            "reel-workflow-native preview-film-direction PACKET NATIVE_PROFILE\n",
             "reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT\n",
             "reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET\n",
