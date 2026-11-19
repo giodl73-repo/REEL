@@ -40,7 +40,10 @@ now proposes bounded eligible waves and blocks stale descendants using native
 observations. [Guarded job-slot close/reuse](handoff/2026-11-18-job-close.md)
 now passes original interrupted native Prepare recovery, retained-byte reopening
 and old-close fencing after reuse; scratch retirement remains separate.
-Connect effectful recipe advancement and
+[Expanded-task advancement](handoff/2026-11-19-expanded-advancement.md) now joins
+frozen proposals to durable admission, handoff journals and runnable graph
+bindings, with existing-pool CLI replay and protected prompt-batch staging.
+Connect automatic multi-wave recipe advancement and
 extend larger issue scheduling beyond the bounded retained issue fixture;
 extend deterministic dispatch and connect film,
 cue/style/language and review/fix flows; implement provider transports; finish

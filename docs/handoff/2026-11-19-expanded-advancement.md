@@ -42,8 +42,21 @@ runner, capacity allocator, uncertain-acceptance repair or project adoption.
 Three metadata/claim fixtures cover first adoption, unchanged-index replay,
 original-admission reconciliation, lost-receipt recovery, graph visibility,
 invalid targets, foreign directories, changed configuration and partial-control
-preservation. A separate opt-in existing-pool fixture covers the CLI path,
-replay, actual native staging and protected batch export; qualification is pending.
+preservation. The separate existing-pool fixture passed in 20.62 seconds: actual
+CLI adoption, unchanged-index replay, native input staging and protected batch
+export. Its task remains Waiting; no provider executed and no claims or scratch
+were released.
+
+Evidence: `F:/src/tig-dev-temp/reel-workflow-native-advance-20261119-v1/qualified-tools.json`.
+Implementation source pin: `3b52d0d`; all 1,821 archived files match.
+Frozen runtime SHA256:
+`f61670848db69d81d914fd03da986572e9e507e038533f1d05bc37b7e45139f0`.
+Frozen fixture SHA256:
+`a98094ad88435a28cbd0ab64b5afaadf8bbf77dbc6f5722c598827f0fdebb9e0`.
+Preserved controller root: `F:/src/tig-dev-temp/.tmpJJTQM3`; original source:
+`F:/src/tig-dev-temp/.tmpEevJIn`. The ready batch and staged binding snapshot are
+in that controller root. Preserve its live Waiting job and original staging
+ticket. Multi-parent comic/control recipes still need advancement qualification.
 
 Producer-applied recovery/custody and rights/provenance checklists preserve
 original identities, custody boundaries and private operational controls.

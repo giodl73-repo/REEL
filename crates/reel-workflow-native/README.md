@@ -20,6 +20,7 @@ reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE AT
 reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT
 reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET
 reel-workflow-native export-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE TICKET TICKET_SHA256
+reel-workflow-native advance-expanded PLAN FROZEN FROZEN_SHA256 CONFIG PRIVATE_DIRECTORY --apply
 ```
 
 The isolated graph consumes `vendor/tig-workflow`, preserving all 247 source pins
