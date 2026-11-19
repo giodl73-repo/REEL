@@ -120,6 +120,7 @@ fn run(invalid: bool) {
     case.source.snapshot.repository = bare;
     let marker = json!({"root":root,"prior":prior,"harness_source":fixture.temp.path(),"task_key":fixture.packet.task_key,"invalid_unit":invalid,"runtime":exe});
     save(root.join("original-operation.json"), &marker);
+    fs::write(root.join("prior-claims-before.bin"), &old_claims).unwrap();
     save(evidence.join("original-operation-roots.json"), &marker);
     save(root.join("packet.json"), &fixture.packet);
     save(root.join("source.json"), &case.source);
@@ -363,6 +364,7 @@ fn run(invalid: bool) {
         fs::read(case.profile.index_root.join("claims.json")).unwrap(),
         replay_claims
     );
+    observer.set_nonblocking(true).unwrap();
     assert!(observer.accept().is_err());
     assert_eq!(
         fs::read(old_admission.index_root.join("claims.json")).unwrap(),
@@ -370,5 +372,71 @@ fn run(invalid: bool) {
     );
     let outcome = json!({"root":root,"prior":prior,"workspace":workspace,"invalid_unit":invalid,"calls":1,"native_retained":!invalid,"refused_before_import_intent":invalid,"native_history_without_local_returns":!invalid,"bare_git":true,"replay_without_post_or_claim_change":true,"prior_claims_unchanged":true,"selected":false,"scratch_retired":false});
     save(root.join("qualification-result.json"), &outcome);
+    save(evidence.join("qualification-result.json"), &outcome);
+}
+
+#[test]
+#[ignore = "Original retained direct-review operation only; resumes qualification after harness listener wait, no readmission or provider reissue"]
+fn retained_direct_comic_review_resumes_original_history_and_completion_checks() {
+    let root = PathBuf::from(
+        std::env::var_os("REEL_DIRECT_REVIEW_RESUME_ROOT")
+            .expect("Set original retained operation root"),
+    );
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_DIRECT_REVIEW_EVIDENCE_DIRECTORY").expect("Set evidence directory"),
+    );
+    let packet: Packet = load(root.join("packet.json"));
+    let source: NativeProfile = load(root.join("source.json"));
+    let admission: reel_workflow_native::admission::Profile = load(root.join("admission.json"));
+    let receipt: reel_workflow_native::admission::Receipt = load(root.join("receipt.json"));
+    let result: ReturnedResult = load(root.join("result.json"));
+    let ack: retention::Acknowledgement = load(root.join("ack.json"));
+    let marker: serde_json::Value = load(root.join("original-operation.json"));
+    let exe = PathBuf::from(marker["runtime"].as_str().unwrap());
+    let prior = PathBuf::from(marker["prior"].as_str().unwrap());
+    let old: reel_workflow_native::admission::Profile = load(prior.join("admission.json"));
+    let before_old = fs::read(old.index_root.join("claims.json")).unwrap();
+    let before = fs::read(admission.index_root.join("claims.json")).unwrap();
+    let ticket: provider::Ticket = load(root.join("dispatch/provider-ticket.json"));
+    let workspace = ticket.directory();
+    assert!(!workspace.join("packet").exists());
+    assert!(root.join("preserved-local-return-packet/report").is_file());
+    assert!(source.snapshot.repository.join("HEAD").is_file());
+    assert!(!source.snapshot.repository.join(".git").exists());
+    assert_eq!(
+        handoff::Journal::open(&root.join("journal"))
+            .unwrap()
+            .state(),
+        handoff::State::Retained
+    );
+    let proof = retention::verify(&packet, &source, &admission, &receipt, &result, &ack).unwrap();
+    assert_eq!(proof.review_report().unwrap().findings().len(), 1);
+    drop(proof);
+    let replay = Command::new(exe)
+        .arg("dispatch-task")
+        .arg(root.join("plan.json"))
+        .arg(root.join("bindings.json"))
+        .arg(&packet.task.id)
+        .arg(root.join("config.json"))
+        .arg(root.join("dispatch"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&replay);
+    let replay_value: serde_json::Value = decode(&replay.stdout).unwrap();
+    assert_eq!(replay_value["provider_invoked"], false);
+    assert_eq!(replay_value["summary"]["provider_called"], false);
+    assert_eq!(replay_value["summary"]["already_ready"], true);
+    assert_eq!(
+        before,
+        fs::read(admission.index_root.join("claims.json")).unwrap()
+    );
+    assert_eq!(
+        before_old,
+        fs::read(old.index_root.join("claims.json")).unwrap()
+    );
+    save(root.join("resumed-replay.json"), &replay_value);
+    let outcome = json!({"root":root,"prior":prior,"workspace":workspace,"original_identity_resumed":true,"no_readmission_or_input_publication":true,"native_retained":true,"native_history_without_local_returns":true,"bare_git":true,"checked_findings":1,"replay_without_post_or_claim_change":true,"prior_claims_unchanged_during_resume":true,"initial_prior_claim_comparison_not_reached":true,"initial_harness_listener_failure_preserved":true,"selected":false,"scratch_retired":false});
+    save(root.join("resume-qualification-result.json"), &outcome);
     save(evidence.join("qualification-result.json"), &outcome);
 }
