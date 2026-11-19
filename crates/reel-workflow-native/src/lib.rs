@@ -24,6 +24,10 @@ pub mod staging;
 pub mod upstream;
 pub use staging::comic_export;
 pub use staging::worker;
+/// Read-only deterministic input validation; no custody or execution authority.
+pub fn check_publication_inputs(packet: &Packet, inputs: &mut impl InputReader) -> Result<()> {
+    producer::output_budget(packet, inputs).map(|_| ())
+}
 use tig_git::{
     annex::workflow::reader,
     source::{

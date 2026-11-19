@@ -798,7 +798,7 @@ pub fn export(
             .insert(asset.logical_id.clone(), (asset.clone(), raw));
     }
     if packet.task.tool.is_some() {
-        reel_workflow::publication::bind_comic(packet, &mut buffers)?;
+        crate::producer::output_budget(packet, &mut buffers)?;
     }
     materialize(
         &mut view,

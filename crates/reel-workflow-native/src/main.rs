@@ -627,7 +627,7 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             let packet = read_control(Path::new(packet))?;
             let profile: NativeProfile = read_control(Path::new(profile))?;
             let mut inputs = NativeInputs::open(&packet, &profile)?;
-            reel_workflow::publication::bind_comic(&packet, &mut inputs)?;
+            reel_workflow_native::check_publication_inputs(&packet, &mut inputs)?;
             Ok(
                 serde_json::json!({"ok":true,"scope":"guarded-native-publication-inputs","snapshot_binding_verified":true,
                 "payloads_verified":true,"read_guards_held_during_check":true,"durable_job_protection_verified":false,"task_completed":false,"selected":false}),

@@ -743,7 +743,7 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
     // The helper's private graph controls use this original case root.
     let child_acks = case_root.join("issue-acks");
     fs::create_dir(&child_acks).unwrap();
-    let mut profile = reel_workflow_native::handoff::Profile {
+    let profile = reel_workflow_native::handoff::Profile {
         schema: "reel.workflow-native-handoff.v1".into(),
         source: clone_source(&source),
         admission: case.profile.clone(),
@@ -792,6 +792,160 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
     let stage_raw = stage_ticket.canonical_bytes().unwrap();
     let stage_path = case_root.join("input-ticket.json");
     fs::write(&stage_path, &stage_raw).unwrap();
+    continue_issue(Continuation {
+        case_root,
+        fixture_root,
+        packet,
+        profile,
+        profile_path,
+        plan,
+        graph_bindings,
+        stage,
+    });
+}
+
+struct Continuation {
+    case_root: PathBuf,
+    fixture_root: PathBuf,
+    packet: Packet,
+    profile: reel_workflow_native::handoff::Profile,
+    profile_path: PathBuf,
+    plan: Plan,
+    graph_bindings: graph::Bindings,
+    stage: staging::Profile,
+}
+
+/// A bounded recovery fixture for the recorded export refusal, not a new attempt.
+#[test]
+#[ignore = "Requires the preserved admitted synthetic issue root and its exact original frozen CLI; resumes original ticket/WorkRef only"]
+fn admitted_issue_resumes_original_ticket_after_staging_dispatch_refusal() {
+    fn load<T: serde::de::DeserializeOwned>(path: &Path) -> T {
+        serde_json::from_slice(&fs::read(path).unwrap()).unwrap()
+    }
+    let case_root = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_ISSUE_RECOVERY_ROOT")
+            .expect("original recovery root required"),
+    );
+    assert!(case_root.is_absolute() && case_root.is_dir());
+    assert!(!case_root.join("ready.json").exists());
+    assert!(!case_root.join("worker-ticket.json").exists());
+    let packet: Packet = load(&case_root.join("issue-packet.json"));
+    assert_eq!(packet.project, "synthetic-comic");
+    assert_eq!(packet.task.id, "issue-assemble");
+    let mut profile: reel_workflow_native::handoff::Profile =
+        load(&case_root.join("issue-profile.json"));
+    assert!(profile.admission.index_root.starts_with(&case_root));
+    let fixture_root = profile.source.snapshot.repository.clone();
+    let original_runtime = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_ISSUE_ORIGINAL_RUNTIME")
+            .expect("exact original frozen runtime required"),
+    );
+    let runtime_raw = fs::read(&original_runtime).unwrap();
+    assert_eq!(digest(&runtime_raw), profile.runtime.sha256);
+    assert_eq!(runtime_raw.len() as u64, profile.runtime.bytes);
+    profile.runtime.path = original_runtime.clone();
+    let profile_path = case_root.join("issue-recovery-profile.json");
+    assert!(!profile_path.exists());
+    save(&profile_path, &profile);
+    let observed = reel_workflow::handoff::Journal::open(&case_root.join("issue-journal")).unwrap();
+    assert_eq!(observed.state(), reel_workflow::handoff::State::Waiting);
+    assert_eq!(observed.ticket().packet, packet);
+    assert!(observed.result().is_none());
+    drop(
+        admission::Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap(),
+    );
+    let mut graph_bindings = graph::Bindings {
+        schema: "reel.workflow-run-bindings.v1".into(),
+        tasks: BTreeMap::new(),
+    };
+    let frozen = profile.source.snapshot.upstream.as_ref().unwrap();
+    let mut tasks = Vec::new();
+    for (id, evidence) in &frozen.parents {
+        let mut parent: reel_workflow_native::handoff::Profile =
+            load(&case_root.join(format!("{id}-profile.json")));
+        assert_eq!(parent.runtime.sha256, profile.runtime.sha256);
+        parent.runtime.path = original_runtime.clone();
+        let path = case_root.join(format!("{id}-recovery-profile.json"));
+        assert!(!path.exists());
+        save(&path, &parent);
+        graph_bindings.tasks.insert(
+            id.clone(),
+            graph::Binding {
+                journal: case_root.join(format!("{id}-journal")),
+                profile: graph::PinnedFile {
+                    path: path.clone(),
+                    sha256: digest(&fs::read(path).unwrap()),
+                },
+                staging_ticket: None,
+            },
+        );
+        tasks.push(evidence.packet.task.clone());
+    }
+    tasks.push(packet.task.clone());
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: packet.project.clone(),
+        source_commit: packet.source_commit.clone(),
+        tasks,
+    };
+    let ticket_raw = fs::read(case_root.join("input-ticket.json")).unwrap();
+    let ticket_json: serde_json::Value = serde_json::from_slice(&ticket_raw).unwrap();
+    let original: admission::Receipt =
+        serde_json::from_value(ticket_json["admission"].clone()).unwrap();
+    assert_eq!(
+        original.canonical_bytes().unwrap(),
+        profile.binding.admission.canonical_bytes().unwrap()
+    );
+    let stage: staging::Profile = serde_json::from_value(ticket_json["profile"].clone()).unwrap();
+    if let Some(evidence) = std::env::var_os("REEL_NATIVE_ISSUE_EVIDENCE_DIRECTORY") {
+        let evidence = PathBuf::from(evidence);
+        assert!(evidence.is_absolute() && evidence.is_dir());
+        save(
+            &evidence.join("original-recovery.json"),
+            &json!({"root":case_root,"task_key":packet.task_key,
+            "admission":profile.binding.admission,"input_ticket_sha256":digest(&ticket_raw),"runtime":profile.runtime,
+            "new_admission":false,"new_attempt":false,"claims_released":false}),
+        );
+    }
+    continue_issue(Continuation {
+        case_root,
+        fixture_root,
+        packet,
+        profile,
+        profile_path,
+        plan,
+        graph_bindings,
+        stage,
+    });
+}
+
+fn continue_issue(state: Continuation) {
+    let Continuation {
+        case_root,
+        fixture_root,
+        packet,
+        mut profile,
+        profile_path,
+        plan,
+        mut graph_bindings,
+        stage,
+    } = state;
+    let admission = profile.admission.clone();
+    let admitted = profile.binding.admission.clone();
+    let executable = profile.runtime.path.clone();
+    let child_acks = profile.acknowledgements.clone();
+    let journal = case_root.join("issue-journal");
+    let packet_path = case_root.join("issue-packet.json");
+    let stage_path = case_root.join("input-ticket.json");
+    let stage_raw = fs::read(&stage_path).unwrap();
     graph_bindings.tasks.insert(
         packet.task.id.clone(),
         graph::Binding {
@@ -886,10 +1040,9 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
             },
         };
         let mut nodes =
-            MetadataStore::open(&case.profile.metadata_root, &admitted.metadata_checkpoint)
-                .unwrap();
-        let mut index = Index::open(&case.profile.index_root, &admitted.index_checkpoint).unwrap();
-        let actor = index.actor(&mut nodes, &case.profile.scope.actor).unwrap();
+            MetadataStore::open(&admission.metadata_root, &admitted.metadata_checkpoint).unwrap();
+        let mut index = Index::open(&admission.index_root, &admitted.index_checkpoint).unwrap();
+        let actor = index.actor(&mut nodes, &admission.scope.actor).unwrap();
         let entries = tig_core::tree::Tree::from_root(actor.selection.root.clone())
             .entries(&mut nodes, tig_core::tree::TreeLimits::default())
             .unwrap()
@@ -903,8 +1056,8 @@ fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bar
         };
         let update = tig_store::source_claims::protection::Update {
             operation: tig_store::Key::parse("fixture-remove-issue-job-coverage").unwrap(),
-            actor: case.profile.scope.actor.clone(),
-            owner: case.profile.scope.owner.clone(),
+            actor: admission.scope.actor.clone(),
+            owner: admission.scope.owner.clone(),
             selection: empty,
             expected_revision: actor.revision,
             changes: entries.keys().map(|p| (p.clone(), None)).collect(),

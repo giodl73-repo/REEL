@@ -62,7 +62,21 @@ guard remains unchanged. The revised build still needs actual qualification.
 The revised build passes strict native Clippy, all 37 default native tests and
 the CLI help check. Its reader also reopens both original v1 part results with
 actual retained-owner verification. All 31 shared source/Cargo files match the
-65-test shared source snapshot. Its complete-issue fixture is still running.
+65-test shared source snapshot. It admitted the child with 119 declared objects,
+then refused staging because that entrypoint still selected `comic-render`.
+The admitted WorkRef, activation, original attempt, input ticket and capacity
+reservation remain preserved.
+
+The staging and guarded publication-input entrypoints now use explicit producer
+dispatch. An additional recovery fixture reopens the original claim and ticket,
+copies machine profiles pointing to the exact original frozen runtime, completes
+input export with the corrected Rust adapter, and invokes that original runtime
+for production and lifecycle effects. It creates no replacement admission or
+attempt. A separate fresh fixture checks the corrected executable independently.
+Both end-to-end checks are pending; all 37 default tests and strict Clippy pass
+on this corrected build.
 
 Initial failure and regression evidence is in
 `F:/src/tig-dev-temp/reel-workflow-native-issue-20261118-v1`.
+The admitted staging refusal and cross-version readback are in `...-v2`;
+original-operation recovery and corrected fresh-run evidence are in `...-v3`.
