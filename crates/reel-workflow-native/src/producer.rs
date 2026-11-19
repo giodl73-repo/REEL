@@ -6,6 +6,19 @@ use reel_workflow::{
 };
 use std::{collections::BTreeMap, fs::File, path::Path};
 
+/// Shared by dispatch admission and worker execution; keep this exhaustive.
+pub(crate) fn available(capability: ToolCapability) -> bool {
+    match capability {
+        ToolCapability::FilmRender => cfg!(all(windows, feature = "film")),
+        ToolCapability::ComicRender
+        | ToolCapability::ComicIssueAssembly
+        | ToolCapability::ComicIssueControl
+        | ToolCapability::ComicReviewControl
+        | ToolCapability::FilmSceneControl
+        | ToolCapability::RepairResolution => true,
+    }
+}
+
 fn capability(packet: &Packet) -> Result<ToolCapability> {
     packet
         .task

@@ -12,6 +12,9 @@ use reel_workflow::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use tig_core::Object;
+#[cfg(test)]
+#[path = "resolution_recovery_tests.rs"]
+mod recovery_tests;
 pub const REQUEST_ID: &str = "control/resolution-request";
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

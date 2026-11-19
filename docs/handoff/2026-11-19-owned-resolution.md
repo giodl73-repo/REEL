@@ -70,3 +70,20 @@ to represent exactly the same object closure with fewer record/metadata objects.
 The 128-change limit remains intact; no split admission, omitted resource or new
 cache is introduced. A new fixture is permitted because the original never
 accepted a protection work/activation or published controls.
+
+The stream-based second fixture admitted 68 declared objects and published its
+two controls, then refused automatic dispatch with
+`dispatch-qualified-tool-required`. The original runtime omitted
+`RepairResolution` from two independent dispatch/worker capability lists, while
+its producer, return verifier and retained proof already supported the capability.
+The accepted job `.tmp4xlWag` and source `.tmpRWRuor` remain bound to runtime
+`b8986dff2b407061c5ed1eebb79b25aed66b309d56d6d97d6a71cbb1b7b42fba`.
+Its protection must not be discarded or its runtime silently replaced.
+
+Dispatch and worker admission now share an exhaustive capability function. An
+explicit ignored recovery fixture prepares a manual deterministic return for the
+original task, then invokes its original pinned lifecycle executable to
+independently recompute, import, retain and replay it. This is manual return
+recovery, not evidence that the original automatic worker ran. It creates no new
+admission and checks the original packet/profile/receipt and all three parent
+claim files remain unchanged. Its actual result is recorded after execution.

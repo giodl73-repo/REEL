@@ -7,6 +7,44 @@ use reel_workflow::{ErrorKind, Operation, Plan, Result, ToolCapability, handoff:
 use serde::{Deserialize, Serialize};
 use std::{fs, io::Write, path::Path};
 
+#[cfg(test)]
+mod capability_tests {
+    use super::*;
+    #[test]
+    fn resolution_dispatch_accepts_owned_workers_only() {
+        let stage = staging::Profile {
+            schema: "reel.workflow-staging.v1".into(),
+            parent: "unused".into(),
+            maximum_bytes: 1,
+            capacity_policy: Default::default(),
+        };
+        let mut config = Config {
+            schema: "reel.workflow-dispatch.v1".into(),
+            input_staging: stage.clone(),
+            worker_staging: Some(stage),
+            provider: None,
+            auxiliary_programs: Default::default(),
+        };
+        config
+            .check_operation(
+                Operation::DeterministicTool,
+                Some(ToolCapability::RepairResolution),
+            )
+            .unwrap();
+        config.worker_staging = None;
+        assert_eq!(
+            config
+                .check_operation(
+                    Operation::DeterministicTool,
+                    Some(ToolCapability::RepairResolution)
+                )
+                .unwrap_err()
+                .code,
+            "dispatch-operation-mode"
+        );
+    }
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -31,16 +69,7 @@ impl Config {
         {
             return Err(error(ErrorKind::Invalid, "dispatch-operation-mode"));
         }
-        if capability.is_some_and(|c| {
-            !(matches!(
-                c,
-                ToolCapability::ComicRender
-                    | ToolCapability::ComicIssueAssembly
-                    | ToolCapability::ComicIssueControl
-                    | ToolCapability::ComicReviewControl
-                    | ToolCapability::FilmSceneControl
-            ) || (cfg!(all(windows, feature = "film")) && c == ToolCapability::FilmRender))
-        }) {
+        if capability.is_some_and(|c| !crate::producer::available(c)) {
             return Err(error(
                 ErrorKind::Unsupported,
                 "dispatch-qualified-tool-required",

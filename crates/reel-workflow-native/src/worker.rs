@@ -92,15 +92,7 @@ fn context(selected: &graph::Selection) -> Result<&reel_workflow::ToolContract> 
         .as_ref()
         .ok_or_else(|| error(ErrorKind::Unsupported, "worker-deterministic-tool-required"))?;
     if packet.task.operation != reel_workflow::Operation::DeterministicTool
-        || !(matches!(
-            tool.capability,
-            ToolCapability::ComicRender
-                | ToolCapability::ComicIssueAssembly
-                | ToolCapability::ComicIssueControl
-                | ToolCapability::ComicReviewControl
-                | ToolCapability::FilmSceneControl
-        ) || (cfg!(all(windows, feature = "film"))
-            && tool.capability == ToolCapability::FilmRender))
+        || !crate::producer::available(tool.capability)
         || tool.executable.sha256 != selected.profile.runtime.sha256
         || tool.executable.bytes != selected.profile.runtime.bytes
     {
