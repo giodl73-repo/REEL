@@ -133,32 +133,42 @@ fn proxy_dispatch_requires_declared_evidence_and_native_inputs_before_network_ef
 #[test]
 #[ignore = "Existing declared native pool and synthetic local HTTP only: protected call, retained evidence, original-call fencing and uncertainty preservation"]
 fn protected_proxy_call_retains_request_response_and_config_and_never_reissues_uncertainty() {
-    run_case(false, false, false);
+    run_case(false, false, false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and synthetic local HTTP only: uncertain response cannot become another call; preserves roots"]
 fn protected_proxy_uncertain_response_preserves_original_call_and_claims() {
-    run_case(true, false, false);
+    run_case(true, false, false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and synthetic timed speech HTTP only; preserves original roots"]
 fn protected_timed_speech_retains_original_alignment_and_replays_without_synthesis() {
-    run_case(false, true, false);
+    run_case(false, true, false, false);
 }
 #[test]
 #[ignore = "Existing declared native pool and truncated timed speech HTTP only; preserves original claims"]
 fn protected_timed_speech_uncertainty_keeps_service_identifiers_without_reissue() {
-    run_case(true, true, false);
+    run_case(true, true, false, false);
 }
 #[test]
 #[ignore = "Existing synthetic native pool and literal loopback Images API edit only; one request, PNG validation, retained evidence and replay"]
 fn protected_openai_image_edit_retains_candidate_and_replays_without_another_call() {
-    run_case(false, false, true);
+    run_case(false, false, true, false);
 }
 #[test]
 #[ignore = "Existing synthetic native pool and truncated loopback Images API reply only; preserves original request ID, prefix and claims"]
 fn protected_openai_image_uncertainty_preserves_original_call_without_reissue() {
-    run_case(true, false, true);
+    run_case(true, false, true, false);
+}
+#[test]
+#[ignore = "Existing native pool and synthetic Responses HTTP only; retains original operation and text evidence"]
+fn protected_openai_text_retains_candidate_and_replays_without_another_call() {
+    run_case(false, false, false, true);
+}
+#[test]
+#[ignore = "Existing native pool and truncated Responses HTTP only; preserves original claims and call"]
+fn protected_openai_text_uncertainty_preserves_original_call_without_reissue() {
+    run_case(true, false, false, true);
 }
 pub(super) fn image_png(size: u32, blue: bool) -> Vec<u8> {
     let mut pix = resvg::tiny_skia::Pixmap::new(size, size).unwrap();
@@ -297,7 +307,7 @@ fn speech_inputs(fixture: &mut Fixture) -> Vec<(String, Vec<u8>)> {
     }
     raw_inputs
 }
-fn run_case(uncertain: bool, speech: bool, image: bool) {
+fn run_case(uncertain: bool, speech: bool, image: bool, text: bool) {
     let descriptor =
         std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE");
     let value: serde_json::Value = serde_json::from_slice(&fs::read(descriptor).unwrap()).unwrap();
@@ -334,6 +344,34 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
         );
     }
     fixture.repin();
+    if text {
+        fixture.packet.task.id = "text-proposal".into();
+        fixture.packet.task.operation = reel_workflow::Operation::TextProposal;
+        fixture.packet.task.prompt = "Propón una frase en español.".into();
+        fixture.packet.task.outputs.retain(|n, _| {
+            [
+                "provider-request.json",
+                "provider-response.json",
+                "provider-config.json",
+            ]
+            .contains(&n.as_str())
+        });
+        for (n, m) in [
+            ("candidate.txt", "text/plain"),
+            ("text.json", "application/json"),
+            ("http.json", "application/json"),
+        ] {
+            fixture.packet.task.outputs.insert(
+                n.into(),
+                OutputContract {
+                    media_type: m.into(),
+                    max_bytes: 1024 * 1024,
+                    required: true,
+                },
+            );
+        }
+        fixture.repin();
+    }
     let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
     case.temp.disable_cleanup(true);
     let control = case.source.source.pool.control.clone();
@@ -438,6 +476,8 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
             "/v1/text-to-speech/fixture/with-timestamps?output_format=pcm_8000&enable_logging=true"
         } else if image {
             "/v1/images/edits"
+        } else if text {
+            "/v1/responses"
         } else {
             "/generate"
         }
@@ -496,6 +536,20 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
                 .unwrap();
             assert_eq!(Object::from_bytes(&input), expected);
             serde_json::to_vec(&json!({"created":123,"output_format":"png","background":"opaque","size":"1024x1024","data":[{"b64_json":STANDARD.encode(image_png(1024,true))}],"usage":{"input_tokens":1}})).unwrap()
+        } else if text {
+            assert!(header.starts_with("POST /v1/responses HTTP/1.1"));
+            assert_eq!(request["model"], "declared-text-model");
+            assert_eq!(request["instructions"], "Propón una frase en español.");
+            assert_eq!(request["store"], false);
+            assert_eq!(request["tools"], json!([]));
+            assert_eq!(request["input"][0]["content"].as_array().unwrap().len(), 1);
+            assert!(
+                request["input"][0]["content"][0]["text"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Propón")
+            );
+            serde_json::to_vec(&json!({"object":"response","id":"resp_fixture","model":"reported-text-model","status":"completed","error":null,"incomplete_details":null,"output":[{"type":"reasoning","summary":[]},{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"¡La luz sigue!\n","annotations":[]}]}]})).unwrap()
         } else {
             assert_eq!(request["schema"], "reel.workflow-proxy-request.v1");
             let input = STANDARD
@@ -505,7 +559,7 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
             serde_json::to_vec(&json!({"schema":"reel.workflow-proxy-response.v1","operation_id":request["operation_id"],"provider":"synthetic-proxy","model":"fixture-model","outputs":{"note":{"media_type":"text/plain","base64":STANDARD.encode(b"synthetic provider result")}}})).unwrap()
         };
         let length = raw.len() + if uncertain { 10 } else { 0 };
-        if image {
+        if image || text {
             write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nx-request-id: fixture-openai-request\r\nConnection: close\r\n\r\n").unwrap();
         } else {
             write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {length}\r\nrequest-id: fixture-request\r\nhistory-item-id: fixture-history\r\nConnection: close\r\n\r\n").unwrap();
@@ -522,13 +576,15 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
                 Some(provider::Service::ElevenlabsTimed {spec:serde_json::from_value(json!({"schema":"reel.elevenlabs-timed.v1","voice_id":"fixture","language":"es","cue_id":"cue-1","text_input":"speech/text","models_input":"speech/models","admission_input":"speech/admission","decision_input":"speech/decision","sample_rate":8000,"enable_logging":true,"seed":17,"voice_settings":{"stability":0.5,"similarity_boost":0.5,"style":0.0,"speed":1.0,"use_speaker_boost":false},"segments":["¡Sí!"]})).unwrap()})
             } else if image {
                 Some(provider::Service::OpenaiImage {spec:serde_json::from_value(json!({"schema":"reel.openai-image.v1","references":["image/reference"],"mask":null,"size":[1024,1024],"quality":"high","background":"opaque"})).unwrap()})
+            } else if text {
+                Some(provider::Service::OpenaiText {spec:serde_json::from_value(json!({"schema":"reel.openai-text.v1","format":"text","output":"candidate.txt","max_output_tokens":2048})).unwrap()})
             } else {
                 None
             },
             schema: "reel.workflow-provider-proxy.v1".into(),
             provider: if speech {
                 "elevenlabs"
-            } else if image {
+            } else if image || text {
                 "openai"
             } else {
                 "synthetic-proxy"
@@ -538,20 +594,26 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
                 "eleven_v4"
             } else if image {
                 "gpt-image-2.5-sunburst-2026-09-08"
+            } else if text {
+                "declared-text-model"
             } else {
                 "fixture-model"
             }
             .into(),
-            send_inputs: vec![
-                if speech {
-                    "speech/text"
-                } else if image {
-                    "image/reference"
-                } else {
-                    "input/source"
-                }
-                .into(),
-            ],
+            send_inputs: if text {
+                vec![]
+            } else {
+                vec![
+                    if speech {
+                        "speech/text"
+                    } else if image {
+                        "image/reference"
+                    } else {
+                        "input/source"
+                    }
+                    .into(),
+                ]
+            },
             http: reel_workflow_http::Config {
                 schema: "reel.workflow-http.v1".into(),
                 endpoint,
@@ -618,7 +680,7 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
         assert_eq!(head["request_id"], "fixture-request");
         assert_eq!(head["history_item_id"], "fixture-history");
     }
-    if image {
+    if image || text {
         let head: serde_json::Value =
             decode(&fs::read(workspace.join("http-head.json")).unwrap()).unwrap();
         assert_eq!(head["request_id"], "fixture-openai-request");
@@ -688,6 +750,18 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
             assert!(result.artifacts.contains_key(name));
         }
         assert_eq!(result.provenance.mode, Mode::Direct);
+        if text {
+            assert_eq!(result.artifacts.len(), 6);
+            assert_eq!(
+                fs::read(workspace.join("packet/candidate.txt")).unwrap(),
+                "¡La luz sigue!\n".as_bytes()
+            );
+            let meta: serde_json::Value =
+                decode(&fs::read(workspace.join("packet/text.json")).unwrap()).unwrap();
+            assert_eq!(meta["requested_model"], "declared-text-model");
+            assert_eq!(meta["reported_model"], "reported-text-model");
+            assert_eq!(meta["approved"], false);
+        }
         if speech {
             assert_eq!(result.artifacts.len(), 9);
             for name in reel_workflow_http::elevenlabs::OUTPUTS
@@ -727,6 +801,6 @@ fn run_case(uncertain: bool, speech: bool, image: bool) {
     if let Some(evidence) = evidence {
         fs::write(evidence.join("first.json"), first.stdout).unwrap();
         fs::write(evidence.join("replay.json"), second.stdout).unwrap();
-        fs::write(evidence.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,"uncertain":uncertain,"openai_image":image,"calls":1,"no_repeat_on_replay":true,"claims_preserved":true,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
+        fs::write(evidence.join("qualification-result.json"),serde_json::to_vec(&json!({"root":root,"source":fixture.temp.path(),"workspace":workspace,"uncertain":uncertain,"openai_image":image,"openai_text":text,"calls":1,"no_repeat_on_replay":true,"claims_preserved":true,"selected":false,"scratch_retired":false})).unwrap()).unwrap();
     }
 }

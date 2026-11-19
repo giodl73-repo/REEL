@@ -81,6 +81,9 @@ pub enum Service {
     OpenaiImage {
         spec: reel_workflow_http::openai_image::Spec,
     },
+    OpenaiText {
+        spec: reel_workflow_http::openai_text::Spec,
+    },
 }
 #[cfg(test)]
 mod image_context_tests {
@@ -159,6 +162,51 @@ mod image_context_tests {
         assert_eq!(
             check(&packet, &config).unwrap_err().code,
             "openai-image-output-contract"
+        );
+        config.service = Some(Service::OpenaiText { spec: serde_json::from_value(serde_json::json!({"schema":"reel.openai-text.v1","format":"text","output":"candidate.txt","max_output_tokens":1024})).unwrap() });
+        config.model = "declared-text-model".into();
+        config.http.endpoint = "http://127.0.0.1:9/v1/responses".into();
+        packet.task.operation = Operation::TextProposal;
+        packet.task.outputs = [
+            ("candidate.txt", "text/plain"),
+            ("text.json", "application/json"),
+            ("http.json", "application/json"),
+            (REQUEST, "application/json"),
+            (RESPONSE, "application/json"),
+            (CONFIG, "application/json"),
+        ]
+        .into_iter()
+        .map(|(n, m)| {
+            (
+                n.into(),
+                reel_workflow::OutputContract {
+                    media_type: m.into(),
+                    max_bytes: 1024 * 1024,
+                    required: true,
+                },
+            )
+        })
+        .collect();
+        check(&packet, &config).unwrap();
+        packet.task.inputs[0].media_type = "video/mp4".into();
+        assert_eq!(
+            check(&packet, &config).unwrap_err().code,
+            "openai-text-native-context"
+        );
+        config.send_inputs.clear();
+        check(&packet, &config).unwrap();
+        packet.task.operation = Operation::ImageCandidate;
+        assert_eq!(check(&packet, &config).unwrap_err().kind, ErrorKind::Denied);
+        packet.task.operation = Operation::TextProposal;
+        packet
+            .task
+            .outputs
+            .get_mut("candidate.txt")
+            .unwrap()
+            .media_type = "application/json".into();
+        assert_eq!(
+            check(&packet, &config).unwrap_err().code,
+            "openai-text-output-contract"
         );
     }
 }
@@ -316,6 +364,62 @@ pub(crate) fn check(packet: &Packet, c: &Config) -> Result<()> {
             })
         {
             return Err(error(ErrorKind::Invalid, "openai-image-output-contract"));
+        }
+    }
+    if let Some(Service::OpenaiText { spec }) = &c.service {
+        spec.check(&c.model)?;
+        spec.check_endpoint(&c.http)?;
+        let operation = match spec.format {
+            reel_workflow_http::openai_text::Format::Text => Operation::TextProposal,
+            reel_workflow_http::openai_text::Format::ReviewReport => Operation::ReviewReport,
+        };
+        if c.provider != "openai"
+            || packet.task.operation != operation
+            || c.send_inputs.iter().any(|id| {
+                packet
+                    .task
+                    .inputs
+                    .iter()
+                    .find(|a| &a.logical_id == id)
+                    .is_none_or(|a| {
+                        !["text/plain", "application/json", "image/png"]
+                            .contains(&a.media_type.as_str())
+                    })
+            })
+        {
+            return Err(error(ErrorKind::Denied, "openai-text-native-context"));
+        }
+        let names = BTreeSet::from([
+            spec.output.as_str(),
+            "text.json",
+            "http.json",
+            REQUEST,
+            RESPONSE,
+            CONFIG,
+        ]);
+        if packet
+            .task
+            .outputs
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            != names
+            || packet.task.outputs.iter().any(|(n, o)| {
+                !o.required
+                    || o.media_type
+                        != if n == &spec.output {
+                            spec.media_type()
+                        } else {
+                            "application/json"
+                        }
+            })
+            || [spec.output.as_str(), "text.json", "http.json"]
+                .iter()
+                .any(|n| {
+                    packet.task.outputs[*n].max_bytes > reel_workflow::MAX_CONTROL_BYTES as u64
+                })
+        {
+            return Err(error(ErrorKind::Invalid, "openai-text-output-contract"));
         }
     }
     for (name, limit) in [
@@ -721,6 +825,30 @@ pub fn run_file(
                 &inputs,
                 ticket.config.http.request_byte_limit,
             )?
+        } else if let Some(Service::OpenaiText { spec }) = &ticket.config.service {
+            let inputs = ticket
+                .packet
+                .task
+                .inputs
+                .iter()
+                .filter(|a| ticket.config.send_inputs.contains(&a.logical_id))
+                .map(|a| {
+                    (
+                        a.logical_id.clone(),
+                        reel_workflow_http::openai_text::Input {
+                            artifact: a,
+                            bytes: &raw_inputs[&a.logical_id],
+                        },
+                    )
+                })
+                .collect();
+            spec.request(
+                &ticket.config.model,
+                &ticket.packet.task.prompt,
+                &inputs,
+                review_brief.as_ref(),
+                ticket.config.http.request_byte_limit,
+            )?
         } else {
             let inputs: Vec<_> = ticket
                 .config
@@ -888,6 +1016,23 @@ pub fn run_file(
         let observed: reel_workflow_http::ResponseHead = reel_workflow::decode(&head)?;
         if observed.schema != "reel.workflow-http-head.v1" || observed.status != complete.status {
             return Err(error(ErrorKind::Integrity, "openai-image-http-head"));
+        }
+        outputs.insert("http.json".into(), head);
+        outputs
+    } else if let Some(Service::OpenaiText { spec }) = &ticket.config.service {
+        let mut outputs = spec.normalize(
+            &ticket.config.model,
+            &request,
+            &response,
+            ticket.packet.task.outputs[&spec.output].max_bytes,
+        )?;
+        let (head, _guard) = read_held(
+            &root.join("http-head.json"),
+            reel_workflow::MAX_CONTROL_BYTES as u64,
+        )?;
+        let observed: reel_workflow_http::ResponseHead = reel_workflow::decode(&head)?;
+        if observed.schema != "reel.workflow-http-head.v1" || observed.status != complete.status {
+            return Err(error(ErrorKind::Integrity, "openai-text-http-head"));
         }
         outputs.insert("http.json".into(), head);
         outputs

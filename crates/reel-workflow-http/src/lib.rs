@@ -2,6 +2,7 @@
 //! normalization/publication and uncertain-operation reconciliation.
 pub mod elevenlabs;
 pub mod openai_image;
+pub mod openai_text;
 pub mod raster;
 pub mod tracker;
 use reel_workflow::{Error, ErrorKind, Result};
