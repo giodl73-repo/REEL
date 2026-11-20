@@ -27,6 +27,32 @@ the old admission must be fenced. Finally it checks the old control's retained
 bytes and final issue history after reuse. Results are pending until this fixture
 actually completes; compilation or preview is not close/reuse evidence.
 
+## Applied close checkpoint and bounded continuation
+
+The first frozen fixture completed the identical-ticket/actual-checkpoint preview
+check, staged the original handoff, injected a Prepared-stage interruption and
+recovered the original close. `closed.json` reports applied, original clear
+complete and slot idle; replay returned the same handoff/clear WorkRefs. The
+143.86-second fixture then failed while constructing the next planning packet:
+it added a nonempty prompt to a deterministic tool task, which the task contract
+correctly rejects. No next packet/profile/receipt/journal or reuse admission was
+created. This is a fixture error after successful close, not a completed reuse
+qualification. Preserve the original log and close outputs.
+
+The corrected fixture uses the unchanged task definition with a fresh explicit
+attempt and operation after completed close. The task key therefore stays equal;
+activation and attempt must differ. This tests fencing even when task bytes are
+identical. It is deliberate next-generation admission after a completed original
+operation, not an uncertain original attempt restarted under a fresh identity.
+
+`intent_close_native::continue_original_closed_v2_control_into_explicit_slot_reuse`
+checks the existing closed outcome, activation, WorkRefs, actual checkpoint and
+absence of later reuse artifacts, then continues only the reuse/history section.
+It does not stage or repeat the already completed close. The original runtime and
+ticket remain pinned; production Rust and SDK sources are unchanged. The explicit
+new attempt remains protected and Waiting after qualification; no new producer
+result is fabricated. Continuation results remain pending.
+
 An unchanged `claims.json` genesis header is not sufficient evidence that the
 append-only Index stayed unchanged. The new fixture compares the actual Index
 checkpoint and separately reopens the new generation's original admission.

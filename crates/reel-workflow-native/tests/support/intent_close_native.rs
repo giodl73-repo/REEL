@@ -181,16 +181,66 @@ fn retained_v2_control_close_reuses_the_slot_without_retargeting_original_histor
     let replay: closing::Outcome = load(&root.join("closed-replayed.json"));
     assert_eq!(replay.clear, closed.clear);
     assert_eq!(replay.handoff, closed.handoff);
+    reuse_closed_slot(&root, &ticket, &closed);
+}
+
+#[test]
+#[ignore = "Explicit completed original v2 close only; continues the same closed checkpoint into a new attempt, no repeated close or payload/scratch deletion"]
+fn continue_original_closed_v2_control_into_explicit_slot_reuse() {
+    let root = PathBuf::from(
+        std::env::var_os("REEL_INTENT_CLOSE_EVIDENCE").expect("original close evidence"),
+    );
+    assert!(root.is_absolute() && root.is_dir());
+    for name in [
+        "next-packet.json",
+        "next-admission-profile.json",
+        "next-receipt.json",
+        "next-journal",
+        "qualification-result.json",
+    ] {
+        assert!(
+            !root.join(name).exists(),
+            "later reuse checkpoint exists: {name}"
+        );
+    }
+    let ticket: closing::Ticket = load(&root.join("close-ticket.json"));
+    let closed: closing::Outcome = load(&root.join("closed.json"));
+    let replay: closing::Outcome = load(&root.join("closed-replayed.json"));
+    assert!(closed.applied && closed.slot_idle && closed.original_clear_complete);
+    assert_eq!(closed.operation, ticket.operation);
+    assert_eq!(
+        closed.activation,
+        ticket.profile.binding.admission.activation
+    );
+    assert_eq!(closed.clear, replay.clear);
+    assert_eq!(closed.handoff, replay.handoff);
+    assert_eq!(
+        checkpoint(&ticket.profile.admission, &replay.index_checkpoint),
+        canonical_digest(&replay.index_checkpoint).unwrap()
+    );
+    reuse_closed_slot(&root, &ticket, &closed);
+}
+
+fn reuse_closed_slot(root: &Path, ticket: &closing::Ticket, closed: &closing::Outcome) {
+    let profile = &ticket.profile;
+    assert_eq!(ticket.original.ticket.packet.project, "synthetic-comic");
+    assert_eq!(ticket.original.ticket.packet.task.id, "issue-control");
+    let executable = &profile.runtime.path;
+    assert_eq!(
+        digest(&fs::read(executable).unwrap()),
+        profile.runtime.sha256
+    );
+    let case = ticket.journal.parent().unwrap();
+    let pin = digest(&fs::read(root.join("close-ticket.json")).unwrap());
     let frozen = profile.source.snapshot.upstream.as_ref().unwrap();
     let mut tasks = frozen
         .parents
         .values()
         .map(|p| p.packet.task.clone())
         .collect::<Vec<_>>();
-    let mut task = ticket.original.ticket.packet.task.clone();
-    task.prompt
-        .push_str(" Explicit synthetic next-generation control admission after guarded close.");
-    tasks.push(task);
+    // Tool prompts stay empty. A fresh explicit attempt/operation after a
+    // completed close is a new actor generation even for an identical task.
+    tasks.push(ticket.original.ticket.packet.task.clone());
     let plan = Plan {
         schema: PLAN_SCHEMA.into(),
         task_snapshots: Default::default(),
@@ -204,7 +254,7 @@ fn retained_v2_control_close_reuses_the_slot_without_retargeting_original_histor
         ticket.original.ticket.packet.dependencies.clone(),
     )
     .unwrap();
-    assert_ne!(next_packet.task_key, ticket.original.ticket.packet.task_key);
+    assert_eq!(next_packet.task_key, ticket.original.ticket.packet.task_key);
     let mut next_profile: admission::Profile =
         serde_json::from_slice(&serde_json::to_vec(&profile.admission).unwrap()).unwrap();
     next_profile.scope.operation =
@@ -352,6 +402,7 @@ fn retained_v2_control_close_reuses_the_slot_without_retargeting_original_histor
         &root.join("qualification-result.json"),
         &json!({"schema":"reel.native-v2-control-close-qualification.v1","case_root":case,
         "old_task_key":ticket.original.ticket.packet.task_key,"new_task_key":next_packet.task_key,
+        "old_attempt":ticket.original.ticket.attempt_id,"new_attempt":"reuse-attempt-1",
         "old_slot_closed":true,"original_close_recovered":true,"new_generation_waiting":true,
         "old_close_preserves_actual_index_checkpoint":true,"old_admission_fenced":true,
         "old_control_native_result_verified":true,"original_issue_native_history_verified":true,
