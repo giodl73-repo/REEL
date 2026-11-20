@@ -276,6 +276,25 @@ pub(crate) struct Proof {
     pub(crate) files: Option<BTreeMap<String, Vec<u8>>>,
 }
 impl Proof {
+    pub(crate) fn review_copy(
+        &self,
+        packet: &Packet,
+        result: &ReturnedResult,
+    ) -> Result<reel_workflow::review::Export> {
+        let bound = self
+            ._generated
+            .bound
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Unsupported, "issue-review-assembly-required"))?;
+        let files = self
+            .files
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Unsupported, "issue-review-capture-required"))?;
+        let raw = files
+            .get("receipt.json")
+            .ok_or_else(|| error(ErrorKind::Missing, "issue-review-receipt"))?;
+        reel_workflow::issue::review_copy(bound, packet, result, raw, files)
+    }
     pub(crate) fn resolution(&self) -> Option<&crate::resolution::Proposal> {
         self._generated.resolution.as_ref()
     }

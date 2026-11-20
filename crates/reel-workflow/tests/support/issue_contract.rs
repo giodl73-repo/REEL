@@ -846,3 +846,81 @@ fn derived_v2_control_request_stays_fixed_across_unknown_future_part_bytes() {
     assert_eq!(assembly.bundles["opening"].sha256, carrier.sha256);
     assert_eq!(workflow.tasks[0].tool.as_ref().unwrap().request, original);
 }
+
+#[test]
+fn whole_issue_review_uses_captured_page_panel_balloon_and_reading_pins() {
+    let (workflow, mut memory, receipt) = fixture();
+    let packet = packet(&workflow);
+    let bound = reel_workflow::issue::bind(&packet, &mut memory).unwrap();
+    let raw = serde_json::to_vec(&receipt).unwrap();
+    let result = ReturnedResult {
+        schema: RESULT_SCHEMA.into(),
+        task_id: packet.task.id.clone(),
+        task_key: packet.task_key.clone(),
+        attempt_id: "issue-review-test".into(),
+        artifacts: receipt.outputs.clone(),
+        provenance: Provenance {
+            mode: Mode::Tool,
+            provider: None,
+            model: None,
+            executable: Some(packet.task.tool.as_ref().unwrap().executable.clone()),
+        },
+        worker_receipt: Some(Artifact {
+            logical_id: "issue/review-worker-receipt".into(),
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+            media_type: "application/json".into(),
+        }),
+    };
+    // Placeholder media establishes correspondence only; native replay separately
+    // verifies actual rendered reading pixels before issuing a native export.
+    let files: BTreeMap<String, Vec<u8>> = packet
+        .task
+        .tool
+        .as_ref()
+        .unwrap()
+        .source_bindings
+        .iter()
+        .map(|(path, id)| (path.clone(), memory.bytes[id].clone()))
+        .collect();
+    let exported =
+        reel_workflow::issue::review_copy(&bound, &packet, &result, &raw, &files).unwrap();
+    assert_eq!(exported.copy.source_commit, packet.source_commit);
+    assert_eq!(exported.copy.language, "es");
+    assert_eq!(exported.copy.units.len(), 3);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(exported.manifest.as_ref().unwrap()).unwrap();
+    assert_eq!(manifest["page_order"], serde_json::json!(["page01"]));
+    assert_eq!(
+        manifest["reading"]["page01"]["logical_id"],
+        "issue-demo/es/parts/opening/page01-reading.png"
+    );
+    assert!(exported.copy.units.values().any(|u| matches!(u,reel_workflow::review::Unit::Comic {page_id,panel_id:Some(panel),balloon_id:Some(balloon)} if page_id=="page01" && panel=="panel-a" && balloon=="line-a")));
+    let mut corrupted = files.clone();
+    corrupted
+        .get_mut("parts/opening/page01-reading.png")
+        .unwrap()
+        .push(0);
+    assert_eq!(
+        reel_workflow::issue::review_copy(&bound, &packet, &result, &raw, &corrupted)
+            .unwrap_err()
+            .code,
+        "issue-review-source-pin"
+    );
+    let mut missing = files.clone();
+    missing.remove("parts/opening/sources/pages/page01.json");
+    assert_eq!(
+        reel_workflow::issue::review_copy(&bound, &packet, &result, &raw, &missing)
+            .unwrap_err()
+            .code,
+        "issue-review-source"
+    );
+    let mut changed = packet.clone();
+    changed.task.id = "different-issue".into();
+    assert_eq!(
+        reel_workflow::issue::review_copy(&bound, &changed, &result, &raw, &files)
+            .unwrap_err()
+            .code,
+        "issue-review-original-task"
+    );
+}

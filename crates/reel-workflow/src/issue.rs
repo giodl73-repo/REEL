@@ -5,6 +5,9 @@ use reel_publication::{
     comic_issue_source::{Assembly, AssemblyReceipt, Plan as IssuePlan},
     comic_source::{Object, Pin, Receipt},
 };
+#[path = "issue_review.rs"]
+mod review_export;
+pub use review_export::review_copy;
 
 #[derive(Debug)]
 pub struct BoundIssue {
@@ -16,6 +19,7 @@ pub struct BoundIssue {
     pages: Vec<String>,
     output_bytes: u64,
     composition: Option<CompositionOrigins>,
+    review_plan: IssuePlan,
 }
 /// Expected logical origins, checked against frozen native upstream evidence by
 /// the managed adapter. Byte correspondence alone does not establish origin.
@@ -335,6 +339,7 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
         pages: pages.iter().map(|p| p.id.clone()).collect(),
         output_bytes: request.limits.output_bytes,
         composition,
+        review_plan: plan.clone(),
     })
 }
 

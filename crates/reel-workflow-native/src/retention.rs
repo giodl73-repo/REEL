@@ -298,6 +298,7 @@ pub fn review_copy(
     let retained = capture_comic(packet, source, profile, receipt, result, acknowledgement)?;
     let export = match retained._comic.as_ref() {
         Some(crate::producer::Proof::Comic(proof)) => proof.review_copy(packet, result)?,
+        Some(crate::producer::Proof::Issue(proof)) => proof.review_copy(packet, result)?,
         #[cfg(all(windows, feature = "film"))]
         Some(crate::producer::Proof::Movie(proof)) => proof.review_copy(packet, result)?,
         _ => {

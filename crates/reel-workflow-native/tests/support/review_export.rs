@@ -1,6 +1,91 @@
 //! Existing retained synthetic film/comic -> producer-derived review controls.
 use super::*;
 use reel_workflow_native::handoff;
+
+#[test]
+#[ignore = "Explicit retained synthetic whole issue only; complete native replay and review metadata export after control-slot reuse, no admission/production/selection effects"]
+fn retained_whole_issue_exports_all_page_panel_balloon_targets_after_control_reuse() {
+    use std::io::Write;
+    let root = PathBuf::from(
+        std::env::var_os("REEL_WHOLE_ISSUE_REVIEW_ROOT").expect("retained issue root"),
+    );
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_WHOLE_ISSUE_REVIEW_EVIDENCE").expect("new evidence directory"),
+    );
+    assert!(root.is_absolute() && evidence.is_absolute() && evidence.is_dir());
+    let packet: Packet =
+        serde_json::from_slice(&fs::read(root.join("issue-packet.json")).unwrap()).unwrap();
+    let profile: handoff::Profile =
+        serde_json::from_slice(&fs::read(root.join("issue-profile.json")).unwrap()).unwrap();
+    let result: ReturnedResult =
+        serde_json::from_slice(&fs::read(root.join("issue-result.json")).unwrap()).unwrap();
+    let acknowledgement: reel_workflow_native::retention::Acknowledgement =
+        serde_json::from_slice(&fs::read(root.join("issue-retained.json")).unwrap()).unwrap();
+    assert_eq!(packet.project, "synthetic-comic");
+    assert_eq!(packet.task.id, "issue-assemble");
+    assert_eq!(
+        packet.task.tool.as_ref().unwrap().capability,
+        ToolCapability::ComicIssueAssembly
+    );
+    let checkpoint = || {
+        let index = tig_store::source_claims::protection::Index::open(
+            &profile.admission.index_root,
+            &profile.binding.admission.index_checkpoint,
+        )
+        .unwrap();
+        canonical_digest(&index.checkpoint()).unwrap()
+    };
+    let before = checkpoint();
+    let exported = reel_workflow_native::retention::review_copy(
+        &packet,
+        &profile.source,
+        &profile.admission,
+        &profile.binding.admission,
+        &result,
+        &acknowledgement,
+    )
+    .unwrap();
+    let copy = exported.copy();
+    review::check_copy(copy).unwrap();
+    assert_eq!(
+        copy.format,
+        review::Format::Comic {
+            page_order: vec!["page01".into(), "page02".into()]
+        }
+    );
+    assert_eq!(copy.units.len(), 6);
+    assert_eq!(copy.source_commit, packet.source_commit);
+    assert_eq!(
+        copy.publication,
+        packet.task.tool.as_ref().unwrap().publication
+    );
+    let manifest: serde_json::Value = serde_json::from_slice(exported.manifest().unwrap()).unwrap();
+    assert_eq!(manifest["task_key"], packet.task_key);
+    assert_eq!(manifest["page_order"], json!(["page01", "page02"]));
+    for (page, part) in [("page01", "opening"), ("page02", "closing")] {
+        assert_eq!(
+            manifest["reading"][page]["logical_id"],
+            format!("synthetic-issue/es/parts/{part}/{page}-reading.png")
+        );
+        assert!(copy.units.values().any(|unit|matches!(unit,review::Unit::Comic {page_id,panel_id:Some(_),balloon_id:Some(_)} if page_id==page)));
+    }
+    assert_eq!(before, checkpoint());
+    let write_new = |name: &str, raw: &[u8]| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(evidence.join(name))
+            .unwrap();
+        file.write_all(raw).unwrap();
+        file.sync_all().unwrap();
+    };
+    write_new("review-copy.json", &serde_json::to_vec(copy).unwrap());
+    write_new("review-sources.json", exported.manifest().unwrap());
+    write_new("result.json",&serde_json::to_vec(&json!({"schema":"reel.native-whole-issue-review-qualification.v1",
+        "producer_task_key":packet.task_key,"source_commit":packet.source_commit,"pages":2,"units":copy.units.len(),
+        "reading":manifest["reading"],"actual_index_checkpoint_unchanged":true,"index_checkpoint_sha256":before,
+        "native_producer_verified":true,"derived_controls_retained":false,"viewing_verified":false,"approved":false,"selected":false})).unwrap());
+}
 #[test]
 #[ignore = "Existing retained synthetic movie/comic only; native output proof and private control export, no production or publication"]
 fn retained_film_and_comic_export_actual_targets_without_changing_claims() {
