@@ -59,3 +59,27 @@ handoff before worker execution.
 Preview v5 remains a pinned baseline package and does not contain this subsequent
 fix. Existing jobs keep their original runtime; new qualification uses a separate
 pinned admission coordinator rather than silently retargeting them.
+
+## Actual continuation
+
+The fixed coordinator is source `3ae161142259d1b4180af3d8d57519ed4c3884aa`,
+SHA256 `2537f822cfc2a94281ddf1e6d26556f586151439cbae28c41d3ba139a97857e0`.
+Its exact file pin is in the BBJ root's
+`reader-bound-admission-fix/coordinator-tool.json`. `baseline.json` records the
+original refusal and hashes of the unchanged recipe, config, bindings, runner
+intent and state-000 before any pending step existed.
+
+One `prepare-recipe-step` process was started at 11:22:10 local time on November
+20 (observed PID 3880; tool session 81206). It writes
+`reader-bound-admission-fix/prepare-result.json` and, only after successful
+preparation, `native-recipe/pending-001.json`. It was still live at the last
+observation. Revalidate that original process/result before any repeat call.
+No child acceptance has been requested yet. Do not mistake preparation for
+admission or a frozen control for an available idle actor.
+
+On successful preparation, compare the reported raw frozen SHA256 to the file
+bytes, then accept that exact original admission through this coordinator's
+`accept-expanded` command, with a new receipt in the fix directory. Preserve its
+original work and use `recover-expanded` on uncertainty. After acceptance,
+resume the original `a62c8257...` runner against its original directory/config
+and a separate new output log; do not rerun the producer under a fresh identity.
