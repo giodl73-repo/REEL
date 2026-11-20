@@ -40,6 +40,9 @@ mod frozen_expansion;
 #[path = "support/image_handoff.rs"]
 mod image_handoff_native;
 #[cfg(all(windows, feature = "film"))]
+#[path = "support/large_native_return.rs"]
+mod large_native_return;
+#[cfg(all(windows, feature = "film"))]
 #[path = "support/movie_close.rs"]
 mod movie_close;
 #[cfg(all(windows, feature = "film"))]
