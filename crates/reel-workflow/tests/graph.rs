@@ -301,6 +301,7 @@ fn expansion_template(plan: &Plan) -> expansion::Template {
         schema: "reel.workflow-expansion-template.v1".into(),
         base_plan_sha256: canonical_digest(plan).unwrap(),
         task: expansion::TaskTemplate {
+            streaming: None,
             id: "late-child".into(),
             operation: Operation::TextProposal,
             language: Some("es".into()),
@@ -318,6 +319,150 @@ fn expansion_template(plan: &Plan) -> expansion::Template {
             tool: None,
         },
     }
+}
+
+fn large_expansion_fixture() -> (Plan, expansion::Template, Fixture) {
+    let mut plan = plan();
+    plan.tasks[0].outputs.get_mut("note").unwrap().max_bytes = 4 * 1024 * 1024 * 1024;
+    let mut parent = job(
+        make_packet(&plan, "a", BTreeMap::new()).unwrap(),
+        State::Retained,
+    );
+    parent
+        .result
+        .as_mut()
+        .unwrap()
+        .artifacts
+        .get_mut("note")
+        .unwrap()
+        .bytes = 3_600_000_001;
+    let mut fixture = Fixture::default();
+    fixture.jobs.insert("a".into(), parent);
+    let mut template = expansion_template(&plan);
+    template.schema = "reel.workflow-expansion-template.v2".into();
+    template.task.streaming = Some(upstream::Streaming {
+        schema: "reel.workflow-upstream-streaming.v1".into(),
+        input_bytes: 4 * 1024 * 1024 * 1024,
+        input_object_bytes: 4 * 1024 * 1024 * 1024,
+    });
+    (plan, template, fixture)
+}
+#[test]
+fn streaming_expansion_pins_large_original_results_and_refuses_envelope_changes() {
+    let (plan, mut template, mut fixture) = large_expansion_fixture();
+    let expanded = expansion::prepare(&plan, &template, &mut fixture).unwrap();
+    assert_eq!(
+        expanded.upstream.as_ref().unwrap().schema,
+        "reel.workflow-upstream-inputs.v3"
+    );
+    assert_eq!(expanded.packet.task.inputs[0].bytes, 3_600_000_001);
+    assert_eq!(expanded.plan.tasks[..plan.tasks.len()], plan.tasks);
+    assert_eq!(
+        expanded.packet.dependencies["a"].result_sha256,
+        canonical_digest(fixture.jobs["a"].result.as_ref().unwrap()).unwrap()
+    );
+    let key = expanded.packet.task_key;
+    template.task.streaming.as_mut().unwrap().input_bytes += 1;
+    assert_ne!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .unwrap()
+            .packet
+            .task_key,
+        key
+    );
+    template.task.streaming.as_mut().unwrap().input_object_bytes -= 1;
+    template.task.streaming.as_mut().unwrap().input_bytes = 3_600_000_000;
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Budget
+    );
+    let (_, mut template, _) = large_expansion_fixture();
+    template.schema = "reel.workflow-expansion-template.v1".into();
+    assert!(expansion::prepare(&plan, &template, &mut fixture).is_err());
+    template.schema = "reel.workflow-expansion-template.v2".into();
+    template.task.inputs.clear();
+    assert_eq!(
+        expansion::prepare(&plan, &template, &mut fixture)
+            .err()
+            .unwrap()
+            .code,
+        "expansion-streaming-without-parent-inputs"
+    );
+}
+
+#[test]
+fn streaming_recipe_versions_and_existing_step_budget_are_exact() {
+    let (base, template, mut fixture) = large_expansion_fixture();
+    let mut recipe = recipe::Recipe {
+        schema: "reel.workflow-recipe.v1".into(),
+        base,
+        steps: vec![template.task],
+    };
+    assert_eq!(
+        recipe::check(&recipe).unwrap_err().code,
+        "recipe-streaming-version"
+    );
+    recipe.schema = "reel.workflow-recipe.v2".into();
+    let wave = recipe::inspect(&recipe, &recipe.base, 1, &mut fixture).unwrap();
+    assert_eq!(wave.proposals.len(), 1);
+    assert_eq!(
+        wave.proposals[0].template.schema,
+        "reel.workflow-expansion-template.v2"
+    );
+    let mut current = recipe.base.clone();
+    current.tasks.push(wave.proposals[0].packet.task.clone());
+    fixture.jobs.insert(
+        "late-child".into(),
+        job(wave.proposals[0].packet.clone(), State::Waiting),
+    );
+    assert_eq!(
+        recipe::inspect(&recipe, &current, 1, &mut fixture)
+            .unwrap()
+            .rows[0]
+            .state,
+        recipe::State::Existing
+    );
+    recipe.steps[0].streaming.as_mut().unwrap().input_bytes += 1;
+    let changed = recipe::inspect(&recipe, &current, 1, &mut fixture).unwrap();
+    assert_eq!(changed.rows[0].state, recipe::State::Refused);
+    assert_eq!(
+        changed.rows[0].error.as_ref().unwrap().code,
+        "recipe-original-step-template"
+    );
+}
+
+#[test]
+fn absent_streaming_keeps_legacy_template_and_recipe_bytes() {
+    let (recipe, mut fixture) = recipe_fixture();
+    let template = expansion_template(&recipe.base);
+    let raw = serde_json::to_value(&template).unwrap();
+    assert!(raw["task"].get("streaming").is_none());
+    let restored: expansion::Template = serde_json::from_value(raw.clone()).unwrap();
+    assert_eq!(serde_json::to_value(&restored).unwrap(), raw);
+    assert_eq!(
+        expansion::prepare(&recipe.base, &template, &mut fixture)
+            .unwrap()
+            .packet,
+        expansion::prepare(&recipe.base, &restored, &mut fixture)
+            .unwrap()
+            .packet
+    );
+    let raw = serde_json::to_value(&recipe).unwrap();
+    assert!(
+        raw["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|step| step.get("streaming").is_none())
+    );
+    let restored: recipe::Recipe = serde_json::from_value(raw).unwrap();
+    assert_eq!(
+        canonical_digest(&recipe).unwrap(),
+        canonical_digest(&restored).unwrap()
+    );
 }
 #[test]
 fn expansion_uses_exact_verified_parent_outputs_and_preserves_existing_tasks() {

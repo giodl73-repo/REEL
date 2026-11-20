@@ -43,9 +43,11 @@ profiles, parent retained-result checks and all existing object/actor/path
 limits remain independent. No source slot is implicitly released and no claim
 expires. Native SDK transfer/reopen deadlines remain unchanged.
 
-The current late-expansion template generator continues to author v1/v2
-bindings. A v3 binding must be explicitly authored and pinned; automatic large
-composition/recipe generation and complete film dispatch remain open.
+The original qualification below used explicitly authored v3 bindings.
+The subsequent [streaming expansion port](2026-11-19-streaming-expansion.md)
+now carries per-step settings through v2 templates/recipes and emits exact v3
+bindings. Automatic episode partitioning/composition and complete film dispatch
+remain open.
 
 ## Tests and qualification boundary
 

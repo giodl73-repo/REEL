@@ -730,6 +730,15 @@ streaming extensions and keep their serialized bytes. Snapshot/projection,
 producer and native SDK bounds still apply. See
 [retained dependency streams](../../docs/handoff/2026-11-19-streamed-upstream-inputs.md).
 
+Streaming dependency settings can be authored on `TaskTemplate.streaming` via
+`reel.workflow-expansion-template.v2` or a `reel.workflow-recipe.v2` step. The
+normal `expand-plan`/`schedule-recipe` paths emit upstream-inputs v3 and validate
+exact original parent bindings and allowances. Native pending-step recovery
+reconstructs that same template version. V1 templates/recipes refuse streaming
+extensions; omitted fields keep legacy serialization. These are explicit
+planning/admission inputs, not automatic episode partitioning or qualified v2
+film dispatch. See [streaming expansion](../../docs/handoff/2026-11-19-streaming-expansion.md).
+
 This is live borrowed custody. It is **not durable child admission**, waiting
 protection, task completion or permission to release parent history. Git-only
 source profiles refuse upstream-bound tasks; the explicit composite path below

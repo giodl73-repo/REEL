@@ -339,7 +339,7 @@ pub fn advance(
             .find(|s| s.id == frozen.expansion.packet.task.id)
             .ok_or_else(|| error(ErrorKind::Conflict, "runner-pending-template"))?;
         let template = reel_workflow::expansion::Template {
-            schema: "reel.workflow-expansion-template.v1".into(),
+            schema: authored.expansion_schema().into(),
             base_plan_sha256: reel_workflow::canonical_digest(&state.plan)?,
             task: authored.clone(),
         };

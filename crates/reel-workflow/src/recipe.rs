@@ -60,7 +60,10 @@ fn inputs(task: &TaskTemplate) -> Vec<&Input> {
 pub fn check(recipe: &Recipe) -> Result<()> {
     canonical_digest(recipe)?;
     check_plan(&recipe.base)?;
-    if recipe.schema != "reel.workflow-recipe.v1" {
+    if !matches!(
+        recipe.schema.as_str(),
+        "reel.workflow-recipe.v1" | "reel.workflow-recipe.v2"
+    ) {
         return fail(ErrorKind::Invalid, "recipe-schema");
     }
     if recipe.steps.is_empty() || recipe.steps.len() + recipe.base.tasks.len() > MAX_TASKS {
@@ -68,6 +71,18 @@ pub fn check(recipe: &Recipe) -> Result<()> {
     }
     let mut ids: BTreeSet<_> = recipe.base.tasks.iter().map(|t| t.id.as_str()).collect();
     for step in &recipe.steps {
+        if let Some(streaming) = &step.streaming {
+            if recipe.schema != "reel.workflow-recipe.v2" {
+                return fail(ErrorKind::Invalid, "recipe-streaming-version");
+            }
+            streaming.validate()?;
+            if !inputs(step)
+                .iter()
+                .any(|i| matches!(i, Input::Parent { .. }))
+            {
+                return fail(ErrorKind::Invalid, "recipe-streaming-without-parent-inputs");
+            }
+        }
         if !token(&step.id) || !ids.insert(&step.id) {
             return fail(ErrorKind::Conflict, "recipe-step-identity");
         }
@@ -321,7 +336,7 @@ pub fn inspect(
                 plan.clone()
             };
             let template = Template {
-                schema: "reel.workflow-expansion-template.v1".into(),
+                schema: step.expansion_schema().into(),
                 base_plan_sha256: canonical_digest(&base)?,
                 task: step.clone(),
             };

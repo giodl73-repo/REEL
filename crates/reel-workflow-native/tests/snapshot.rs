@@ -88,6 +88,9 @@ mod runner_native;
 #[path = "support/streamed_upstream.rs"]
 mod streamed_upstream_native;
 #[cfg(windows)]
+#[path = "support/streaming_expansion.rs"]
+mod streaming_expansion_native;
+#[cfg(windows)]
 #[path = "support/task_snapshots.rs"]
 mod task_snapshots_native;
 #[cfg(windows)]

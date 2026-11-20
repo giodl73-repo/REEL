@@ -30,6 +30,21 @@ pub struct Streaming {
     pub input_bytes: u64,
     pub input_object_bytes: u64,
 }
+impl Streaming {
+    pub fn validate(&self) -> Result<()> {
+        if self.schema != "reel.workflow-upstream-streaming.v1" {
+            return fail(ErrorKind::Invalid, "upstream-streaming-version");
+        }
+        if self.input_object_bytes == 0
+            || self.input_object_bytes > self.input_bytes
+            || self.input_object_bytes > 16 * 1024 * 1024 * 1024
+            || self.input_bytes > 64 * 1024 * 1024 * 1024
+        {
+            return fail(ErrorKind::Budget, "upstream-streaming-bounds");
+        }
+        Ok(())
+    }
+}
 #[derive(Clone, Debug)]
 pub struct BoundInput {
     pub reference: Reference,
@@ -47,16 +62,7 @@ impl Bindings {
                 Ok((64 * 1024 * 1024, 64 * 1024 * 1024))
             }
             ("reel.workflow-upstream-inputs.v3", Some(s)) => {
-                if s.schema != "reel.workflow-upstream-streaming.v1" {
-                    return fail(ErrorKind::Invalid, "upstream-streaming-version");
-                }
-                if s.input_object_bytes == 0
-                    || s.input_object_bytes > s.input_bytes
-                    || s.input_object_bytes > 16 * 1024 * 1024 * 1024
-                    || s.input_bytes > 64 * 1024 * 1024 * 1024
-                {
-                    return fail(ErrorKind::Budget, "upstream-streaming-bounds");
-                }
+                s.validate()?;
                 Ok((s.input_bytes, s.input_object_bytes))
             }
             _ => fail(ErrorKind::Invalid, "upstream-version-envelope"),

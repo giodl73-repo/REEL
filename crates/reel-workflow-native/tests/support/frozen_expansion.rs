@@ -25,6 +25,7 @@ fn freeze(fixture: &Fixture, case: &AdmissionCase) -> (Plan, Frozen) {
         schema: "reel.workflow-expansion-template.v1".into(),
         base_plan_sha256: canonical_digest(&base).unwrap(),
         task: TaskTemplate {
+            streaming: None,
             id: "expanded".into(),
             operation: task.operation,
             language: task.language.clone(),
@@ -352,6 +353,7 @@ pub(super) fn runner_configuration(
         ("after-one", "slot3", vec!["one".to_string()]),
     ] {
         steps.push(TaskTemplate {
+            streaming: None,
             id: id.into(),
             operation: task.operation,
             language: task.language.clone(),

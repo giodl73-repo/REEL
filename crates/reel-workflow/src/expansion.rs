@@ -40,6 +40,17 @@ pub struct TaskTemplate {
     pub inputs: Vec<Input>,
     pub outputs: OutputContracts,
     pub tool: Option<Tool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<upstream::Streaming>,
+}
+impl TaskTemplate {
+    pub fn expansion_schema(&self) -> &'static str {
+        if self.streaming.is_some() {
+            "reel.workflow-expansion-template.v2"
+        } else {
+            "reel.workflow-expansion-template.v1"
+        }
+    }
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -104,11 +115,13 @@ pub fn prepare(
     check_plan(plan)?;
     canonical_digest(template)?;
     let base = canonical_digest(plan)?;
-    if template.schema != "reel.workflow-expansion-template.v1" || template.base_plan_sha256 != base
-    {
+    if template.schema != template.task.expansion_schema() || template.base_plan_sha256 != base {
         return fail(ErrorKind::Stale, "expansion-base-plan");
     }
     let t = &template.task;
+    if let Some(streaming) = &t.streaming {
+        streaming.validate()?;
+    }
     if !token(&t.id) || plan.tasks.iter().any(|task| task.id == t.id) {
         return fail(ErrorKind::Conflict, "expansion-new-task-identity");
     }
@@ -253,9 +266,17 @@ pub fn prepare(
     } else {
         None
     };
+    if t.streaming.is_some() && upstream_inputs.is_empty() {
+        return fail(
+            ErrorKind::Invalid,
+            "expansion-streaming-without-parent-inputs",
+        );
+    }
     let upstream = (!upstream_inputs.is_empty()).then_some(upstream::Bindings {
-        streaming: None,
-        schema: if plan.schema == SCOPED_PLAN_SCHEMA {
+        streaming: t.streaming.clone(),
+        schema: if t.streaming.is_some() {
+            "reel.workflow-upstream-inputs.v3"
+        } else if plan.schema == SCOPED_PLAN_SCHEMA {
             "reel.workflow-upstream-inputs.v2"
         } else {
             "reel.workflow-upstream-inputs.v1"
@@ -295,6 +316,31 @@ pub fn prepare(
             .insert(t.id.clone(), plan.source_commit.clone());
     }
     let packet = make_packet(&expanded, &t.id, dependencies)?;
+    if t.streaming.is_some() {
+        let bindings = upstream.as_ref().ok_or_else(|| Error {
+            kind: ErrorKind::Missing,
+            code: "expansion-streaming-bindings".into(),
+        })?;
+        let parents = bindings
+            .inputs
+            .values()
+            .map(|reference| {
+                let job = &observations.jobs[&reference.task_id];
+                let result = job.result.as_ref().ok_or_else(|| Error {
+                    kind: ErrorKind::Missing,
+                    code: "expansion-parent-result".into(),
+                })?;
+                Ok((
+                    reference.task_id.clone(),
+                    upstream::Parent {
+                        packet: &job.ticket.packet,
+                        result,
+                    },
+                ))
+            })
+            .collect::<Result<BTreeMap<_, _>>>()?;
+        upstream::bind(&packet, bindings, &parents)?;
+    }
     let expansion = Expansion {
         schema: "reel.workflow-expansion.v1".into(),
         base_plan_sha256: base,

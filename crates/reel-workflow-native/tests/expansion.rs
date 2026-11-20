@@ -38,6 +38,7 @@ fn expansion_cli_exports_only_new_private_planning_controls_and_refuses_unretain
         schema: "reel.workflow-expansion-template.v1".into(),
         base_plan_sha256: canonical_digest(&plan).unwrap(),
         task: expansion::TaskTemplate {
+            streaming: None,
             id: "late-child".into(),
             operation: task.operation,
             language: task.language,

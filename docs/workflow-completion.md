@@ -83,6 +83,14 @@ and 31 HTTP tests, 247 SDK pins and strict Clippy checks pass. This qualifies th
 bounded borrowed-stream component, not native multi-GB intermediate custody or
 automatic large composition scheduling; no child admission or publication occurs.
 
+The [streaming expansion port](handoff/2026-11-19-streaming-expansion.md) now
+connects explicit per-step budgets to v2 templates/recipes, upstream v3 generation,
+native planning exports and pending-runner template reconstruction. Synthetic
+large-parent tests cover exact fingerprints, budget changes and existing-step
+refusal. This closes the need to hand-author v3 bindings for these planning
+paths; complete episode partitioning, native large-object admission/handoff,
+film execution and consumer-scale recovery remain open.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial
