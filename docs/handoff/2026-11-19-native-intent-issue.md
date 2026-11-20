@@ -1,5 +1,12 @@
 # Managed native intent-bound issue qualification
 
+The original admitted v2 issue recovered successfully after process loss. Its
+two retained part producers and retained derived control feed the final native
+assembly, which reached retained completion under the original task key and
+attempt. The 872.31-second recovery also passed bare-repository readback,
+editable export/reassembly and a lettering edit preserving clean art. This is
+bounded Windows/NTFS evidence for two synthetic Spanish pages.
+
 ## Original attempt and recovery checkpoint
 
 The explicit fixture
@@ -21,11 +28,10 @@ a timeout from this observation.
 
 The exact final task key is
 `61b26754d745a431e59527d25b4ac0d075e612080bb3876a48005e97de919d6f`.
-`issue-journal` contains the original Waiting ticket and no returned result.
-`input-ticket.json` and its owned workspace remain intact. There is no
-`ready.json`, worker workspace/ticket, final result or final acknowledgement.
-All original claims and scratch are preserved. Full lifecycle qualification
-remains open; restart of the whole fixture or re-admission is prohibited here.
+At interruption, `issue-journal` contained the original Waiting ticket and no
+returned result. `input-ticket.json` and its owned workspace remained intact;
+ready export, worker ticket, final result and acknowledgement were absent.
+Recovery continued these original handles rather than restarting the fixture.
 
 The bounded recovery entry `issue_native::resume_original_intent_issue_before_ready_export`
 validates that checkpoint, rebuilds the plan from frozen original parent
@@ -34,9 +40,54 @@ continues the same input ticket through ready export. It creates no new admissio
 or attempt and does not rewrite parent profiles. The control's original
 `control-profile.json`/`control-journal` names are used explicitly. Production
 Rust sources and SDK pins are unchanged from the original qualification source;
-only the recovery fixture and notes are added. Recovery results are pending.
+only the recovery fixture and notes are added. The exact checkpoint-specific
+recovery completed successfully. Do not rerun that entry after its later ready/
+worker checkpoints exist; use the actual current stage and original handles.
 
-Evidence root:
+## Retained result and verification
+
+Recovery source `0ded540a1813eedcc918fe905f67b28b1b868c7e` is archived with all
+1,955 tracked files individually hash/length verified. Source-manifest SHA256:
+`b23b05ad97c8c4f78157ee3a3a9d2e0f10419f5591dedc6b6fdfa3f5b1768a03`.
+The frozen recovery fixture is 44,383,232 bytes, SHA256
+`f7244fcbe08a2e0040069a9a05a8f8c216be21bacf79bef2ec0775d8953beb41`.
+The original native runtime below remains unchanged throughout recovery.
+
+Recovery evidence root:
+`F:/src/tig-dev-temp/reel-native-intent-issue-20261119-recovery-v1`.
+`process-result.json` records exit 0 at `2026-11-20T04:44:50Z`;
+`job/historical.json` records Retained, task completed, unselected, claims not
+released and scratch retirement not authorized. The original full-fixture
+process has no known terminal status; the successful assertion set is the
+explicit recovery of its original final job, not a fresh successful fixture run.
+
+Post-run verification checks the original packet/input-ticket and all three parent
+profiles against their before-recovery byte pins. The original admission and
+runtime remain equal; final result identity remains the same task/attempt.
+Captured intent SHA256 is
+`8fdd2dc5062d71b85e2d745d4f25a66c2489098d66963c99d4afe958cc8788ee`.
+Worker, exported and rebuilt PDF/transcript bytes match the retained result;
+edited clean-art PNG bytes remain equal while the lettering changes reading PNG
+bytes. `verified-result.json` SHA256:
+`6fe3be8c3be4daf80ae978ce2340bb15fe6f0734cb8b4a8125a9104aa90466a2`.
+`qualified-tools.json` pins 20 evidence/control files, SHA256
+`ec227b4f39b58fb1de5fa8755d9007116d6798ff7cbf1b4c6b44d5fb8e0697d5`.
+
+All 85 standard native tests pass (70 ignored fixtures excluded); the explicit
+original recovery passes separately. Strict all-target Clippy with/without film,
+all 247 vendored SDK source hashes/lengths and `git diff --check` pass.
+
+## Qualification bounds
+
+The history fixture simulates loss of final source-actor coverage only after
+retained verification. This is not guarded slot close/reuse or scratch retirement.
+Readback uses a bare repository locator; the original checkout remains on disk,
+so a checkout-unavailable scenario is not claimed. The owned locator switch does
+not establish runtime profile adoption/rollback. Larger/multilingual project
+issues, guarded close/reuse, runtime adoption/rollback and full S5 film production
+remain open. No S4/S5 production or real project selection was changed.
+
+Original evidence root:
 `F:/src/tig-dev-temp/reel-native-intent-issue-20261119-v1`.
 `tools-under-test.json` pins source/runtime/fixture before effects;
 `native-v2-test.log` records the original process. `process-result.json` is
@@ -77,7 +128,7 @@ The native input descriptor is the existing
 `d3b14db2732440ddc81a3fd05b0b9d8d690bb2af53654e9b4f65451405e9dec3`.
 The vendored qualified Tig SDK and native limits are unchanged. Native fixture
 compilation and strict all-target Clippy with film pass; these do not substitute
-for the in-progress lifecycle result.
+for the separate original-job recovery and retained-byte evidence above.
 
 Producer checklist scope follows `.roles/ROLE.md`, comics/editor and
 rights/provenance: actual ordered parts and source identity remain separate from

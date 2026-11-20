@@ -75,7 +75,11 @@ control hashes are pinned in the evidence root's `qualified-tools.json`, SHA256
 Its scope is local generated-control/render correspondence, not a lifecycle-
 qualified native distribution.
 
-Managed v2 admission/retention, post-close native history, larger project comics,
-film/conform order binding and full bilingual S5 production/adoption remain open.
+The [managed v2 issue recovery](2026-11-19-native-intent-issue.md) separately
+qualifies bounded native admission/retention and bare-history editable replay for
+two Spanish synthetic pages. It recovers the original interrupted final task,
+without a new admission/attempt or runtime adoption. Guarded close/reuse,
+post-close history, larger/multilingual project comics, film/conform order binding
+and full bilingual S5 production/adoption remain open.
 The preserved large-native ImportPending job and all existing profiles/claims
 remain outside this change.

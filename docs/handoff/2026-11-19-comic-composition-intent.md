@@ -88,6 +88,8 @@ No independent reviewer or human approval is claimed. No existing S4/S5 job,
 recording, approval, selection or owned runtime profile is changed. The preserved
 large-native ImportPending job is not retried. The Tig SDK remains unchanged.
 
-Remaining qualification: managed v2 comic lifecycle
+The [managed v2 issue recovery](2026-11-19-native-intent-issue.md) now qualifies
+the bounded two-page Spanish admission/retention, interrupted-task recovery and
+bare-history editable replay path. Remaining qualification: guarded close/reuse
 and post-close history, project-scale comics, film/conform order binding, full
 bilingual S5 composition/delivery and owned profile adoption/rollback.

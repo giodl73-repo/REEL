@@ -23,9 +23,11 @@ producer closure/order, admission and episode execution still require their
 separate proofs. It does not bypass the pending large-native recovery boundary.
 The additive [comic composition intent](handoff/2026-11-19-comic-composition-intent.md)
 now binds explicit v2 issue assembly requests to actual ordered parts and checks
-native frozen producer origins. Rendered editable replay and origin matcher tests
-cover that bounded integration; derived v2 control generation and managed v2
-lifecycle qualification remain open.
+native frozen producer origins. The derived control producer also generates v2
+requests, and [managed v2 recovery](handoff/2026-11-19-native-intent-issue.md)
+qualifies the bounded two-page Spanish path through original-job recovery,
+retained completion and bare-history editable replay. Guarded close/reuse,
+larger/multilingual project qualification and full film production remain open.
 
 ## Current implementation and boundary
 
