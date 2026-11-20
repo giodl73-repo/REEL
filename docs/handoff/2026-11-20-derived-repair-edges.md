@@ -91,7 +91,11 @@ source/history union counts, bytes, delta paths and original retention-work stat
 while reopening the original activation and validating completed response metadata.
 It neither reads native output payloads nor changes budgets, creates retention
 work, returns a job slot or acknowledges completion. Its opt-in pending-operation
-diagnostic still requires frozen qualification before deciding the recovery path.
+diagnostic is now [qualified](2026-11-20-retained-owner-capacity.md): 525 combined
+objects exceed 512; 270,429,684 logical bytes and 52 new paths remain within their
+respective 1 GiB / 128 limits. No original retention work is staged. Actual Index
+state and original controls remain unchanged. Bounded original-operation capacity
+recovery and complete corrected-issue retention still remain open.
 
 Producer-applied comics-editor and rights/provenance checklists preserve source
 wording, stable targets, exact lineage and private technical derivatives. They do

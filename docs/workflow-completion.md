@@ -615,6 +615,15 @@ claimed. Retention-owner aggregation counts need read-only qualification and a
 bounded original-operation recovery path. Neither widening a source budget,
 resetting the actor nor deleting retained history is an acceptable implicit retry.
 
+The [actual retained-capacity diagnosis](handoff/2026-11-20-retained-owner-capacity.md)
+now proves the exact obstruction: 525 unique source/history objects exceed 512;
+270,429,684 bytes and 52 changed paths stay within 1 GiB / 128. No original
+retention work is staged, and the original pending journal/activation/work and
+actual Index remain unchanged during the 1.37-second Rust/CLI inspection. All
+143 workflow and 86 standard native tests, 247 SDK pins and strict Clippy pass.
+The bounded cumulative-owner policy/original-operation recovery and full corrected
+issue remain unfinished; metadata inspection is not retained payload proof.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
