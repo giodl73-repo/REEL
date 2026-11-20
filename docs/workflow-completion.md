@@ -566,9 +566,14 @@ The [rooted part-repair contract](handoff/2026-11-19-rooted-part-repair.md) adds
 explicit changed branches for parts sharing master/plan records. It preserves
 other exact task packets and snapshots while rebuilding every dependent consumer
 and retaining full-issue/affected-language contextual requirements. Three new
-workflow tests pass (137 total), together with strict workflow Clippy. The opt-in
-native/local replay and export fixture still requires frozen-source qualification;
-corrected whole-issue native execution/retention and actual contextual review
+workflow tests pass (137 total), together with 86 standard native tests, all 247
+SDK pins and strict workflow/native Clippy. The frozen 87.28-second native/local
+fixture reopens actual original proofs, reproduces the original receipt/outputs,
+replays a two-page lettering candidate, preserves clean art and every closing-part
+byte, exports a rooted plan/two private drafts and refuses a stale report.
+Actual Index state and the other Waiting generation remain intact. This qualifies
+local replay/planning/export; its source declarations are explicitly pending.
+Corrected whole-issue native execution/retention and actual contextual review
 remain open. A planning candidate and private issue drafts close neither gate.
 
 The final audit must inspect every listed command, contract, named integration,

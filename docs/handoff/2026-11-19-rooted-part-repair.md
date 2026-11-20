@@ -42,6 +42,50 @@ IDs; changed reading pixels; and replay of both pages. It exports a rooted plan
 and two explicit private issue drafts through the actual CLI, refuses a stale
 report, compares the real Index checkpoint and reopens the other Waiting job.
 It makes no provider/tracker request, new admission, selection or closure.
+The frozen fixture passed in 87.28 seconds at source
+`67d2f38b9676caaa199a207528c609a121bd203e`. Its five-task rebuild is `opening`,
+`issue-control`, `issue-assemble`, `owned-issue-review-controls` and
+`whole-issue-structured-report`; `closing` retains its entire original packet.
+Only the page-one finding is targeted by the candidate. Both scripted findings
+have separate private drafts and neither is closed.
+
+The original request and worker receipt are read from their exact native pins.
+A first fixture at `ea34080622785943d12e3e799b94831d0c22078e` instead tried the
+restored local `source-assembly.json`: that reformatted copy was 1,278 bytes and
+failed the actual 994-byte request pin before candidate rendering/export. Its
+exit-101 log and source/tools remain in
+`F:/src/tig-dev-temp/reel-rooted-part-repair-20261119-v1`. The corrected fixture
+does not accept a repinned substitute or change the original operation. Native
+proof and exact controls precede local replay; the replayed receipt and both
+outputs must match the actual retained issue.
+
+All evidence is preserved under
+`F:/src/tig-dev-temp/reel-rooted-part-repair-20261119-v2`:
+
+- Source archive: 1,971 files verified against the clean tree; source-manifest
+  SHA256 `6bff396ef08e874974bbe645f00b41fb121aadd5046134eced5b48320fd4c9da`.
+- Frozen CLI: SHA256
+  `264efd3655caa8f0190ab00548e6daff3a3b2a7a457261fd7d27c68d46e12b9a`,
+  24,826,880 bytes. It performs read-only proof checks/private exports; it does not
+  replace the report's original lifecycle runtime.
+- Frozen fixture: SHA256
+  `c71fe4e1df6fffe30d81cc444151beac5f1d77e0590b42b80ca6b7373bcd94ea`,
+  29,616,128 bytes.
+- `qualified-report.json`: SHA256
+  `db0b900c09b0c795dbce1e41b257e5a8787257261faa1b84c1e4d3ea91125ae3`.
+  It pins the controls, generated local packet, drafts, source, tools and run.
+- `qualified-validation.json`: SHA256
+  `e0c7879a28e6058199c74f1d65ea6b36fc8f42bf3ee0d629130d8c1fb25b04d7`.
+  All 137 workflow tests and 86 standard native tests pass, with 78 opt-in native
+  tests excluded from that standard run; the rooted fixture is qualified
+  separately. All 247 SDK source pins and strict workflow/native Clippy checks
+  with both native feature modes pass.
+
+The actual native Index checkpoint remains
+`4ab1a854540d50c0eba060a46c12727519a1425548ff13c10b1728261eb374b1`, equal to
+the previous retained report qualification before and after this run. Original
+control/packet/result pins remain unchanged and the unrelated Waiting generation
+reopens. No active actor is closed, reused or retargeted by this qualification.
 
 The fixture's new Git commit contains authored candidate sources. Its pending
 native declaration files deliberately identify themselves as unqualified; they
