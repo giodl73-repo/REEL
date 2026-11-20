@@ -37,6 +37,51 @@ fn owner_policy_path(operation: &Key) -> Result<LogicalPath> {
 }
 
 impl Prepared {
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn read_recovered_policy(
+        &self,
+        receipt: &Receipt,
+        candidate: &Candidate,
+        target: &Target,
+        reference: &WorkRef,
+        request: &Object,
+        recovery: &crate::retention::capacity::Plan,
+        index: &mut Index,
+        nodes: &mut MetadataStore,
+    ) -> Result<()> {
+        recovery.check_recovered_request(request)?;
+        let record = self.retained_record(receipt, candidate, target, reference, nodes, index)?;
+        let present = entries(&record.update.selection, nodes)?;
+        let raw = recovery.canonical_bytes()?;
+        let object = Object::from_bytes(&raw);
+        let path = LogicalPath::parse(&format!("objects/{}", object.sha256.as_str()))
+            .map_err(|_| error(ErrorKind::Invalid, "close-retained-policy-path"))?;
+        if present.get(&path) != Some(&object)
+            || nodes
+                .get(&object)
+                .map_err(|_| error(ErrorKind::Integrity, "close-retained-policy-read"))?
+                .as_deref()
+                != Some(&raw)
+        {
+            return Err(error(
+                ErrorKind::Missing,
+                "close-original-retained-policy-evidence",
+            ));
+        }
+        let objects: BTreeSet<_> = present.into_values().collect();
+        let bytes = objects
+            .iter()
+            .try_fold(0u64, |sum, object| sum.checked_add(object.bytes));
+        if objects.len() > recovery.policy.objects
+            || bytes.is_none_or(|bytes| bytes > recovery.policy.logical_bytes)
+        {
+            return Err(error(
+                ErrorKind::Budget,
+                "close-original-retained-policy-bound",
+            ));
+        }
+        Ok(())
+    }
     /// Known-input/history lower bound only. Final response admission rechecks
     /// the complete union; no output capacity or future owner revision is held.
     pub(crate) fn check_retained_owner_policy(

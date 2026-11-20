@@ -68,13 +68,26 @@ pub struct Ticket {
     pub target: Target,
     pub runtime: Tool,
     pub operation: Key,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_owner_plan: Option<crate::retention::capacity::Plan>,
 }
 fn identity(ticket: &Ticket) -> Result<Key> {
-    Key::parse(&format!("workflow-close-{}",reel_workflow::canonical_digest(&serde_json::json!({
+    let mut subject = serde_json::json!({
         "schema":"reel.workflow-close-operation.v1","admission":ticket.profile.binding.admission.operation_identity()?,
         "result":ticket.original.result,"acknowledgement":ticket.acknowledgement.artifact()?,"target":ticket.target,
         "closer_sha256":ticket.runtime.sha256,"closer_bytes":ticket.runtime.bytes,
-    }))?)).map_err(|_|error(ErrorKind::Invalid,"close-operation-identity"))
+    });
+    if let Some(plan) = &ticket.retained_owner_plan {
+        subject["schema"] = serde_json::json!("reel.workflow-close-operation.v2");
+        subject["retained_owner_plan"] =
+            serde_json::to_value(Object::from_bytes(&plan.canonical_bytes()?))
+                .map_err(|_| error(ErrorKind::Invalid, "close-policy-object-json"))?;
+    }
+    Key::parse(&format!(
+        "workflow-close-{}",
+        reel_workflow::canonical_digest(&subject)?
+    ))
+    .map_err(|_| error(ErrorKind::Invalid, "close-operation-identity"))
 }
 fn current_runtime() -> Result<Tool> {
     let path = std::env::current_exe()
@@ -102,6 +115,30 @@ pub fn prepare(
     profile: handoff::Profile,
     target: Target,
 ) -> Result<(Ticket, Outcome)> {
+    prepare_inner(journal, profile, target, None)
+}
+pub fn prepare_with_retained_policy(
+    journal: &Path,
+    profile: handoff::Profile,
+    target: Target,
+    plan: crate::retention::capacity::Plan,
+    expected_sha256: &str,
+) -> Result<(Ticket, Outcome)> {
+    crate::retention::capacity::check_pin(&plan, expected_sha256)?;
+    if profile.binding.retained_owner_policy.is_some() {
+        return Err(error(
+            ErrorKind::Conflict,
+            "close-owner-policy-already-bound",
+        ));
+    }
+    prepare_inner(journal, profile, target, Some(plan))
+}
+fn prepare_inner(
+    journal: &Path,
+    profile: handoff::Profile,
+    target: Target,
+    retained_owner_plan: Option<crate::retention::capacity::Plan>,
+) -> Result<(Ticket, Outcome)> {
     let original = handoff::observe(journal, &profile)?;
     if original.state != State::Retained {
         return Err(error(ErrorKind::Denied, "close-retained-job-required"));
@@ -119,7 +156,12 @@ pub fn prepare(
     }
     let runtime = current_runtime()?;
     let mut ticket = Ticket {
-        schema: "reel.workflow-close-ticket.v1".into(),
+        schema: if retained_owner_plan.is_some() {
+            "reel.workflow-close-ticket.v2"
+        } else {
+            "reel.workflow-close-ticket.v1"
+        }
+        .into(),
         journal: journal.into(),
         profile,
         original: Original {
@@ -136,6 +178,7 @@ pub fn prepare(
         runtime,
         operation: Key::parse("pending-close-identity")
             .map_err(|_| error(ErrorKind::Invalid, "close-operation-key"))?,
+        retained_owner_plan,
     };
     ticket.operation = identity(&ticket)?;
     let preview = ticket.invoke(Action::Preview)?;
@@ -144,8 +187,10 @@ pub fn prepare(
 impl Ticket {
     fn invoke(&self, action: Action) -> Result<Outcome> {
         reel_workflow::canonical_digest(self)?;
-        if self.schema != "reel.workflow-close-ticket.v1"
-            || self.operation != identity(self)?
+        if !matches!(
+            (self.schema.as_str(), &self.retained_owner_plan),
+            ("reel.workflow-close-ticket.v1", None) | ("reel.workflow-close-ticket.v2", Some(_))
+        ) || self.operation != identity(self)?
             || self.acknowledgement.artifact()? != self.original.acknowledgement
             || self.acknowledgement.target != self.profile.binding.target
         {
@@ -175,12 +220,22 @@ impl Ticket {
             handoff::verify_observation(&self.journal, &self.profile, &observed)?;
         }
         let result = &self.original.result;
-        let owner_request = self
-            .profile
-            .binding
-            .retained_owner_policy
-            .as_ref()
-            .map(|policy| {
+        let policy = match (
+            &self.profile.binding.retained_owner_policy,
+            &self.retained_owner_plan,
+        ) {
+            (Some(_), Some(_)) => {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "close-owner-policy-already-bound",
+                ));
+            }
+            (Some(policy), None) => Some((policy, None)),
+            (None, Some(plan)) => Some((&plan.policy, Some(plan))),
+            (None, None) => None,
+        };
+        let owner_request = policy
+            .map(|(policy, recovered)| {
                 crate::retention::capacity::request(
                     &self.original.ticket.packet,
                     &self.profile.source,
@@ -189,7 +244,11 @@ impl Ticket {
                     result,
                     &self.profile.binding.target,
                 )
-                .map(|request| (policy, request))
+                .map(|request| crate::retention::capacity::ClosePolicy {
+                    policy,
+                    request,
+                    recovered,
+                })
             })
             .transpose()?;
         Prepared::open(
@@ -205,9 +264,7 @@ impl Ticket {
             &self.target,
             &self.operation,
             action,
-            owner_request
-                .as_ref()
-                .map(|(policy, request)| (*policy, request)),
+            owner_request.as_ref(),
         )
     }
     fn output(&self, path: &Path) -> Result<(reel_assets::jobs::WorkspaceDirectory, PathBuf)> {

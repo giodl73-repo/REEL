@@ -39,6 +39,14 @@ pub(crate) struct Observation {
     pub state: Object,
 }
 
+/// A close operation may consume an already-retained recovery policy without
+/// rewriting the original job's binding or lifecycle runtime.
+pub(crate) struct ClosePolicy<'a> {
+    pub policy: &'a Policy,
+    pub request: Object,
+    pub recovered: Option<&'a Plan>,
+}
+
 /// Private control data. A digest pin authenticates its exact bytes, not approval.
 /// Rechecking compares the original request and current native state atomically
 /// under source/target fences. Native execution stays with the original runtime.
@@ -56,6 +64,18 @@ pub struct Plan {
     pub required_changed_paths: usize,
 }
 impl Plan {
+    pub(crate) fn check_recovered_request(&self, request: &Object) -> Result<()> {
+        if self.schema != "reel.workflow-retained-capacity-plan.v1" || &self.request != request {
+            return Err(error(
+                ErrorKind::Conflict,
+                "retained-recovery-original-policy-binding",
+            ));
+        }
+        self.check_observation(Observation {
+            preview: self.observed.clone(),
+            state: self.state.clone(),
+        })
+    }
     pub(crate) fn check_owner_request(&self, request: &Object, policy: &Policy) -> Result<()> {
         if !self.is_owner_admission() || &self.request != request || &self.policy != policy {
             return Err(error(
@@ -340,7 +360,7 @@ pub fn recheck(
     compare(plan, &current)
 }
 
-fn check_pin(plan: &Plan, expected_sha256: &str) -> Result<()> {
+pub(crate) fn check_pin(plan: &Plan, expected_sha256: &str) -> Result<()> {
     if reel_workflow::digest(&plan.canonical_bytes()?) != expected_sha256 {
         return Err(error(ErrorKind::Integrity, "retained-capacity-plan-pin"));
     }
@@ -555,6 +575,37 @@ mod tests {
                 .unwrap_err()
                 .kind,
             ErrorKind::Conflict
+        );
+    }
+    #[test]
+    fn retained_recovery_policy_is_request_and_mode_bound_for_legacy_close() {
+        let recovered = build(observation(), policy()).unwrap();
+        recovered
+            .check_recovered_request(&recovered.request)
+            .unwrap();
+        assert_eq!(
+            recovered
+                .check_recovered_request(&Object::from_bytes(b"another job"))
+                .unwrap_err()
+                .code,
+            "retained-recovery-original-policy-binding"
+        );
+        let owner = Plan::build_owner(recovered.request.clone(), observation(), policy()).unwrap();
+        assert_eq!(
+            owner
+                .check_recovered_request(&owner.request)
+                .unwrap_err()
+                .kind,
+            ErrorKind::Conflict
+        );
+        let mut edited = recovered.clone();
+        edited.required_objects -= 1;
+        assert_eq!(
+            edited
+                .check_recovered_request(&edited.request)
+                .unwrap_err()
+                .kind,
+            ErrorKind::Stale
         );
     }
 }

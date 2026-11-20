@@ -667,6 +667,14 @@ history and the named recovery boundary; it does not change the 512-object job
 projection limit or qualify actual S5/BBJ scale, complete corrected-issue review,
 other crash points or owned production-profile adoption/rollback.
 
+[Recovered-policy close](handoff/2026-11-20-recovered-policy-close.md) now supports
+an explicit v2 close ticket for an old v1-binding job whose capacity recovery plan
+is already retained. The exact original request, policy object and retained work
+must match; the old profile/runtime and source budget remain unchanged. Its next
+fixture finalizes complete issue-assembly witnesses and checks full PDF/transcript
+preflight before returning the original control slot. Frozen qualification, actual
+issue admission/retention and contextual review remain pending.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

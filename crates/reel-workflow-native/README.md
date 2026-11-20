@@ -168,6 +168,15 @@ Standard native tests pass: 96 passed, 89 opt-in ignored; both effectful follow-
 are qualified separately. This is synthetic metadata/history scale. Real S5/BBJ
 volume, other crash points and production profile adoption/rollback remain open.
 
+Legacy jobs completed through an explicit retained-capacity recovery may use
+`prepare-close-with-policy JOURNAL PROFILE TARGET PLAN SHA256 NEW_TICKET --apply`.
+It pins a v2 close operation to the exact already-retained recovery policy and
+original result/work, without changing the old job binding or lifecycle runtime.
+The plan must reopen through that job's immutable retained selection; a supplied
+larger allowance alone is insufficient. Binding-v2 jobs continue to use their own
+declared policy. See [recovered-policy close](../../docs/handoff/2026-11-20-recovered-policy-close.md)
+for the contract and pending corrected-issue qualification.
+
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and
 `verify_millis`. Total is at most 16 GiB and no greater than projection allowance;

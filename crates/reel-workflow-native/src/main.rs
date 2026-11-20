@@ -696,6 +696,21 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "payloads_deleted":false,"scratch_retired":false,"selected":false}),
             )
         }
+        [command, journal, profile, target, plan, pin, output, apply]
+            if command == "prepare-close-with-policy" && apply == "--apply" =>
+        {
+            let (ticket, preview) = reel_workflow_native::closing::prepare_with_retained_policy(
+                Path::new(journal),
+                read_control(Path::new(profile))?,
+                read_control(Path::new(target))?,
+                read_control(Path::new(plan))?,
+                pin,
+            )?;
+            let ticket_pin = ticket.export(Path::new(output))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-close-retained-policy-preview","ticket_sha256":ticket_pin,"preview":preview,"slot_changed":false,"runtime_adopted":false,"scratch_retired":false,"selected":false}),
+            )
+        }
         [command, ticket, pin, output, apply]
             if (command == "close-job"
                 || command == "recover-close"
@@ -1409,6 +1424,7 @@ fn main() -> ExitCode {
             "reel-workflow-native check-retention-capacity-plan PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
             "reel-workflow-native stage-retention-capacity PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET OUTPUT --apply\n",
             "reel-workflow-native prepare-close JOURNAL PROFILE TARGET NEW_TICKET --apply\n",
+            "reel-workflow-native prepare-close-with-policy JOURNAL PROFILE TARGET PLAN SHA256 NEW_TICKET --apply\n",
             "reel-workflow-native close-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",
             "reel-workflow-native recover-close TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",

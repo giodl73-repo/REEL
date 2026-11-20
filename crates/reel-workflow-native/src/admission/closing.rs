@@ -26,7 +26,7 @@ impl Prepared {
         target: &Target,
         operation: &Key,
         action: Action,
-        owner_policy: Option<(&crate::retention::capacity::Policy, &Object)>,
+        owner_policy: Option<&crate::retention::capacity::ClosePolicy<'_>>,
     ) -> Result<Outcome> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
@@ -68,14 +68,23 @@ impl Prepared {
         self.verify_ack(receipt, ack, &mut index, &mut nodes)?;
         // This allowance governs the cumulative retained-owner union. The
         // original job's input/projection budget and activation stay unchanged.
-        let close_limits = if let Some((policy, request)) = owner_policy {
+        let close_limits = if let Some(witness) = owner_policy {
+            let policy = witness.policy;
+            let request = &witness.request;
             policy.validate()?;
             if target != &ack.target {
                 return Err(error(ErrorKind::Conflict, "close-owner-policy-target"));
             }
-            self.read_owner_policy(
-                receipt, &candidate, target, &ack.work, request, policy, &mut index, &mut nodes,
-            )?;
+            if let Some(recovery) = witness.recovered {
+                self.read_recovered_policy(
+                    receipt, &candidate, target, &ack.work, request, recovery, &mut index,
+                    &mut nodes,
+                )?;
+            } else {
+                self.read_owner_policy(
+                    receipt, &candidate, target, &ack.work, request, policy, &mut index, &mut nodes,
+                )?;
+            }
             projection::Limits {
                 objects: policy.objects,
                 logical_bytes: policy.logical_bytes,

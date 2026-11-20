@@ -79,6 +79,9 @@ mod repair_comic_native;
 #[path = "support/repair_control.rs"]
 mod repair_control_native;
 #[cfg(windows)]
+#[path = "support/repair_issue.rs"]
+mod repair_issue_native;
+#[cfg(windows)]
 #[path = "support/repair_part.rs"]
 mod repair_part_native;
 #[cfg(windows)]
