@@ -12,6 +12,7 @@ use std::{
 use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
 pub mod admission;
+pub mod abandon;
 pub mod advancement;
 pub mod closing;
 mod comic;

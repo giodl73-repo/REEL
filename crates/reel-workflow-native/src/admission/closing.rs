@@ -6,6 +6,17 @@ use crate::{
 };
 use reel_workflow::ReturnedResult;
 
+enum Completion<'a> {
+    Retained {
+        result: &'a ReturnedResult,
+        ack: &'a Acknowledgement,
+        owner_policy: Option<&'a crate::retention::capacity::ClosePolicy<'a>>,
+    },
+    // Source-only handoff. The caller holds the original Cancelled journal's
+    // writer fence; no result or completion acknowledgement is manufactured.
+    Abandoned(&'a crate::retention::capacity::Policy),
+}
+
 fn work_key(index: &Index, scope: &Scope, operation: &Key, domain: &str) -> Result<Key> {
     // Same qualified work namespace as slots::close and acceptance_operation.
     let raw = tig_core::identity::canonical_json(
@@ -27,6 +38,42 @@ impl Prepared {
         operation: &Key,
         action: Action,
         owner_policy: Option<&crate::retention::capacity::ClosePolicy<'_>>,
+    ) -> Result<Outcome> {
+        self.close_original(
+            receipt,
+            target,
+            operation,
+            action,
+            Completion::Retained {
+                result,
+                ack,
+                owner_policy,
+            },
+        )
+    }
+    pub(crate) fn close_abandoned(
+        &self,
+        receipt: &Receipt,
+        target: &Target,
+        operation: &Key,
+        action: Action,
+        policy: &crate::retention::capacity::Policy,
+    ) -> Result<Outcome> {
+        self.close_original(
+            receipt,
+            target,
+            operation,
+            action,
+            Completion::Abandoned(policy),
+        )
+    }
+    fn close_original(
+        &self,
+        receipt: &Receipt,
+        target: &Target,
+        operation: &Key,
+        action: Action,
+        completion: Completion<'_>,
     ) -> Result<Outcome> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
@@ -58,40 +105,60 @@ impl Prepared {
         .map_err(native_error)?;
         let handoff_key = work_key(&index, &self.profile.scope, operation, "slot-handoff")?;
         let handoff = work::lookup(&mut index, &handoff_key).map_err(|e| native_error(e.into()))?;
-        if action == Action::Recover && handoff.is_none() {
+        if action == Action::Recover
+            && handoff.is_none()
+            && matches!(completion, Completion::Retained { .. })
+        {
             return Err(error(ErrorKind::Missing, "close-original-work-not-staged"));
         }
-        let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
-        if candidate != ack.candidate {
-            return Err(error(ErrorKind::Conflict, "close-original-candidate"));
-        }
-        self.verify_ack(receipt, ack, &mut index, &mut nodes)?;
-        // This allowance governs the cumulative retained-owner union. The
-        // original job's input/projection budget and activation stay unchanged.
-        let close_limits = if let Some(witness) = owner_policy {
-            let policy = witness.policy;
-            let request = &witness.request;
-            policy.validate()?;
-            if target != &ack.target {
-                return Err(error(ErrorKind::Conflict, "close-owner-policy-target"));
+        let close_limits = match completion {
+            Completion::Abandoned(policy) => {
+                policy.validate()?;
+                projection::Limits {
+                    objects: policy.objects,
+                    logical_bytes: policy.logical_bytes,
+                    ..self.projection_limits()
+                }
             }
-            if let Some(recovery) = witness.recovered {
-                self.read_recovered_policy(
-                    receipt, &candidate, target, &ack.work, request, recovery, &mut index,
-                    &mut nodes,
-                )?;
-            } else {
-                self.read_owner_policy(
-                    receipt, &candidate, target, &ack.work, request, policy, &mut index, &mut nodes,
-                )?;
+            Completion::Retained {
+                result,
+                ack,
+                owner_policy,
+            } => {
+                let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
+                if candidate != ack.candidate {
+                    return Err(error(ErrorKind::Conflict, "close-original-candidate"));
+                }
+                self.verify_ack(receipt, ack, &mut index, &mut nodes)?;
+                // This allowance governs the cumulative retained-owner union. The
+                // original job's input/projection budget and activation stay unchanged.
+                if let Some(witness) = owner_policy {
+                    let policy = witness.policy;
+                    let request = &witness.request;
+                    policy.validate()?;
+                    if target != &ack.target {
+                        return Err(error(ErrorKind::Conflict, "close-owner-policy-target"));
+                    }
+                    if let Some(recovery) = witness.recovered {
+                        self.read_recovered_policy(
+                            receipt, &candidate, target, &ack.work, request, recovery, &mut index,
+                            &mut nodes,
+                        )?;
+                    } else {
+                        self.read_owner_policy(
+                            receipt, &candidate, target, &ack.work, request, policy, &mut index,
+                            &mut nodes,
+                        )?;
+                    }
+                    projection::Limits {
+                        objects: policy.objects,
+                        logical_bytes: policy.logical_bytes,
+                        ..self.projection_limits()
+                    }
+                } else {
+                    self.projection_limits()
+                }
             }
-            projection::Limits {
-                objects: policy.objects,
-                logical_bytes: policy.logical_bytes,
-                ..self.projection_limits()
-            }
-        } else {
-            self.projection_limits()
         };
         if handoff.is_none() {
             // Preflight only: the qualified function repeats all checks while

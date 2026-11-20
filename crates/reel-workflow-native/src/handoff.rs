@@ -514,7 +514,100 @@ pub(crate) fn verify_observation(
 pub(crate) struct WaitingControl {
     _controls: Controls,
     _runtime: File,
+    _abandon_intent: Option<reel_assets::jobs::WorkspaceDirectory>,
+    _abandon_pin: Option<File>,
     pub(crate) ticket: Ticket,
+}
+/// Hold the original journal writer and runtime while a source-only close runs.
+/// Cancellation is flushed before native handoff; it never releases claims.
+pub(crate) fn lock_abandoned(
+    path: &Path,
+    profile: &Profile,
+    expected: &Ticket,
+    operation: &tig_store::Key,
+    cancel: bool,
+) -> Result<WaitingControl> {
+    let controls = controls_mode(path, profile, false)?;
+    let mut journal = Journal::open(path)?;
+    let runtime = inspection_binding(&journal, profile)?;
+    if journal.ticket() != expected || !matches!(journal.state(), State::Waiting | State::Cancelled)
+    {
+        return Err(error(
+            ErrorKind::NeedsRecovery,
+            "abandon-original-waiting-job-required",
+        ));
+    }
+    let intent_raw = crate::advancement::raw(&serde_json::json!({
+        "schema":"reel.workflow-abandon-intent.v1",
+        "ticket":reel_workflow::canonical_digest(expected)?,"operation":operation
+    }))?;
+    let directory = profile
+        .admission
+        .scope
+        .coordination_root
+        .join("workflow-abandon-intents");
+    let mut intent_directory = None;
+    let mut intent_pin = None;
+    if cancel && journal.state() == State::Waiting {
+        match std::fs::create_dir(&directory) {
+            Ok(()) => (),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+            Err(e) => return Err(io_error(e)),
+        }
+    }
+    if directory.exists() {
+        let owned = reel_assets::jobs::open_workspace_directory(&directory)
+            .map_err(|_| error(ErrorKind::Denied, "abandon-intent-directory"))?;
+        let intent = owned.path().join(format!(
+            "{}.json",
+            profile.binding.admission.operation_identity()?
+        ));
+        if intent.exists() {
+            let (raw, _held) =
+                crate::staging::read_held(&intent, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+            if raw != intent_raw {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "abandon-original-operation-required",
+                ));
+            }
+        } else if journal.state() == State::Cancelled {
+            return Err(error(
+                ErrorKind::NeedsRecovery,
+                "abandon-original-intent-missing",
+            ));
+        }
+        if cancel {
+            crate::advancement::persist(&intent, &intent_raw)?;
+        }
+        if intent.exists() {
+            let (raw, held) =
+                crate::staging::read_held(&intent, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+            if raw != intent_raw {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "abandon-original-operation-required",
+                ));
+            }
+            intent_pin = Some(held);
+        }
+        intent_directory = Some(owned);
+    } else if journal.state() == State::Cancelled {
+        return Err(error(
+            ErrorKind::NeedsRecovery,
+            "abandon-original-intent-missing",
+        ));
+    }
+    if cancel {
+        journal.cancel()?;
+    }
+    Ok(WaitingControl {
+        _controls: controls,
+        _runtime: runtime,
+        _abandon_intent: intent_directory,
+        _abandon_pin: intent_pin,
+        ticket: expected.clone(),
+    })
 }
 pub(crate) fn lock_waiting(
     path: &Path,
@@ -530,6 +623,8 @@ pub(crate) fn lock_waiting(
     Ok(WaitingControl {
         _controls: controls,
         _runtime: runtime,
+        _abandon_intent: None,
+        _abandon_pin: None,
         ticket: journal.ticket().clone(),
     })
 }

@@ -711,6 +711,48 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "provider_invoked":false,"scratch_allocated":false,"selected":false,"input_claims_released":false}),
             )
         }
+        [
+            command,
+            journal,
+            profile,
+            target,
+            policy,
+            reason,
+            output,
+            apply,
+        ] if command == "prepare-abandon" && apply == "--apply" => {
+            let (ticket, preview) = reel_workflow_native::abandon::prepare(
+                Path::new(journal),
+                read_control(Path::new(profile))?,
+                read_control(Path::new(target))?,
+                read_control(Path::new(policy))?,
+                reason,
+            )?;
+            let pin = ticket.export(Path::new(output))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-abandoned-input-handoff-preview","ticket_sha256":pin,"preview":preview,
+                "cancelled":false,"task_completed":false,"slot_changed":false,"scratch_retired":false,"payloads_deleted":false}),
+            )
+        }
+        [command, ticket, pin, output, apply]
+            if matches!(
+                command.as_str(),
+                "abandon-job" | "recover-abandon" | "stage-abandon"
+            ) && apply == "--apply" =>
+        {
+            let (ticket, _held) =
+                reel_workflow_native::abandon::read_pinned(Path::new(ticket), pin)?;
+            let outcome = if command == "stage-abandon" {
+                ticket.stage_to(Path::new(output))?
+            } else {
+                ticket.execute_to(Path::new(output), command == "recover-abandon")?
+            };
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-abandoned-input-handoff","cancelled":true,
+                "slot_idle_observed":outcome.slot_idle,"original_clear_complete":outcome.original_clear_complete,
+                "task_completed":false,"retained_result_created":false,"scratch_retired":false,"payloads_deleted":false}),
+            )
+        }
         [command, journal, profile, target, output, apply]
             if command == "prepare-close" && apply == "--apply" =>
         {
@@ -1457,6 +1499,9 @@ fn main() -> ExitCode {
             "reel-workflow-native prepare-close JOURNAL PROFILE TARGET NEW_TICKET --apply\n",
             "reel-workflow-native prepare-close-with-policy JOURNAL PROFILE TARGET PLAN SHA256 NEW_TICKET --apply\n",
             "reel-workflow-native close-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
+            "reel-workflow-native prepare-abandon JOURNAL PROFILE TARGET POLICY REASON NEW_TICKET --apply\n",
+            "reel-workflow-native abandon-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
+            "reel-workflow-native recover-abandon TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",
             "reel-workflow-native recover-close TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native schedule-recipe RECIPE PLAN RUN_BINDINGS LIMIT NEW_PRIVATE_SCHEDULE --apply\n",

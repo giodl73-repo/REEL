@@ -89,7 +89,7 @@ fn identity(ticket: &Ticket) -> Result<Key> {
     ))
     .map_err(|_| error(ErrorKind::Invalid, "close-operation-identity"))
 }
-fn current_runtime() -> Result<Tool> {
+pub(crate) fn current_runtime() -> Result<Tool> {
     let path = std::env::current_exe()
         .map_err(io_error)?
         .canonicalize()

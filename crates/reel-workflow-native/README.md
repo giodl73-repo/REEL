@@ -908,3 +908,41 @@ controls and admission preview into a new pinned package. `accept-expanded` and
 existing qualified admission/recovery interfaces. The [frozen expansion contract](../../docs/handoff/2026-11-18-frozen-expansion.md)
 records the positive composite case through native staging and a protected
 waiting prompt batch. No provider execution or task completion follows from it.
+
+## Cancel a Waiting job while preserving its inputs
+
+```powershell
+reel-workflow-native prepare-abandon JOURNAL PROFILE TARGET POLICY REASON NEW_TICKET --apply
+reel-workflow-native abandon-job NEW_TICKET TICKET_SHA256 NEW_RECEIPT --apply
+```
+
+Preparation verifies the original Waiting job and previews the bounded handoff.
+It writes an immutable ticket and does not cancel or clear the actor. `POLICY`
+is an explicit `reel.workflow-retained-owner-policy.v1` control bounding the
+cumulative retained union; `REASON` is a short machine-readable reason code.
+The target must be the original profile's retained owner and must cover every
+store assigned to the job actor. This allocates no actor and raises no SDK limit.
+
+Application holds the original journal writer and qualified runtime pin. It
+flushes one original close-operation intent, records cancellation, and invokes
+the qualified native slot handoff. All protected source references move into
+retained coverage before the source actor can clear. No result, candidate
+registration or retained-result acknowledgement is manufactured. Check both
+`original_clear_complete` and `slot_idle_observed` before proposing actor reuse.
+Source files, scratch, failed controls, original runtime and history remain.
+
+An ImportPending or Retained task cannot enter this path. Uncertain imports
+must reconcile their original publication; retained jobs use `prepare-close`.
+Cancellation is a state change, not expiry or permission to delete bytes.
+
+If interrupted, preserve the ticket, its SHA256 and every receipt/partial file:
+
+```powershell
+reel-workflow-native recover-abandon ORIGINAL_TICKET ORIGINAL_SHA256 NEW_RECOVERY_RECEIPT --apply
+```
+
+Recovery uses the original close operation and WorkRefs. A different operation
+or a missing original cancellation intent refuses. A completed old close cannot
+clear a reused actor. The closer is separately pinned; the admitted job's runtime
+is held and preserved rather than replaced. This is a source-only lifecycle
+transition, not producer-runtime adoption, payload retirement or task completion.

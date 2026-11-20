@@ -12,6 +12,9 @@ use std::{
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 #[cfg(windows)]
+#[path = "support/abandon.rs"]
+mod abandon;
+#[cfg(windows)]
 #[path = "support/automatic_dispatch.rs"]
 mod automatic_dispatch;
 #[cfg(windows)]
