@@ -21,6 +21,11 @@ authored fixed-resource closures and edition/component recipes through
 example establishes metadata accounting and recipe export only; native binding,
 producer closure/order, admission and episode execution still require their
 separate proofs. It does not bypass the pending large-native recovery boundary.
+The [BBJ consumer scale observation](handoff/2026-11-19-bbj-consumer-scale.md)
+records twenty selected pages with about 603 MB of declared page-row artifacts,
+plus separate exact-reference and edited-lettering restore requirements. It is
+metadata evidence, not a complete native resource closure or project adoption;
+comic production needs its own explicit scale qualification.
 The additive [comic composition intent](handoff/2026-11-19-comic-composition-intent.md)
 now binds explicit v2 issue assembly requests to actual ordered parts and checks
 native frozen producer origins. The derived control producer also generates v2

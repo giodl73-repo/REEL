@@ -14,6 +14,14 @@ return and native admission bounds do not qualify that consumer. Streamed
 composition, complete bilingual content/delivery and original-operation recovery
 at that scale remain required; small comic/movie fixtures cannot close them.
 
+The [current BBJ comic scale observation](handoff/2026-11-19-bbj-consumer-scale.md)
+also finds 602,794,374 declared bytes across 100 artifact pins for twenty selected
+story pages, including 65,060,707 reading-PNG bytes. This is selected-row metadata,
+not a complete primary closure or fresh native media read. BBJ's own source
+schema, exact asset-reference association and edited-lettering restore contract
+need explicit consumer qualification. The two-page synthetic fixture and current
+comic byte limits do not establish larger actual issue production or adoption.
+
 The [v2 streaming film intent](handoff/2026-11-19-streaming-film-intent.md) now
 declares larger input/output/workspace/time envelopes and checks declared input
 and output ceilings without changing v1 behavior. `check-film-intent` inspects
