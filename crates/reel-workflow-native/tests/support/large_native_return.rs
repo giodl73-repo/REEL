@@ -344,3 +344,95 @@ fn resume_original_large_native_result() {
     );
     complete(&root, &profile.runtime.path, false);
 }
+
+#[test]
+#[ignore = "Read-only reconciliation of the existing large-result operation: exact journal, candidate work, output claims and one native content-location query; no byte ingestion, retry, admission or close"]
+fn inspect_original_large_native_result() {
+    use tig_core::tree::NodeStore;
+    use tig_git::annex::{
+        identity::Key,
+        process::{Command as NativeCommand, Runner},
+    };
+    use tig_store::{
+        metadata::MetadataStore,
+        source_claims::protection::{Index, work},
+    };
+    let root = env_path("REEL_LARGE_NATIVE_ROOT");
+    let profile: handoff::Profile = load(root.join("profile.json"));
+    let packet: Packet = load(root.join("packet.json"));
+    let result: ReturnedResult = load(root.join("result.json"));
+    let candidate: response::Candidate = load(root.join("candidate.json"));
+    reel_workflow::check_result(&packet, &result).unwrap();
+    assert_eq!(candidate.task_key, packet.task_key);
+    assert_eq!(candidate.attempt_id, result.attempt_id);
+    let journal = reel_workflow::handoff::Journal::open(&root.join("journal")).unwrap();
+    assert_eq!(journal.ticket().packet, packet);
+    assert_eq!(journal.result(), Some(&result));
+    drop(
+        Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &result.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap(),
+    );
+    let mut nodes = MetadataStore::open(
+        &profile.admission.metadata_root,
+        &profile.binding.admission.metadata_checkpoint,
+    )
+    .unwrap();
+    let mut index = Index::open(
+        &profile.admission.index_root,
+        &profile.binding.admission.index_checkpoint,
+    )
+    .unwrap();
+    let before = index.checkpoint();
+    let record = work::read(&mut index, &candidate.work, &nodes).unwrap();
+    assert_eq!(record.evidence.as_ref(), Some(&candidate.registration));
+    let registration: serde_json::Value =
+        decode(&nodes.get(&candidate.registration).unwrap().unwrap()).unwrap();
+    assert_eq!(
+        registration["result"],
+        serde_json::to_value(&result).unwrap()
+    );
+    let completed = work::complete(&mut index, &candidate.work).unwrap();
+    let object = Object {
+        sha256: tig_core::Digest::parse(&result.artifacts["master"].sha256).unwrap(),
+        bytes: result.artifacts["master"].bytes,
+    };
+    let protected = index
+        .inspect(&mut nodes, &object, &profile.admission.scope.store)
+        .unwrap()
+        .protected_by;
+    assert!(protected.contains(&profile.admission.scope.actor));
+    let runner = Runner::new(profile.source.source.pool.clone()).unwrap();
+    let output = runner
+        .run(NativeCommand::ContentLocationBatch(&Key::from_object(
+            &object,
+        )))
+        .unwrap();
+    assert!(output.success);
+    let missing = matches!(output.stdout.as_slice(), b"\n" | b"\r\n");
+    if !missing {
+        let location = std::str::from_utf8(&output.stdout)
+            .unwrap()
+            .trim_end_matches(['\r', '\n']);
+        assert!(!location.is_empty() && !location.contains(['\r', '\n']));
+    }
+    let after = Index::open(&profile.admission.index_root, &before)
+        .unwrap()
+        .checkpoint();
+    assert_eq!(before, after);
+    save(
+        root.join("original-inspection.json"),
+        &json!({"schema":"reel.workflow-large-native-inspection.v1",
+        "task_key":packet.task_key,"attempt_id":result.attempt_id,"journal_state":journal.state(),
+        "candidate":candidate,"candidate_work_complete":completed,"protected_by":protected,
+        "native_location_reported":!missing,"location_stdout_sha256":digest(&output.stdout),
+        "index_before":before,"index_after":after,"payload_verified":false,
+        "publication_retried":false,"native_admission":false}),
+    );
+}
