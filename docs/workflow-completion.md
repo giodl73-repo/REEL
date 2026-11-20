@@ -772,6 +772,19 @@ supplemental context tasks do not silently satisfy that frontier. Full affected
 consumer rebuilding, explicit contextual evaluation, evidenced resolution/issue
 closure and the wider project/provider/consumer/adoption scope remain open.
 
+The [original consumer rebuild](handoff/2026-11-20-original-consumer-rebuild.md)
+now has an 82.37-second frozen native preflight for the original
+`owned-issue-review-controls` task ID. Existing v4 derivation carries exact
+retained producer selectors and a complete source-C declaration; an explicit
+future-job runtime edit pins 5c237 without reinterpreting any completed producer.
+All four producer packets, exact consumer input/source maps, borrowed native
+lineage, unchanged actual Index and the Waiting claim verify. Its ready closure
+is 98 resources / 190,252,095 bytes. All 98 native tests, 247 SDK pins and strict
+default/film Clippy pass (98 opt-in fixtures ignored). This consumer remains
+unadmitted; the retained supplemental report still owns slot2. Actual consumer
+execution/retention and rebinding the original `whole-issue-structured-report`
+from real resulting outputs remain required before full frontier/closure checks.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
