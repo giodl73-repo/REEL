@@ -44,6 +44,11 @@ pub struct Parents {
 }
 impl Parents {
     pub fn borrowed(&self) -> Result<BTreeMap<String, Parent<'_>>> {
+        if self.schema == "reel.workflow-native-parents.empty.v1" && self.parents.is_empty() {
+            // Admission::prepare subsequently verifies that the frozen binding
+            // is the explicit empty root-intake contract, with no hidden inputs.
+            return Ok(BTreeMap::new());
+        }
         if self.schema != "reel.workflow-native-parents.v1"
             || self.parents.is_empty()
             || self.parents.len() > 128

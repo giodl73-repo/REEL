@@ -78,6 +78,36 @@ original identities/runtimes.
 The captured sources cover the selected SVG layer stack and listed provenance.
 They do not establish a full original-generation archive, font license proof,
 fresh PNG/lettering-edit restoration or press readiness. Rendering new reading
-pixels, wiring this adapter into the managed workflow task graph, the review/fix
+pixels, actual managed-job qualification, the review/fix
 loop and full project adoption remain required. Keep the selected BBJ inputs and
 approvals immutable while producing candidate versions.
+
+## Managed task contract
+
+The additive `layered-comic-compose` capability now runs through the native
+worker, return verifier and historical replay path. Its request has schema
+`reel.workflow-layered-comic.v1` and names the local page request, original
+selected book, sheet number, authoring record, selected SVG hash and reading PNG.
+The original book must associate those exact source/authoring/PNG pins with the
+same sheet; supplied native asset IDs must also match when present.
+
+The task binds an explicit `Publication` edition, language, page source identity,
+panel order and utterance IDs. Source content equality cannot substitute for the
+selected logical source identity. Native output is `page.svg`, `page.png` and an
+`editable.packet`, with a separate exact worker receipt. Reading PNGs are decoded
+within explicit pixel bounds; source layers are parsed as passive SVG. Historical
+and incoming results must equal deterministic replay. Review exports retain the
+original page, panel and utterance targets.
+
+This capability has a 120 MiB source allowance, 256 MiB complete task-input
+ceiling and 128 MiB output/carrier ceiling. Its actual output upper bound must
+fit before worker execution. Native snapshot and staging profiles retain their
+own independently checked budgets. Existing comic capability limits and bytes
+are unchanged.
+
+`external-source-intake` is a separate manual registration operation for existing
+files. It uses an explicit `reel.workflow-upstream-empty.v1` declaration and
+permits no prior inputs, dependencies, provider/model claims or tool execution.
+The normal native handoff/import/retention lifecycle still governs its outputs.
+Its returned candidates can supply exact retained upstream inputs to a composer;
+they do not adopt a canonical BBJ selection or grant creative approval.
