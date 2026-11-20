@@ -52,7 +52,7 @@ it is only pinned in prospective controls, not adopted or invoked for lifecycle
 effects. The original B9 producer runtime stays unchanged. Regression log pins
 and strict-check results are recorded in `qualified-validation.json`.
 
-The qualifier generates prospective task/control bytes without admitting a
+This earlier qualifier generates prospective task/control bytes without admitting a
 child or selecting a slot. Owned child input protection, retained control
 completion/recovery and the subsequent complete issue model/review/fix lifecycle
 remain open. Complete-issue parents can themselves have upstream inputs: the
@@ -61,6 +61,11 @@ part/control producers; copying the assembly's source profile is insufficient.
 Existing profiles/runtimes and the protected Waiting control attempt remain
 unchanged. No provider/tracker call, real S4/S5 adoption, scratch retirement or
 payload deletion is part of this qualification.
+
+The subsequent [owned whole-issue control qualification](2026-11-19-owned-issue-review.md)
+now carries those exact ancestor selectors, closes/reuses a healthy original part
+slot and reaches native retained control completion/replay. Protected structured
+review and the complete issue model/review/fix lifecycle remain separate.
 
 Producer checklist findings follow `.roles/ROLE.md`, `comics-editor.md`, editing
 and rights/provenance: whole-issue order and exact targets are preserved; actual

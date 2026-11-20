@@ -44,6 +44,11 @@ the subsequent complete issue review/fix lifecycle remain open. The additive
 now derives prospective review-task inputs through the native replay callback
 and checks structured request binding. Its retained-parent borrowing qualifier
 has no child admission, retained control completion or model/review effects.
+The subsequent [owned control qualification](handoff/2026-11-19-owned-issue-review.md)
+now carries exact inherited selectors into a distinct admitted consumer, through
+guarded part-slot reuse, native retention/completion and actual-checkpoint replay.
+Its scope is the existing two-page Spanish fixture. Protected full-issue review,
+fix execution and actual larger project production remain separate gates.
 
 ## Current implementation and boundary
 
