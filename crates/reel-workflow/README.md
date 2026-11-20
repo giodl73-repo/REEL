@@ -16,7 +16,7 @@ records the detailed boundaries. Start here instead of following its historical
 qualification reports as operating instructions.
 
 The current Windows bundle is
-`F:/src/REEL-releases/workflow-preview-20261120-v2/START-HERE.md`. Its main
+`F:/src/REEL-releases/workflow-preview-20261120-v3/START-HERE.md`. Its main
 `reel-workflow.exe` is an optimized build with `comic` enabled. It has passed
 actual BBJ preparation, exact page SVG composition and existing-output refusal;
 the underlying publication adapter has completed the selected 28-sheet local
@@ -53,8 +53,9 @@ For an existing BBJ book, the [comic publication guide](../reel-publication/READ
 provides `bbj-prepare` and `layered-compose-book`: actual selected SVG sources are
 composed and compared, exact reading PNGs are reused, and a private reader plus
 layer/source bundles are written with stable review IDs. The workflow also
-exposes a `layered-comic-compose` native capability, but actual BBJ composition
-retention and the issue/fix task graph are not yet qualified end to end.
+exposes a `layered-comic-compose` native capability. One actual BBJ page has
+completed native composition, retention, review export and close; the complete
+issue/fix task graph remains to be qualified end to end.
 
 `bbj-prepare` also writes a typed, validated `publication.json`, with stable
 page/panel/dialogue IDs and explicit empty arrays for silent/matter pages.
@@ -111,6 +112,35 @@ actors. No dependency hashes or source maps need to be reconstructed in a shell.
 Capsule creation refuses an existing destination and preserves partial writes.
 It does not recover an earlier admitted task under a fresh identity. A page
 capsule is not a full issue, a new raster render, profile adoption or approval.
+
+## Assemble a complete selected reading edition
+
+Use the prepared book to capture every selected reading PNG, source definition
+and authoring record in exact sheet order:
+
+```powershell
+reel-workflow bbj-plan-reading-issue PREPARED CONFIG.json NEW_CAPSULE_DIRECTORY
+reel-workflow compose-reading-issue NEW_CAPSULE_DIRECTORY/local-preview-packet.json NEW_CAPSULE_DIRECTORY/local-inputs.json NEW_READING_DIRECTORY
+```
+
+The config has the same fields as the page planner, with schema
+`reel.workflow-bbj-reading-plan.v1`, its own task prefix and a native runtime
+supporting `comic-reading-assembly`. It writes the intake, manual-return controls
+and late-bound native recipe in Rust. The local composition produces
+`reading.pdf`, `reading-manifest.json`, `source-index.json` and `receipt.json`.
+The PDF embeds the original opaque image pixels losslessly and fits each page
+proportionally within 720 points; that display size is not a printer trim.
+Page, panel and dialogue review targets retain their stable IDs. Review images
+refer to the captured input artifacts and must remain protected through their
+original lineage; they are not duplicate output candidates.
+
+The intake is bounded to 120 files and 128 MiB. The reading task has an explicit
+256 MiB input/output envelope, individual PNGs at most 16 MiB and a bounded
+canvas. Native admission still needs owned profiles with sufficient declared
+return/workspace budgets, actor/path capacity and retained coverage. A local PDF
+does not establish native retention. The source index explicitly reports that
+editable layer payloads have not been restored by this reading-only operation;
+the layered source archive and printer/accessible derivatives remain separate.
 
 ## Run protected work
 

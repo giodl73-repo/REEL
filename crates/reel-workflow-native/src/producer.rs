@@ -12,6 +12,7 @@ pub(crate) fn available(capability: ToolCapability) -> bool {
         ToolCapability::FilmRender => cfg!(all(windows, feature = "film")),
         ToolCapability::ComicRender
         | ToolCapability::LayeredComicCompose
+        | ToolCapability::ComicReadingAssembly
         | ToolCapability::ComicIssueAssembly
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl
@@ -32,6 +33,9 @@ pub(crate) fn output_budget(packet: &Packet, inputs: &mut impl InputReader) -> R
     match capability(packet)? {
         ToolCapability::LayeredComicCompose => {
             Ok(reel_workflow::layered::bind(packet, inputs)?.output_bytes())
+        }
+        ToolCapability::ComicReadingAssembly => {
+            Ok(reel_workflow::reading_issue::bind(packet, inputs)?.output_bytes())
         }
         ToolCapability::RepairResolution => Ok(2 * reel_workflow::MAX_CONTROL_BYTES as u64),
         ToolCapability::ComicReviewControl => Ok(4 * reel_workflow::MAX_CONTROL_BYTES as u64),
@@ -202,6 +206,7 @@ pub(crate) fn generate(
         }
         ToolCapability::ComicIssueAssembly
         | ToolCapability::LayeredComicCompose
+        | ToolCapability::ComicReadingAssembly
         | ToolCapability::RepairResolution
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl
@@ -238,6 +243,7 @@ pub(crate) fn check_returned(
         }
         ToolCapability::ComicIssueAssembly
         | ToolCapability::LayeredComicCompose
+        | ToolCapability::ComicReadingAssembly
         | ToolCapability::RepairResolution
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl
@@ -317,6 +323,7 @@ fn native(
         .map(|p| p.map(|p| Proof::Comic(Box::new(p)))),
         ToolCapability::ComicIssueAssembly
         | ToolCapability::LayeredComicCompose
+        | ToolCapability::ComicReadingAssembly
         | ToolCapability::RepairResolution
         | ToolCapability::ComicIssueControl
         | ToolCapability::ComicReviewControl

@@ -15,6 +15,8 @@ pub mod composition;
 pub mod layered;
 #[cfg(feature = "comic")]
 pub mod packet;
+#[cfg(feature = "comic")]
+pub mod reading;
 
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;

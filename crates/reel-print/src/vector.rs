@@ -40,6 +40,73 @@ pub fn merge_reading_pdfs(parts: &[&[u8]], max_pages: usize, max_bytes: u64) -> 
     );
     Ok(output)
 }
+
+/// Assemble already-selected opaque reading PNGs without resizing, relayering,
+/// text replacement or re-encoding the source PNGs. Pages fit proportionally
+/// within a 720-point display square; this is not a physical trim specification.
+pub fn reading_pdf_from_pngs(
+    pages: usize,
+    input_bytes: u64,
+    output_bytes: u64,
+    mut read: impl FnMut(usize) -> Result<Vec<u8>>,
+) -> Result<Vec<u8>> {
+    ensure!(
+        (1..=128).contains(&pages)
+            && (1..=256 * 1024 * 1024).contains(&input_bytes)
+            && (1..=256 * 1024 * 1024).contains(&output_bytes),
+        "reading PNG assembly bounds"
+    );
+    let mut used = 0u64;
+    let mut compressed = 0u64;
+    let mut documents = Vec::new();
+    for index in 0..pages {
+        let raw = read(index)?;
+        used = used
+            .checked_add(raw.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("reading input overflow"))?;
+        ensure!(
+            used <= input_bytes
+                && raw.len() >= 24
+                && raw.len() <= 16 * 1024 * 1024
+                && raw.starts_with(b"\x89PNG\r\n\x1a\n")
+                && &raw[12..16] == b"IHDR",
+            "reading PNG input bound/header"
+        );
+        let width = u32::from_be_bytes(raw[16..20].try_into()?);
+        let height = u32::from_be_bytes(raw[20..24].try_into()?);
+        ensure!(
+            (1..=4096).contains(&width)
+                && (1..=6144).contains(&height)
+                && u64::from(width) * u64::from(height) <= 16 * 1024 * 1024,
+            "reading PNG pixel bound"
+        );
+        let pixels = resvg::tiny_skia::Pixmap::decode_png(&raw)?;
+        ensure!(
+            pixels.width() == width && pixels.height() == height,
+            "reading PNG canvas"
+        );
+        let scale = 720.0 / width.max(height) as f32;
+        let doc = pdf::raster_page_at(&pixels, width as f32 * scale, height as f32 * scale)?;
+        for object in doc.objects.values() {
+            if let lopdf::Object::Stream(stream) = object {
+                compressed = compressed
+                    .checked_add(stream.content.len() as u64)
+                    .ok_or_else(|| anyhow::anyhow!("reading output overflow"))?;
+            }
+        }
+        ensure!(
+            compressed <= output_bytes,
+            "reading compressed output bound"
+        );
+        documents.push(Arc::new(doc));
+    }
+    let output = pdf::merge(documents)?;
+    ensure!(
+        output.len() as u64 <= output_bytes,
+        "reading PDF output bound"
+    );
+    Ok(output)
+}
 pub struct RenderedPage {
     pub png: Vec<u8>,
 }

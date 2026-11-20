@@ -25,3 +25,8 @@ resvg = { version = "=0.45.1", default-features = false }
 name = "layered"
 path = "tests/layered.rs"
 required-features = ["comic"]
+
+[[test]]
+name = "reading_issue"
+path = "tests/reading_issue.rs"
+required-features = ["comic"]

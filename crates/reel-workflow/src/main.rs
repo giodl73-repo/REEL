@@ -60,7 +60,9 @@ fn publish_bundle(output: &Path, files: &BTreeMap<String, Vec<u8>>) -> reel_work
         }
     }
     std::fs::create_dir(output).map_err(|_| error(ErrorKind::Conflict, "bundle-create-new"))?;
-    std::fs::create_dir(output.join("incoming")).map_err(io_open_error)?;
+    if files.keys().any(|n| n.starts_with("incoming/")) {
+        std::fs::create_dir(output.join("incoming")).map_err(io_open_error)?;
+    }
     let write = |name: &str, raw: &[u8]| -> reel_workflow::Result<()> {
         if name.len() > 256
             || !name.split('/').all(|part| {
@@ -83,7 +85,9 @@ fn publish_bundle(output: &Path, files: &BTreeMap<String, Vec<u8>>) -> reel_work
             .and_then(|_| file.sync_all())
             .map_err(|_| error(ErrorKind::NeedsRecovery, "bundle-write-preserve-partial"))
     };
-    write("intent.json", &files["intent.json"])?;
+    if let Some(intent) = files.get("intent.json") {
+        write("intent.json", intent)?;
+    }
     for (name, raw) in files {
         if name != "intent.json" {
             write(name, raw)?;
@@ -225,6 +229,65 @@ fn publication_inputs(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        #[cfg(feature = "comic")]
+        [command, prepared, config, output] if command == "bbj-plan-reading-issue" => {
+            let config = control(config)?;
+            let output = std::path::absolute(output).map_err(io_open_error)?;
+            if std::fs::symlink_metadata(&output).is_ok() {
+                return Err(error(ErrorKind::Conflict, "bundle-create-new"));
+            }
+            let mut reader = LocalInputs {
+                paths: BTreeMap::new(),
+                guards: Vec::new(),
+            };
+            let files = reel_workflow::bbj::prepare_reading_issue(
+                &config,
+                Path::new(prepared),
+                &output,
+                |path, max| {
+                    reader.capture(
+                        path.to_str()
+                            .ok_or_else(|| error(ErrorKind::Invalid, "bbj-reading-input-path"))?,
+                        max,
+                    )
+                },
+            )?;
+            publish_bundle(&output, &files)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-bbj-reading-issue-plan","outputs_written":true,"native_admitted":false,"retained_owner_acknowledged":false,"editable_layers_restored":false}),
+            )
+        }
+        #[cfg(feature = "comic")]
+        [command, packet, bindings, output] if command == "compose-reading-issue" => {
+            let output = std::path::absolute(output).map_err(io_open_error)?;
+            if std::fs::symlink_metadata(&output).is_ok() {
+                return Err(error(ErrorKind::Conflict, "bundle-create-new"));
+            }
+            let packet: Packet = control(packet)?;
+            let paths: BTreeMap<String, String> = control(bindings)?;
+            if packet
+                .task
+                .inputs
+                .iter()
+                .map(|a| &a.logical_id)
+                .collect::<std::collections::BTreeSet<_>>()
+                != paths.keys().collect()
+            {
+                return Err(error(
+                    ErrorKind::Conflict,
+                    "reading-issue-local-binding-set",
+                ));
+            }
+            let mut reader = LocalInputs {
+                paths,
+                guards: Vec::new(),
+            };
+            let generated = reel_workflow::reading_issue::generate(&packet, &mut reader)?;
+            publish_bundle(&output, &generated.files)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-reading-issue-composition","outputs":generated.outputs,"native_admitted":false,"retained_owner_acknowledged":false,"editable_layers_restored":false,"selected":false}),
+            )
+        }
         #[cfg(feature = "comic")]
         [command, prepared, sheet, config, output] if command == "bbj-plan-page" => {
             let config = control(config)?;
@@ -407,7 +470,12 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
         [command, ..]
             if matches!(
                 command.as_str(),
-                "bbj-prepare" | "bbj-compose" | "bbj-compose-page" | "bbj-plan-page"
+                "bbj-prepare"
+                    | "bbj-compose"
+                    | "bbj-compose-page"
+                    | "bbj-plan-page"
+                    | "bbj-plan-reading-issue"
+                    | "compose-reading-issue"
             ) =>
         {
             Err(error(ErrorKind::Unsupported, "comic-feature-disabled"))
@@ -529,6 +597,8 @@ Usage: reel-workflow check-plan PLAN\n\
        reel-workflow replay-layered-task PACKET INPUT_BINDINGS\n\
        reel-workflow bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\n\
        reel-workflow bbj-plan-page PREPARED SHEET CONFIG NEW_DIRECTORY\n\
+       reel-workflow bbj-plan-reading-issue PREPARED CONFIG NEW_DIRECTORY\n\
+       reel-workflow compose-reading-issue PACKET INPUT_BINDINGS NEW_DIRECTORY\n\
        reel-workflow bbj-compose PREPARED_BOOK NEW_DIRECTORY\n\
        reel-workflow bbj-compose-page REQUEST INPUT_BINDINGS NEW_DIRECTORY\n\
        reel-workflow check-composition DECLARATION\n\

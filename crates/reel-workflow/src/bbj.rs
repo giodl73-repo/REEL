@@ -60,11 +60,21 @@ impl Capture {
         media: &str,
         source: Option<&Pin>,
     ) -> Result<Artifact> {
+        self.add_as(name, raw, media, source, None)
+    }
+    fn add_as(
+        &mut self,
+        name: &str,
+        raw: Vec<u8>,
+        media: &str,
+        source: Option<&Pin>,
+        identity: Option<String>,
+    ) -> Result<Artifact> {
         if self.incoming.contains_key(name) || self.incoming.len() >= 120 {
             return fail(ErrorKind::Conflict, "bbj-planning-output-name");
         }
         let a = Artifact {
-            logical_id: format!("{}{name}", self.namespace),
+            logical_id: identity.unwrap_or_else(|| format!("{}{name}", self.namespace)),
             sha256: digest(&raw),
             bytes: raw.len() as u64,
             media_type: media.into(),
@@ -92,6 +102,251 @@ impl Capture {
         self.incoming.insert(name.into(), raw);
         Ok(a)
     }
+}
+
+/// Capture an entire selected book's reading images and source/authoring
+/// definitions. Layer payload restoration is deliberately a distinct consumer.
+pub fn prepare_reading_issue(
+    config: &Config,
+    prepared: &Path,
+    output: &Path,
+    mut read: impl FnMut(&Path, u64) -> Result<Vec<u8>>,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    if config.schema != "reel.workflow-bbj-reading-plan.v1"
+        || !token(&config.task_prefix)
+        || config.task_prefix.len() > 110
+        || !token(&config.project)
+        || !token(&config.attempt_id)
+        || !hex(&config.source_commit, &[40, 64])
+        || config.source_commit.bytes().all(|b| b == b'0')
+        || !output.is_absolute()
+        || !Path::new(&config.executable.path).is_absolute()
+        || !hex(&config.executable.sha256, &[64])
+        || !(1..=128 * 1024 * 1024).contains(&config.executable.bytes)
+    {
+        return invalid("bbj-reading-planning-configuration");
+    }
+    artifact(&config.native_inputs)?;
+    if config.native_inputs.media_type != "application/json"
+        || config.native_inputs.bytes > MAX_CONTROL_BYTES as u64
+    {
+        return invalid("bbj-reading-native-declaration");
+    }
+    let publication_raw = read(&prepared.join("publication.json"), MAX_CONTROL_BYTES as u64)?;
+    let mut publication: Publication = named_control(&publication_raw, "publication")?;
+    reel_publication::check_publication(&publication)?;
+    if publication.editions.len() != 1 {
+        return invalid("bbj-reading-explicit-single-edition");
+    }
+    let edition = publication.editions[0].clone();
+    let Content::Comic { pages, .. } = &edition.content else {
+        return invalid("bbj-reading-comic-required");
+    };
+    // One root intake has an explicit finite returned-byte/file envelope.
+    if pages.is_empty() || pages.len() * 3 + 4 > 120 {
+        return fail(ErrorKind::Budget, "bbj-reading-intake-file-count");
+    }
+    let book: serde_json::Value = decode(&read(
+        &prepared.join("book.json"),
+        MAX_CONTROL_BYTES as u64,
+    )?)?;
+    let selection_raw = read(
+        &prepared.join("selected-book.json"),
+        MAX_CONTROL_BYTES as u64,
+    )?;
+    if book["schema"] != "reel.bbj-book-import.v1"
+        || book["publication_id"] != publication.id
+        || book["selection"]["sha256"].as_str() != Some(digest(&selection_raw).as_str())
+        || book["selection"]["bytes"].as_u64() != Some(selection_raw.len() as u64)
+    {
+        return fail(ErrorKind::Integrity, "bbj-reading-selected-book-pin");
+    }
+    let selection: serde_json::Value = decode(&selection_raw)?;
+    let sheets = selection["sheets"].as_array().ok_or(Error {
+        kind: ErrorKind::Invalid,
+        code: "bbj-reading-selection".into(),
+    })?;
+    if selection["schema"] != "refraction.book-preview.v1" || sheets.len() != pages.len() {
+        return invalid("bbj-reading-complete-book");
+    }
+    let readings: BTreeMap<String, std::path::PathBuf> = decode(&read(
+        &prepared.join("reading-bindings.json"),
+        MAX_CONTROL_BYTES as u64,
+    )?)?;
+    let mut capture = Capture {
+        incoming: BTreeMap::new(),
+        artifacts: BTreeMap::new(),
+        sources: BTreeMap::new(),
+        namespace: format!("bbj/input/{}/reading-issue/", publication.id),
+        bytes: 0,
+    };
+    let mut request_pages = Vec::new();
+    for (index, (page, selected)) in pages.iter().zip(sheets).enumerate() {
+        let folder = format!("sheet-{:03}", index + 1);
+        let request: layered_source::Request = decode(&read(
+            &prepared.join(&folder).join("request.json"),
+            MAX_CONTROL_BYTES as u64,
+        )?)?;
+        if request.page_id != page.id || request.language != edition.language {
+            return fail(ErrorKind::Conflict, "bbj-reading-page-identity");
+        }
+        let bindings: BTreeMap<String, std::path::PathBuf> = decode(&read(
+            &prepared.join(&folder).join("bindings.json"),
+            MAX_CONTROL_BYTES as u64,
+        )?)?;
+        let author: layered_source::Asset = serde_json::from_value(selected["authoring"].clone())
+            .map_err(|_| Error {
+            kind: ErrorKind::Invalid,
+            code: "bbj-reading-authoring".into(),
+        })?;
+        let png: layered_source::Asset =
+            serde_json::from_value(selected["png"].clone()).map_err(|_| Error {
+                kind: ErrorKind::Invalid,
+                code: "bbj-reading-png".into(),
+            })?;
+        if !(24..=16 * 1024 * 1024).contains(&png.bytes) {
+            return fail(ErrorKind::Budget, "bbj-reading-png-bytes");
+        }
+        let source_path = bindings
+            .get(&request.source.path)
+            .filter(|p| p.is_absolute())
+            .ok_or(Error {
+                kind: ErrorKind::Missing,
+                code: "bbj-reading-source-binding".into(),
+            })?;
+        let author_path = bindings
+            .get(&author.file)
+            .filter(|p| p.is_absolute())
+            .ok_or(Error {
+                kind: ErrorKind::Missing,
+                code: "bbj-reading-author-binding".into(),
+            })?;
+        let png_path = readings
+            .get(&png.file)
+            .filter(|p| p.is_absolute())
+            .ok_or(Error {
+                kind: ErrorKind::Missing,
+                code: "bbj-reading-image-binding".into(),
+            })?;
+        let source_name = format!("{folder}-source.json");
+        let author_name = format!("{folder}-authoring.json");
+        let png_name = format!("{folder}.png");
+        capture.add_as(
+            &source_name,
+            read(source_path, MAX_CONTROL_BYTES as u64)?,
+            "application/json",
+            Some(&request.source),
+            Some(page.source.logical_id.clone()),
+        )?;
+        let prefix = page
+            .source
+            .logical_id
+            .strip_suffix("source.json")
+            .ok_or(Error {
+                kind: ErrorKind::Invalid,
+                code: "bbj-reading-source-namespace".into(),
+            })?;
+        capture.add_as(
+            &author_name,
+            read(author_path, MAX_CONTROL_BYTES as u64)?,
+            "application/json",
+            Some(&author.pin()),
+            Some(format!("{prefix}authoring.json")),
+        )?;
+        let pixels = read(png_path, png.bytes)?;
+        reel_publication::layered::check_reading_png(&pixels).map_err(|_| Error {
+            kind: ErrorKind::Integrity,
+            code: "bbj-reading-image-invalid".into(),
+        })?;
+        capture.add_as(
+            &png_name,
+            pixels,
+            "image/png",
+            Some(&png.pin()),
+            Some(format!("{prefix}reading.png")),
+        )?;
+        request_pages.push(reading_issue::Page {
+            id: page.id.clone(),
+            sheet: index as u32 + 1,
+            source: request.source,
+            authoring: author.pin(),
+            png: png.pin(),
+        });
+    }
+    let selection_pin = Pin {
+        path: "control/bbj-selected-book.json".into(),
+        sha256: digest(&selection_raw),
+        bytes: selection_raw.len() as u64,
+    };
+    capture.add(
+        "selected-book.json",
+        selection_raw,
+        "application/json",
+        Some(&selection_pin),
+    )?;
+    let executable = read(Path::new(&config.executable.path), config.executable.bytes)?;
+    if executable.len() as u64 != config.executable.bytes
+        || digest(&executable) != config.executable.sha256
+    {
+        return fail(ErrorKind::Integrity, "bbj-reading-runtime-pin");
+    }
+    capture.add("engine.exe", executable, "application/octet-stream", None)?;
+    publication.editions[0].outputs = [
+        ("reading.pdf", "application/pdf", 256 * 1024 * 1024),
+        (
+            "reading-manifest.json",
+            "application/json",
+            MAX_CONTROL_BYTES as u64,
+        ),
+        (
+            "source-index.json",
+            "application/json",
+            MAX_CONTROL_BYTES as u64,
+        ),
+    ]
+    .into_iter()
+    .map(|(n, m, b)| {
+        (
+            n.into(),
+            OutputContract {
+                media_type: m.into(),
+                max_bytes: b,
+                required: true,
+            },
+        )
+    })
+    .collect();
+    reel_publication::check_publication(&publication)?;
+    capture.add(
+        "publication.json",
+        json(&publication)?,
+        "application/json",
+        None,
+    )?;
+    let request = reading_issue::Request {
+        schema: "reel.workflow-reading-issue.v1".into(),
+        selection: selection_pin,
+        pages: request_pages,
+        input_bytes: 256 * 1024 * 1024,
+        output_bytes: 256 * 1024 * 1024,
+    };
+    capture.add(
+        "managed-request.json",
+        json(&request)?,
+        "application/json",
+        None,
+    )?;
+    finish(
+        config,
+        capture,
+        output,
+        Spec {
+            capability: ToolCapability::ComicReadingAssembly,
+            edition: edition.id,
+            language: edition.language,
+            summary: serde_json::json!({"schema":"reel.workflow-bbj-reading-capsule.v1","page_order":request.pages.iter().map(|p|&p.id).collect::<Vec<_>>(),"editable_layers_restored":false}),
+        },
+    )
 }
 struct Memory<'a>(&'a Capture);
 impl publication::InputReader for Memory<'_> {
@@ -326,13 +581,13 @@ pub fn prepare(
     {
         return fail(ErrorKind::Integrity, "bbj-planning-runtime-pin");
     }
-    let executable = capture.add(
+    capture.add(
         "engine.exe",
         executable_raw,
         "application/octet-stream",
         None,
     )?;
-    let pub_asset = capture.add(
+    capture.add(
         "publication.json",
         publication_raw,
         "application/json",
@@ -351,12 +606,39 @@ pub fn prepare(
         },
         reading_png: png.pin(),
     };
-    let req_asset = capture.add(
+    capture.add(
         "managed-request.json",
         json(&request)?,
         "application/json",
         None,
     )?;
+    finish(
+        config,
+        capture,
+        output,
+        Spec {
+            capability: ToolCapability::LayeredComicCompose,
+            edition: edition.id.clone(),
+            language: request.page.language.clone(),
+            summary: serde_json::json!({"schema":"reel.workflow-bbj-page-capsule.v1","sheet":sheet,"page_id":request.page.page_id}),
+        },
+    )
+}
+struct Spec {
+    capability: ToolCapability,
+    edition: String,
+    language: String,
+    summary: serde_json::Value,
+}
+fn finish(
+    config: &Config,
+    capture: Capture,
+    output: &Path,
+    spec: Spec,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let executable = capture.artifacts["engine.exe"].clone();
+    let pub_asset = capture.artifacts["publication.json"].clone();
+    let req_asset = capture.artifacts["managed-request.json"].clone();
     let input_id = format!("{}-intake", config.task_prefix);
     let compose_id = format!("{}-compose", config.task_prefix);
     let empty = upstream::Bindings {
@@ -367,7 +649,7 @@ pub fn prepare(
     let empty_raw = empty.canonical_bytes()?;
     let intake = Task { id: input_id.clone(), native_inputs: Some(config.native_inputs.clone()),
         upstream_inputs: Some(Artifact { logical_id: format!("workflow/{}/empty-inputs", config.task_prefix), sha256: digest(&empty_raw), bytes: empty_raw.len() as u64, media_type: "application/json".into() }),
-        operation: Operation::ExternalSourceIntake, tool: None, language: Some(request.page.language.clone()),
+        operation: Operation::ExternalSourceIntake, tool: None, language: Some(spec.language.clone()),
         prompt: "Register these exact existing BBJ page sources as unselected candidates. No provider, creative approval, selection or release.".into(),
         inputs: vec![], depends_on: vec![], outputs: capture.artifacts.iter().map(|(n,a)| (n.clone(), OutputContract { media_type:a.media_type.clone(), max_bytes:a.bytes, required:true })).collect() };
     let base = Plan {
@@ -378,7 +660,7 @@ pub fn prepare(
         tasks: vec![intake],
     };
     let packet = make_packet(&base, &input_id, BTreeMap::new())?;
-    let contracts: OutputContracts = [
+    let mut contracts: OutputContracts = [
         ("page.svg", "image/svg+xml", 128 * 1024 * 1024),
         ("page.png", "image/png", 16 * 1024 * 1024),
         (
@@ -399,13 +681,40 @@ pub fn prepare(
         )
     })
     .collect();
+    if spec.capability == ToolCapability::ComicReadingAssembly {
+        contracts = [
+            ("reading.pdf", "application/pdf", 256 * 1024 * 1024),
+            (
+                "reading-manifest.json",
+                "application/json",
+                MAX_CONTROL_BYTES as u64,
+            ),
+            (
+                "source-index.json",
+                "application/json",
+                MAX_CONTROL_BYTES as u64,
+            ),
+        ]
+        .into_iter()
+        .map(|(n, m, b)| {
+            (
+                n.into(),
+                OutputContract {
+                    media_type: m.into(),
+                    max_bytes: b,
+                    required: true,
+                },
+            )
+        })
+        .collect();
+    }
     let tool = ToolContract {
         schema: "reel.workflow-tool.v1".into(),
-        capability: ToolCapability::LayeredComicCompose,
+        capability: spec.capability,
         executable: executable.clone(),
         auxiliary_executables: BTreeMap::new(),
         publication: pub_asset,
-        edition_id: edition.id.clone(),
+        edition_id: spec.edition.clone(),
         request: req_asset,
         source_bindings: capture
             .sources
@@ -420,7 +729,7 @@ pub fn prepare(
         upstream_inputs: None,
         operation: Operation::DeterministicTool,
         tool: Some(tool),
-        language: Some(request.page.language.clone()),
+        language: Some(spec.language.clone()),
         prompt: String::new(),
         inputs: capture.artifacts.values().cloned().collect(),
         depends_on: vec![],
@@ -431,11 +740,15 @@ pub fn prepare(
         ..base.clone()
     };
     let preview_packet = make_packet(&preview_plan, &compose_id, BTreeMap::new())?;
-    layered::bind(&preview_packet, &mut Memory(&capture))?;
+    if spec.capability == ToolCapability::ComicReadingAssembly {
+        reading_issue::bind(&preview_packet, &mut Memory(&capture))?;
+    } else {
+        layered::bind(&preview_packet, &mut Memory(&capture))?;
+    }
     let step = expansion::TaskTemplate {
         id: compose_id,
         operation: Operation::DeterministicTool,
-        language: Some(request.page.language.clone()),
+        language: Some(spec.language.clone()),
         prompt: String::new(),
         depends_on: vec![input_id.clone()],
         inputs: capture
@@ -445,11 +758,11 @@ pub fn prepare(
             .collect(),
         outputs: contracts,
         tool: Some(expansion::Tool {
-            capability: ToolCapability::LayeredComicCompose,
+            capability: spec.capability,
             executable,
             auxiliary_executables: BTreeMap::new(),
             publication: parent(&input_id, "publication.json"),
-            edition_id: edition.id.clone(),
+            edition_id: spec.edition.clone(),
             request: parent(&input_id, "managed-request.json"),
             sources: capture
                 .sources
@@ -486,7 +799,14 @@ pub fn prepare(
     };
     check_result(&packet, &proposed)?;
     let mut files = BTreeMap::new();
-    files.insert("intent.json".into(), json(&serde_json::json!({"schema":"reel.workflow-bbj-page-capsule.v1","config":canonical_digest(config)?,"sheet":sheet,"page_id":request.page.page_id,"source_bytes":capture.bytes,"source_files":capture.incoming.len(),"native_admitted":false,"retained_owner_acknowledged":false,"selected":false}))?);
+    let mut intent = spec.summary;
+    intent["config"] = serde_json::json!(canonical_digest(config)?);
+    intent["source_bytes"] = serde_json::json!(capture.bytes);
+    intent["source_files"] = serde_json::json!(capture.incoming.len());
+    intent["native_admitted"] = false.into();
+    intent["retained_owner_acknowledged"] = false.into();
+    intent["selected"] = false.into();
+    files.insert("intent.json".into(), json(&intent)?);
     files.insert("intake-plan.json".into(), json(&base)?);
     files.insert("intake-packet.json".into(), json(&packet)?);
     files.insert("upstream-empty.json".into(), empty_raw);

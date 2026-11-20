@@ -192,6 +192,20 @@ pub fn merge(parts: Vec<Arc<Document>>) -> Result<Vec<u8>> {
 /// Lossless opaque reading page. Editable SVG/text sources are retained by the
 /// producer; this raster PDF page is not a searchable-text or press derivative.
 pub(crate) fn raster_page(pixels: &resvg::tiny_skia::Pixmap) -> Result<Document> {
+    raster_page_at(pixels, pixels.width() as f32, pixels.height() as f32)
+}
+pub(crate) fn raster_page_at(
+    pixels: &resvg::tiny_skia::Pixmap,
+    width: f32,
+    height: f32,
+) -> Result<Document> {
+    ensure!(
+        width.is_finite()
+            && height.is_finite()
+            && (72.0..=2048.0).contains(&width)
+            && (72.0..=2048.0).contains(&height),
+        "reading display geometry bound"
+    );
     use std::io::Write;
     let mut rgb = Vec::with_capacity(pixels.width() as usize * pixels.height() as usize * 3);
     for pixel in pixels.data().chunks_exact(4) {
@@ -208,16 +222,11 @@ pub(crate) fn raster_page(pixels: &resvg::tiny_skia::Pixmap) -> Result<Document>
         "Filter"=>"FlateDecode"},compressed));
     let content = doc.add_object(lopdf::Stream::new(
         dictionary! {},
-        format!(
-            "q {} 0 0 {} 0 0 cm /Im0 Do Q",
-            pixels.width(),
-            pixels.height()
-        )
-        .into_bytes(),
+        format!("q {} 0 0 {} 0 0 cm /Im0 Do Q", width, height).into_bytes(),
     ));
     let resources = dictionary! {"XObject"=>dictionary! {"Im0"=>image}};
     let page = doc.add_object(dictionary! {"Type"=>"Page","Parent"=>parent,
-    "MediaBox"=>vec![0.into(),0.into(),pixels.width().into(),pixels.height().into()],
+    "MediaBox"=>vec![0.into(),0.into(),width.into(),height.into()],
     "Resources"=>resources,"Contents"=>content});
     doc.objects.insert(
         parent,

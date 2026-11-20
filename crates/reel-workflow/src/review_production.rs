@@ -25,6 +25,7 @@ pub(super) fn check_copy(witness: &Production, copy: &Copy) -> Result<()> {
                 ToolCapability::ComicRender
                     | ToolCapability::ComicIssueAssembly
                     | ToolCapability::LayeredComicCompose
+                    | ToolCapability::ComicReadingAssembly
             ) | (Format::Film { .. }, ToolCapability::FilmRender)
         )
     {

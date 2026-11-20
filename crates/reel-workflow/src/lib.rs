@@ -19,6 +19,7 @@ pub mod issue_control;
 pub mod layered;
 pub mod publication;
 pub mod recipe;
+pub mod reading_issue;
 pub mod repair;
 pub mod resolution;
 pub mod review;
@@ -109,6 +110,7 @@ pub enum ToolCapability {
     ComicRender,
     LayeredComicCompose,
     ComicIssueAssembly,
+    ComicReadingAssembly,
     ComicIssueControl,
     ComicReviewControl,
 }

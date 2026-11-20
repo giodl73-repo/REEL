@@ -31,6 +31,7 @@ pub(crate) struct Generated {
     _inputs: NativeInputs,
     bound: Option<reel_workflow::issue::BoundIssue>,
     layered: Option<reel_workflow::layered::Bound>,
+    reading: Option<reel_workflow::reading_issue::Bound>,
     pub(crate) outputs: reel_workflow::ArtifactSet,
     pub(crate) files: BTreeMap<String, Vec<u8>>,
     resolution: Option<crate::resolution::Proposal>,
@@ -68,6 +69,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             _inputs: native,
             bound: None,
             layered: None,
+            reading: None,
             outputs: generated.outputs,
             files: generated.files,
             resolution: Some(generated.checked),
@@ -112,6 +114,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             _inputs: inputs.native,
             bound: None,
             layered: None,
+            reading: None,
             outputs: generated.outputs,
             files: generated.files,
             resolution: None,
@@ -128,6 +131,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             _inputs: inputs.native,
             bound: None,
             layered: None,
+            reading: None,
             outputs: g.outputs,
             files: g.files,
             resolution: None,
@@ -148,6 +152,24 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             _inputs: inputs.native,
             bound: None,
             layered: None,
+            reading: None,
+            outputs: generated.outputs,
+            files: generated.files,
+            resolution: None,
+        });
+    }
+    if packet
+        .task
+        .tool
+        .as_ref()
+        .is_some_and(|t| t.capability == reel_workflow::ToolCapability::ComicReadingAssembly)
+    {
+        let generated = reel_workflow::reading_issue::generate(packet, &mut inputs)?;
+        return Ok(Generated {
+            _inputs: inputs.native,
+            bound: None,
+            layered: None,
+            reading: Some(generated.bound),
             outputs: generated.outputs,
             files: generated.files,
             resolution: None,
@@ -164,6 +186,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
             _inputs: inputs.native,
             bound: None,
             layered: Some(generated.bound),
+            reading: None,
             outputs: generated.outputs,
             files: generated.files,
             resolution: None,
@@ -190,6 +213,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         _inputs: inputs.native,
         bound: Some(bound),
         layered: None,
+        reading: None,
         outputs: receipt.outputs,
         files,
         resolution: None,
@@ -279,6 +303,9 @@ fn receipt(generated: &Generated, result: &ReturnedResult, raw: &[u8]) -> Result
     {
         return Err(error(ErrorKind::Integrity, "issue-worker-receipt-replay"));
     }
+    if let Some(bound) = &generated.reading {
+        return bound.check_receipt(result, raw);
+    }
     if let Some(bound) = &generated.layered {
         bound.check_receipt(result, raw)
     } else if let Some(bound) = &generated.bound {
@@ -353,6 +380,20 @@ impl Proof {
         packet: &Packet,
         result: &ReturnedResult,
     ) -> Result<reel_workflow::review::Export> {
+        if let Some(bound) = &self._generated.reading {
+            let files = self.files.as_ref().ok_or_else(|| {
+                error(
+                    ErrorKind::Unsupported,
+                    "reading-issue-review-capture-required",
+                )
+            })?;
+            return bound.review_copy(
+                result,
+                files
+                    .get("receipt.json")
+                    .ok_or_else(|| error(ErrorKind::Missing, "reading-issue-review-receipt"))?,
+            );
+        }
         if let Some(bound) = &self._generated.layered {
             let files = self
                 .files

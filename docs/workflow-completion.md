@@ -9,6 +9,16 @@ checked again before closing the objective.
 
 ## Current delivery checkpoint — November 20
 
+The complete selected BBJ reading PDF is now at
+`F:/src/tig-dev-temp/reel-bbj-reading-issue-20261120-v1/reading/reading.pdf`:
+28 pages, 114,110,367 bytes, with every embedded page's pixels checked against
+its exact ordered selected PNG. The Rust `bbj-plan-reading-issue` command writes
+the complete intake/manual-return/late-bound recipe; `compose-reading-issue`
+produces the local PDF and source/review manifests. See the
+[actual reading issue evidence](handoff/2026-11-20-bbj-reading-issue.md).
+This completes a local reading derivative. Native full-issue retention,
+review/fix/rebuild and editable source restoration remain open.
+
 The usable local BBJ reader is at
 `F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html` (28 sheets).
 The packaged development preview starts at
