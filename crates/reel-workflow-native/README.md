@@ -177,6 +177,14 @@ larger allowance alone is insufficient. Binding-v2 jobs continue to use their ow
 declared policy. See [recovered-policy close](../../docs/handoff/2026-11-20-recovered-policy-close.md)
 for the contract and pending corrected-issue qualification.
 
+`inspect-input-closure PACKET SOURCE ADMISSION ATTEMPT` (Rust:
+`admission::Prepared::declared_preview`) checks the declared resource envelope and
+returns bounded object/byte totals independently of slot eligibility. Its output
+explicitly reports `admission_checked: false`. It performs no payload read or
+native work and can support planning while a prior operation still owns the slot.
+`Prepared::preview` retains its actual admission-readiness checks; the declared
+preview is not an admission token, availability claim or retained proof.
+
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and
 `verify_millis`. Total is at most 16 GiB and no greater than projection allowance;

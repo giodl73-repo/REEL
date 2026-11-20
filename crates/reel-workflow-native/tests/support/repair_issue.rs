@@ -84,6 +84,15 @@ fn corrected_issue_preflight_preserves_parent_packets_and_returns_original_contr
     .unwrap()
     .checkpoint();
     let checkpoint_before = canonical_digest(&before).unwrap();
+    assert_eq!(
+        before, control.acknowledgement.index_checkpoint,
+        "pre-admission refusal must preserve original Index"
+    );
+    save(
+        &root,
+        "original-state-audit.json",
+        &json!({"schema":"reel.corrected-issue-original-state-audit.v1","task_key":control.packet.task_key,"activation":control.profile.binding.admission.activation,"work":control.profile.binding.admission.work,"checkpoint_sha256":checkpoint_before,"original_retained_checkpoint_unchanged":true,"original_runtime":control.profile.runtime,"control_still_retained":true}),
+    );
     let pins: BTreeMap<PathBuf, String> = [
         control_root.join("packet.json"),
         control_root.join("profile.json"),
@@ -299,17 +308,12 @@ fn corrected_issue_preflight_preserves_parent_packets_and_returns_original_contr
     let mut admission = control.profile.admission.clone();
     admission.scope.operation = tig_store::Key::parse("rooted-issue-assembly-original").unwrap();
     let attempt = "rooted-issue-attempt-1";
-    let prepared = upstream::Admission::prepare(
-        &packet,
-        &source,
-        &admission,
-        attempt,
-        parents.borrowed().unwrap(),
-    )
-    .unwrap();
-    let preview = prepared.preview().unwrap();
+    let preview =
+        reel_workflow_native::admission::Prepared::open(&packet, &source, &admission, attempt)
+            .unwrap()
+            .declared_preview()
+            .unwrap();
     assert!(preview.declared_objects + 4 <= preview.changed_path_limit);
-    drop(prepared);
     for (name, raw) in [
         ("packet.json", serde_json::to_vec(&packet).unwrap()),
         ("source.json", serde_json::to_vec(&source).unwrap()),
@@ -323,6 +327,22 @@ fn corrected_issue_preflight_preserves_parent_packets_and_returns_original_contr
         raw_save(&root, name, &raw);
     }
     save(&root, "admission-preview.json", &preview);
+    let inspected = Command::new(&coordinator)
+        .arg("inspect-input-closure")
+        .arg(root.join("packet.json"))
+        .arg(root.join("source.json"))
+        .arg(root.join("admission.json"))
+        .arg(attempt)
+        .output()
+        .unwrap();
+    success(&root, "declared-preview-cli.json", &inspected);
+    let inspected: serde_json::Value = decode(&inspected.stdout).unwrap();
+    assert_eq!(
+        inspected["resources"],
+        serde_json::to_value(&preview).unwrap()
+    );
+    assert_eq!(inspected["admission_checked"], false);
+    assert_eq!(inspected["effects_applied"], false);
     save(&root, "preflight-receipt.json", &receipt);
     for (name, raw) in &files {
         raw_save(&root.join("preflight"), name, raw);
@@ -432,6 +452,16 @@ fn corrected_issue_preflight_preserves_parent_packets_and_returns_original_contr
     let closed: closing::Outcome = load(&close, "closed.json");
     assert!(closed.slot_idle && closed.original_clear_complete);
     assert_eq!(closed.handoff, staged.handoff);
+    let prepared = upstream::Admission::prepare(
+        &packet,
+        &source,
+        &admission,
+        attempt,
+        parents.borrowed().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(prepared.preview().unwrap(), preview);
+    drop(prepared);
     for p in parents.parents.values() {
         verify_parent(p);
     }

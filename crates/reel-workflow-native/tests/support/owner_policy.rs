@@ -96,6 +96,54 @@ fn legacy_binding_bytes_remain_stable_and_new_policy_is_pinned_before_effects() 
     );
 }
 
+#[test]
+fn declared_input_preview_is_independent_of_occupied_slot_and_preserves_original_claims() {
+    let fixture = Fixture::new();
+    let case = AdmissionCase::new(&fixture);
+    let receipt = Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    let mut task = fixture.packet.task.clone();
+    task.prompt.push_str(" Next immutable task.");
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        task_snapshots: BTreeMap::new(),
+        project: fixture.packet.project.clone(),
+        source_commit: fixture.packet.source_commit.clone(),
+        tasks: vec![task],
+    };
+    let packet = make_packet(&plan, &fixture.packet.task.id, BTreeMap::new()).unwrap();
+    let mut profile = case.profile.clone();
+    profile.scope.operation = tig_store::Key::parse("next-preview-only").unwrap();
+    let before = Index::open(&profile.index_root, &profile.index_minimum)
+        .unwrap()
+        .checkpoint();
+    let prepared = Prepared::open(&packet, &case.source, &profile, "next-attempt").unwrap();
+    let declared = prepared.declared_preview().unwrap();
+    assert!(declared.declared_objects > 0 && declared.logical_bytes > 0);
+    assert_eq!(
+        prepared.preview().unwrap_err().kind,
+        ErrorKind::NeedsRecovery
+    );
+    assert_eq!(
+        Index::open(&profile.index_root, &before)
+            .unwrap()
+            .checkpoint(),
+        before
+    );
+    drop(
+        Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+            .unwrap()
+            .reopen(&receipt)
+            .unwrap(),
+    );
+    assert_eq!(
+        case.protected(&Object::from_bytes(b"synthetic input")),
+        vec![case.profile.scope.actor.clone()]
+    );
+}
+
 // Only private synthetic metadata in this fixture's own Index. Existing native
 // pool/media are neither enumerated nor initialized. Each phase remains <=128.
 fn seed_history(case: &AdmissionCase) -> BTreeMap<LogicalPath, Object> {

@@ -534,6 +534,22 @@ impl Prepared {
             false,
         )
         .map_err(native_error)?;
+        self.declared_metrics()
+    }
+    /// Inspect the bounded declared resource closure independently of slot
+    /// eligibility. This is not native admission, byte availability or custody.
+    pub fn declared_preview(&self) -> Result<Preview> {
+        let mut memory = MemoryNodes::default();
+        envelope::create(
+            &self.resources,
+            &self.profile.scope.policy,
+            &mut memory,
+            self.projection_limits(),
+        )
+        .map_err(|e| native_error(e.into()))?;
+        self.declared_metrics()
+    }
+    fn declared_metrics(&self) -> Result<Preview> {
         let logical_bytes = self
             .resources
             .objects()

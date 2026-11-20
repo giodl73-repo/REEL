@@ -672,8 +672,12 @@ an explicit v2 close ticket for an old v1-binding job whose capacity recovery pl
 is already retained. The exact original request, policy object and retained work
 must match; the old profile/runtime and source budget remain unchanged. Its next
 fixture finalizes complete issue-assembly witnesses and checks full PDF/transcript
-preflight before returning the original control slot. Frozen qualification, actual
-issue admission/retention and contextual review remain pending.
+preflight before returning the original control slot. Its first frozen run matched
+the complete local issue bytes but refused an early admission preview while that
+slot remained occupied, with no close or new issue effects. Declared-input
+inspection now has a separate read-only Rust/CLI path; the corrected fixture
+checks real admission only after original-policy close. Frozen qualification,
+actual issue admission/retention and contextual review remain pending.
 
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect

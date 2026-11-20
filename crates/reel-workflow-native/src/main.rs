@@ -306,6 +306,18 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "runtime_adopted":false,"scratch_retired":false,"selected":false}),
             )
         }
+        [command, packet, source, profile, attempt] if command == "inspect-input-closure" => {
+            let preview = reel_workflow_native::admission::Prepared::open(
+                &read_control(Path::new(packet))?,
+                &read_control(Path::new(source))?,
+                &read_control(Path::new(profile))?,
+                attempt,
+            )?
+            .declared_preview()?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"declared-input-closure","resources":preview,"admission_checked":false,"native_payloads_verified":false,"effects_applied":false}),
+            )
+        }
         [command, packet, source, profile, receipt, result, target]
             if command == "inspect-retention-capacity" =>
         {
@@ -1420,6 +1432,7 @@ fn main() -> ExitCode {
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
             "reel-workflow-native inspect-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
+            "reel-workflow-native inspect-input-closure PACKET SOURCE ADMISSION ATTEMPT\n",
             "reel-workflow-native plan-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET POLICY OUTPUT --apply\n",
             "reel-workflow-native check-retention-capacity-plan PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
             "reel-workflow-native stage-retention-capacity PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET OUTPUT --apply\n",

@@ -52,6 +52,36 @@ other Waiting job and every original parent/profile pin must remain valid. It
 does not admit or execute the issue task; those controls are pinned for that next
 step. Frozen-source qualification is pending.
 
+The first frozen issue preflight at source
+`ef9b0ec105313943d4792e08f02ae011dcb4b8dd` passed packet/witness correspondence and
+byte equality for the full local PDF/transcript, then refused its premature
+slot-admission preview with `NeedsRecovery/native-admission-reconcile-original`
+after 73.03 seconds. The old control still occupied that slot. There was no close,
+new issue admission, journal or worker invocation. The failed source/tools/logs
+remain in `F:/src/tig-dev-temp/reel-corrected-issue-preflight-20261120-v1`.
+
+Declared resource inspection is now separate from admission eligibility:
+
+```text
+reel-workflow-native inspect-input-closure PACKET SOURCE ADMISSION ATTEMPT
+```
+
+`admission::Prepared::declared_preview` validates the bounded declared resource
+envelope and reports its object/byte totals without checking slot readiness,
+opening native payloads, accepting protection or creating native work. Existing
+`preview` retains its actual slot-admission checks. A new standard fixture proves
+declared preview works while another operation occupies the slot and that normal
+admission still refuses with unchanged actual Index and original positive claims.
+
+The corrected issue fixture now saves exact preflight controls and verifies the
+actual resource-inspection CLI while the old slot is busy. It checks original
+Index equality against the retained acknowledgement before any new effects. Only
+after explicit original-control policy close does it recheck complete live-parent
+custody and slot-admission preview, without accepting the issue yet. That final
+preview must equal the earlier declared resource totals. This is not a retry of
+an uncertain admission: the first attempt stopped during a dry preview before
+creating any new operation.
+
 Producer-applied rights/provenance and comics-editor checklists preserve immutable
 lineage and require complete issue context after a local fix. They do not confer
 creative, translation, font, voice or release authority. This is generic workflow
