@@ -78,6 +78,7 @@ fn corrected_comic_follow_up_binds_retained_production_and_resolution() {
     assert_eq!(digest(&manifest_raw), copy.review.sha256);
     let manifest: serde_json::Value = decode(&manifest_raw).unwrap();
     let request_raw = serde_json::to_vec(&review::Request {
+        production: None,
         schema: "reel.workflow-review-request.v1".into(),
         production_commit: copy.source_commit.clone(),
         copy_input: "control/review-copy".into(),

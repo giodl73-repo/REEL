@@ -18,6 +18,7 @@ fn structured() -> (Plan, Memory, ReturnedResult, Vec<u8>) {
     let request_bytes = serde_json::to_vec(&Request {
         schema: "reel.workflow-review-request.v1".into(),
         production_commit: copy.source_commit.clone(),
+        production: None,
         copy_input: "control/copy".into(),
         report_output: "report".into(),
     })

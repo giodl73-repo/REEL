@@ -10,6 +10,8 @@ use reel_workflow::{publication::*, *};
 use std::collections::BTreeMap;
 #[path = "support/issue_contract.rs"]
 mod issue_contract;
+#[path = "support/reviewed_production.rs"]
+mod reviewed_production;
 
 #[derive(Clone, Default)]
 struct Memory {

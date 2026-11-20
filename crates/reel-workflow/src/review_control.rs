@@ -7,6 +7,9 @@ pub const OUTPUTS: [&str; 3] = [
     "review-sources.json",
     "review-request.json",
 ];
+/// Explicit new-control opt-in. The value is the exact producer receipt input;
+/// legacy source maps omit this entry and reproduce their original v1 request.
+pub const PRODUCTION_RECEIPT: &str = "production/receipt.json";
 pub struct Generated {
     pub outputs: ArtifactSet,
     pub files: BTreeMap<String, Vec<u8>>,
@@ -55,6 +58,25 @@ pub fn source_bindings(
                 .map(|(name, a)| (format!("outputs/{name}"), a.logical_id.clone())),
         )
         .collect())
+}
+pub fn bound_source_bindings(
+    parent: &Packet,
+    result: &ReturnedResult,
+) -> Result<BTreeMap<String, String>> {
+    let mut bindings = source_bindings(parent, result)?;
+    bindings.insert(
+        PRODUCTION_RECEIPT.into(),
+        result
+            .worker_receipt
+            .as_ref()
+            .ok_or(Error {
+                kind: ErrorKind::Missing,
+                code: "review-control-producer-receipt".into(),
+            })?
+            .logical_id
+            .clone(),
+    );
+    Ok(bindings)
 }
 /// Carry the producer's exact upstream selectors into a derived review task,
 /// then add its own outputs/receipt. This is a planning declaration: native
@@ -143,6 +165,91 @@ fn read(reader: &mut impl InputReader, pin: &Artifact, max: u64) -> Result<Vec<u
     }
     Ok(raw)
 }
+/// Metadata correspondence for native adapters holding actual admitted parent
+/// custody. A source-authored witness or matching bytes cannot replace this
+/// exact request/copy/manifest origin and control-to-producer dependency chain.
+pub fn check_request_origin(
+    packet: &Packet,
+    production: &review::Production,
+    bindings: &upstream::Bindings,
+    parents: &BTreeMap<String, upstream::Parent<'_>>,
+) -> Result<()> {
+    check_result(&production.packet, &production.result)?;
+    let producer = production.packet.task.tool.as_ref().ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "review-production-tool".into(),
+    })?;
+    let origins = upstream::bind(packet, bindings, parents)?;
+    let origin = origins.get(review::REQUEST_ID).ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "review-production-control-origin".into(),
+    })?;
+    let parent = &parents[&origin.reference.task_id];
+    let tool = parent.packet.task.tool.as_ref().ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "review-production-control-tool".into(),
+    })?;
+    if tool.capability != ToolCapability::ComicReviewControl
+        || tool.publication != producer.publication
+        || tool.edition_id != producer.edition_id
+        || parent.packet.task.language != production.packet.task.language
+        || tool.part.is_some()
+        || !tool.auxiliary_executables.is_empty()
+        || tool.source_bindings != bound_source_bindings(&production.packet, &production.result)?
+        || Some(&tool.request) != production.result.worker_receipt.as_ref()
+        || parent.packet.dependencies.get(&production.packet.task.id)
+            != Some(&DependencyResult {
+                result_sha256: canonical_digest(&production.result)?,
+                artifacts: production.result.artifacts.clone(),
+            })
+        || parent
+            .packet
+            .task
+            .inputs
+            .iter()
+            .map(|a| (&a.logical_id, a))
+            .collect::<BTreeMap<_, _>>()
+            != inputs(&production.packet, &production.result)?
+                .iter()
+                .map(|a| (&a.logical_id, a))
+                .collect::<BTreeMap<_, _>>()
+    {
+        return fail(ErrorKind::Conflict, "review-production-control-producer");
+    }
+    for name in OUTPUTS {
+        let pin = parent.result.artifacts.get(name).ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "review-production-control-output".into(),
+        })?;
+        if origins.get(&pin.logical_id).is_none_or(|bound| {
+            bound.reference
+                != (upstream::Reference {
+                    task_id: origin.reference.task_id.clone(),
+                    artifact: upstream::Selector::Output { name: name.into() },
+                })
+        }) {
+            return fail(ErrorKind::Conflict, "review-production-control-origin");
+        }
+    }
+    let request = review::Request {
+        schema: "reel.workflow-review-request.v2".into(),
+        production_commit: production.packet.source_commit.clone(),
+        production: Some(production.clone()),
+        copy_input: parent.result.artifacts["review-copy.json"]
+            .logical_id
+            .clone(),
+        report_output: "report".into(),
+    };
+    let raw = serde_json::to_vec(&request).map_err(|_| Error {
+        kind: ErrorKind::Invalid,
+        code: "review-production-request-json".into(),
+    })?;
+    let pin = &parent.result.artifacts["review-request.json"];
+    if pin.bytes != raw.len() as u64 || pin.sha256 != digest(&raw) {
+        return fail(ErrorKind::Integrity, "review-production-request-origin");
+    }
+    Ok(())
+}
 pub fn generate(
     packet: &Packet,
     bindings: &upstream::Bindings,
@@ -190,6 +297,12 @@ pub fn generate_with_issue<R: InputReader>(
         kind: ErrorKind::Missing,
         code: "review-control-producer-tool".into(),
     })?;
+    let bound_production = tool.source_bindings.contains_key(PRODUCTION_RECEIPT);
+    let expected_sources = if bound_production {
+        bound_source_bindings(parent.packet, parent.result)?
+    } else {
+        source_bindings(parent.packet, parent.result)?
+    };
     if !matches!(
         producer.capability,
         ToolCapability::ComicRender | ToolCapability::ComicIssueAssembly
@@ -197,7 +310,7 @@ pub fn generate_with_issue<R: InputReader>(
         || tool.edition_id != producer.edition_id
         || packet.task.language != parent.packet.task.language
         || parent.result.worker_receipt.as_ref() != Some(&tool.request)
-        || tool.source_bindings != source_bindings(parent.packet, parent.result)?
+        || tool.source_bindings != expected_sources
     {
         return fail(ErrorKind::Conflict, "review-control-producer-binding");
     }
@@ -269,8 +382,17 @@ pub fn generate_with_issue<R: InputReader>(
     })?;
     let copy_pin = pin(format!("workflow/review/{}/copy", packet.task_key), &copy);
     let request = serde_json::to_vec(&review::Request {
-        schema: "reel.workflow-review-request.v1".into(),
+        schema: if bound_production {
+            "reel.workflow-review-request.v2"
+        } else {
+            "reel.workflow-review-request.v1"
+        }
+        .into(),
         production_commit: parent.packet.source_commit.clone(),
+        production: bound_production.then(|| review::Production {
+            packet: parent.packet.clone(),
+            result: parent.result.clone(),
+        }),
         copy_input: copy_pin.logical_id.clone(),
         report_output: "report".into(),
     })

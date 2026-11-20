@@ -3,13 +3,18 @@
 use crate::*;
 #[path = "review_material.rs"]
 mod material;
+#[path = "review_production.rs"]
+mod production;
 pub use material::comic_reading_inputs;
+pub use production::Production;
 pub const REQUEST_ID: &str = "control/review-request";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
     pub schema: String,
     pub production_commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub production: Option<Production>,
     pub copy_input: String,
     pub report_output: String,
 }
@@ -36,11 +41,14 @@ pub struct Brief {
     pub evidence: Vec<Artifact>,
 }
 impl Bound {
+    pub fn production(&self) -> Option<&Production> {
+        self.request.production.as_ref()
+    }
     pub fn report_output(&self) -> &str {
         &self.request.report_output
     }
     pub fn check(&self, result: &ReturnedResult, report: &[u8]) -> Result<CheckedReport> {
-        check_returned_report_at(
+        let mut checked = check_returned_report_at(
             &self.packet,
             result,
             &self.request.copy_input,
@@ -48,7 +56,9 @@ impl Bound {
             &self.request.report_output,
             report,
             &self.request.production_commit,
-        )
+        )?;
+        checked.production = self.request.production.clone();
+        Ok(checked)
     }
     /// Instructions are private context, not a record of viewing or approval.
     /// A proxy passes only its explicitly allowed inputs; manual callers may
@@ -193,8 +203,10 @@ pub fn bind(packet: &Packet, reader: &mut impl publication::InputReader) -> Resu
             code: "review-task-request".into(),
         })?;
     let request: Request = decode(&read(reader, request_pin)?)?;
-    if request.schema != "reel.workflow-review-request.v1"
-        || !hex(&request.production_commit, &[40, 64])
+    if !matches!(
+        (request.schema.as_str(), &request.production),
+        ("reel.workflow-review-request.v1", None) | ("reel.workflow-review-request.v2", Some(_))
+    ) || !hex(&request.production_commit, &[40, 64])
         || request.copy_input == REQUEST_ID
         || !token(&request.report_output)
     {
@@ -235,6 +247,9 @@ pub fn bind(packet: &Packet, reader: &mut impl publication::InputReader) -> Resu
     if !packet.task.inputs.contains(&copy.publication) || !packet.task.inputs.contains(&copy.review)
     {
         return fail(ErrorKind::Missing, "review-task-source-pins");
+    }
+    if let Some(production) = &request.production {
+        production::check_copy(production, &copy)?;
     }
     Ok(Bound {
         packet: packet.clone(),
@@ -354,6 +369,8 @@ pub struct CheckedReport {
     copy: Copy,
     report_sha256: String,
     findings: BTreeMap<String, CheckedFinding>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    production: Option<Production>,
 }
 impl CheckedReport {
     pub fn copy(&self) -> &Copy {
@@ -364,6 +381,18 @@ impl CheckedReport {
     }
     pub fn report_sha256(&self) -> &str {
         &self.report_sha256
+    }
+    pub fn production(&self) -> Option<&Production> {
+        self.production.as_ref()
+    }
+    /// Exact planning correspondence only; callers separately retain native
+    /// report/control/producer custody and any viewing or approval evidence.
+    pub fn check_production_task(&self, plan: &Plan, task: &str) -> Result<()> {
+        let witness = self.production.as_ref().ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "review-production-required".into(),
+        })?;
+        production::check_plan(witness, &self.copy, plan, Some(task))
     }
 }
 fn id(value: &str) -> bool {
@@ -531,6 +560,7 @@ pub fn check_report(copy: &Copy, report: &Report) -> Result<CheckedReport> {
         copy: copy.clone(),
         report_sha256,
         findings,
+        production: None,
     })
 }
 
@@ -723,7 +753,10 @@ pub(crate) fn task_references(task: &Task) -> Vec<&Artifact> {
 /// Does not mutate a plan, release old jobs, apply selections or close findings.
 pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Result<Impact> {
     let order = check_plan(plan)?;
-    let snapshot_matches = if plan.schema == SCOPED_PLAN_SCHEMA {
+    let snapshot_matches = if let Some(witness) = &report.production {
+        production::check_plan(witness, &report.copy, plan, None)?;
+        true
+    } else if plan.schema == SCOPED_PLAN_SCHEMA {
         let commits: BTreeSet<_> = plan
             .tasks
             .iter()

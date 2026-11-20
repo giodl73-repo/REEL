@@ -8,7 +8,29 @@ use tig_core::Object;
 use tig_git::annex::workflow::reader;
 pub(crate) fn prepare(packet: &Packet, native: &mut NativeInputs) -> Result<()> {
     if packet.task.operation == Operation::ReviewReport {
-        reel_workflow::review::bind(packet, native)?;
+        let bound = reel_workflow::review::bind(packet, native)?;
+        if let Some(production) = bound.production() {
+            let frozen = native.review_origins()?;
+            let parents = frozen
+                .parents
+                .iter()
+                .map(|(id, p)| {
+                    (
+                        id.clone(),
+                        reel_workflow::upstream::Parent {
+                            packet: &p.packet,
+                            result: &p.result,
+                        },
+                    )
+                })
+                .collect();
+            reel_workflow::review_control::check_request_origin(
+                packet,
+                production,
+                &frozen.bindings,
+                &parents,
+            )?;
+        }
     }
     Ok(())
 }

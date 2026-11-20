@@ -118,6 +118,9 @@ pub fn propose(
     for (language, report) in after {
         let copy = report.copy();
         let context = &decision.contexts[language];
+        if report.production().is_some() {
+            report.check_production_task(&candidate.plan, &context.production_task)?;
+        }
         if copy.project != plan.project
             || &copy.language != language
             || copy.source_commit != candidate.plan.source_commit_for(&context.production_task)?
