@@ -44,4 +44,21 @@ selection, scratch retirement, real BBJ/Melena adoption or S5 scale is implied.
 Producer-applied comics-editor and rights/provenance checklists preserve Spanish
 source text and original IDs, exact history, installed-font restrictions, private
 technical derivatives and separate creative/contextual approval. They are not an
-independent review. The native fixture is not yet qualified at this source entry.
+independent review.
+
+The initial frozen run at source `1a0c7f1f1e94045b03f37229277588a277615eb8`
+completed the native dispatch and its completed-task replay, then failed a fixture
+assertion while recording returned controls (837.00 seconds, exit 101). The
+returned bindings intentionally include a staged input ticket; the original
+dispatch bindings do not. Both versions must be preserved, rather than compared
+as if they were identical or used to overwrite the original dispatch intent.
+Future fixture observations are now stored in a separate `generated` directory.
+
+The original operation is preserved under
+`F:/src/tig-dev-temp/reel-native-part-repair-20261119-v1/job`. Its actual result,
+native acknowledgement and Retained journal survive. The dedicated
+`verify_original_completed_part_after_binding_observation_recording_failure`
+fixture reopens those exact handles and runs the remaining native proof, pixel,
+editable-packet, target-ID, historical report, closing-part, Waiting-job and real
+Index replay checks. It does not repeat close, admission, input publication or
+rendering. Verification/recovery is not yet qualified at this source entry.

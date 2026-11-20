@@ -200,14 +200,6 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
             .packet,
         closing.packet
     );
-    let old_clean = native_bytes(
-        &opening.profile.source,
-        &opening.result.artifacts["page01-clean.png"],
-    );
-    let old_reading = native_bytes(
-        &opening.profile.source,
-        &opening.result.artifacts["page01-reading.png"],
-    );
     let mut old_inputs = NativeInputs::open(&opening.packet, &opening.profile.source).unwrap();
     reel_workflow::publication::bind_comic(&opening.packet, &mut old_inputs).unwrap();
     let mut bytes = BTreeMap::new();
@@ -490,21 +482,139 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
         &bindings,
     );
     for (name, raw) in generated {
-        let path = root.join(name);
-        if path.exists() {
-            assert_eq!(fs::read(path).unwrap(), raw);
-        } else {
-            raw_save(&root, name, &raw);
-        }
+        // Returned controls include newly staged bindings. Preserve the exact
+        // original dispatch inputs and record those observations separately.
+        raw_save(&root.join("generated"), name, &raw);
     }
-    let result: ReturnedResult = load(&root, "result.json");
+    verify_completed_part(
+        &root,
+        &evidence,
+        &candidate_root,
+        &report_root,
+        &controls,
+        &waiting,
+    );
+}
+
+fn verify_completed_part(
+    root: &Path,
+    evidence: &Path,
+    candidate_root: &Path,
+    report_root: &Path,
+    controls: &Path,
+    waiting: &Path,
+) {
+    let packet: Packet = load(root, "packet.json");
+    let profile: handoff::Profile = load(root, "profile.json");
+    let receipt: admission::Receipt = load(root, "receipt.json");
+    let preview: admission::Preview = load(root, "admission-preview.json");
+    let runtime = &profile.runtime.path;
+    let attempt = &receipt.attempt_id;
+    let source_repository = &profile.source.snapshot.repository;
+    let journal = root.join("journal");
+    let marker: serde_json::Value = load(root, "original-operation.json");
+    assert_eq!(marker["task_key"], packet.task_key);
+    assert_eq!(marker["attempt_id"], receipt.attempt_id);
+    assert_eq!(marker["runtime_sha256"], profile.runtime.sha256);
+    assert_eq!(receipt.task_key, packet.task_key);
+    assert_eq!(
+        receipt.scope.operation.as_str(),
+        "rooted-opening-repair-original"
+    );
+    assert_eq!(
+        reel_workflow::handoff::Journal::open(&root.join("journal"))
+            .unwrap()
+            .state(),
+        reel_workflow::handoff::State::Retained
+    );
+    let check_waiting = || {
+        let packet: Packet = load(waiting, "next-packet.json");
+        let profile: handoff::Profile = load(waiting, "next-handoff-profile.json");
+        let journal = reel_workflow::handoff::Journal::open(&waiting.join("next-journal")).unwrap();
+        assert_eq!(journal.state(), reel_workflow::handoff::State::Waiting);
+        assert_eq!(journal.ticket().packet, packet);
+        drop(
+            admission::Prepared::open(
+                &packet,
+                &profile.source,
+                &profile.admission,
+                &profile.binding.admission.attempt_id,
+            )
+            .unwrap()
+            .reopen(&profile.binding.admission)
+            .unwrap(),
+        );
+    };
+    check_waiting();
+    let index = tig_store::source_claims::protection::Index::open(
+        &profile.admission.index_root,
+        &receipt.index_checkpoint,
+    )
+    .unwrap();
+    let verification_checkpoint = canonical_digest(&index.checkpoint()).unwrap();
+    drop(index);
+    save(
+        evidence,
+        "verification-start.json",
+        &json!({"task_key":packet.task_key,"activation":receipt.activation,"work":receipt.work,"checkpoint_sha256":verification_checkpoint,"runtime":profile.runtime}),
+    );
+    let mut original_pins: BTreeMap<PathBuf, String> = load(root, "original-pins.json");
+    for name in [
+        "packet.json",
+        "profile.json",
+        "source.json",
+        "admission.json",
+        "receipt.json",
+        "result.json",
+        "original-operation.json",
+    ] {
+        let path = root.join(name);
+        original_pins.insert(path.clone(), digest(&fs::read(path).unwrap()));
+    }
+    save(evidence, "verification-original-pins.json", &original_pins);
+    let parents: reel_workflow_native::upstream::Parents = load(controls, "parents.json");
+    let opening = &parents.parents["opening"];
+    let closing = &parents.parents["closing"];
+    verify_parent(opening);
+    let old_clean = native_bytes(
+        &opening.profile.source,
+        &opening.result.artifacts["page01-clean.png"],
+    );
+    let old_reading = native_bytes(
+        &opening.profile.source,
+        &opening.result.artifacts["page01-reading.png"],
+    );
+    let report_packet: Packet = load(report_root, "packet.json");
+    let report_profile: handoff::Profile = load(report_root, "profile.json");
+    let report_result: ReturnedResult = load(report_root, "result.json");
+    let report_ack: retention::Acknowledgement = load(report_root, "retained.json");
+    let guard = retention::verify(
+        &report_packet,
+        &report_profile.source,
+        &report_profile.admission,
+        &report_profile.binding.admission,
+        &report_result,
+        &report_ack,
+    )
+    .unwrap();
+    let checked = guard.review_report().unwrap().clone();
+    drop(guard);
+    let result: ReturnedResult = load(root, "result.json");
     let ack: retention::Acknowledgement = load(
         &profile.acknowledgements,
         &format!("retained-{}-{}.json", packet.task_key, attempt),
     );
-    save(&root, "retained.json", &ack);
+    if root.join("retained.json").exists() {
+        let existing: retention::Acknowledgement = load(root, "retained.json");
+        assert_eq!(
+            canonical_digest(&existing).unwrap(),
+            canonical_digest(&ack).unwrap()
+        );
+    } else {
+        save(root, "retained.json", &ack);
+    }
     phase(
-        &root,
+        root,
         "verify-corrected-part-retained-proof-and-historical-report",
     );
     drop(
@@ -557,7 +667,7 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
         .collect();
     assert_eq!(reviewed.copy().units, targets);
     assert_eq!(reviewed.copy().source_commit, packet.source_commit);
-    save(&root, "corrected-part-review-copy.json", reviewed.copy());
+    save(root, "corrected-part-review-copy.json", reviewed.copy());
     drop(reviewed);
     let reopened = retention::verify(
         &report_packet,
@@ -583,7 +693,8 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
         canonical_digest(&index.checkpoint()).unwrap()
     };
     let completed_checkpoint = checkpoint();
-    let replay = Command::new(&runtime)
+    assert_eq!(verification_checkpoint, completed_checkpoint);
+    let replay = Command::new(runtime)
         .arg("dispatch-task")
         .arg(root.join("automatic-plan.json"))
         .arg(root.join("automatic-bindings.json"))
@@ -593,9 +704,9 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
         .arg("--apply")
         .output()
         .unwrap();
-    success(&root, "completed-replay.json", &replay);
+    success(root, "completed-replay.json", &replay);
     assert_eq!(completed_checkpoint, checkpoint());
-    assert_eq!(load::<ReturnedResult>(&root, "result.json"), result);
+    assert_eq!(load::<ReturnedResult>(root, "result.json"), result);
     check_waiting();
     for (path, pin) in &original_pins {
         assert_eq!(&digest(&fs::read(path).unwrap()), pin);
@@ -607,12 +718,35 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
         reel_workflow::handoff::State::Retained
     );
     let worker: worker::Ticket = load(&root.join("automatic-dispatch"), "worker-ticket.json");
-    let outcome = json!({"schema":"reel.native-rooted-part-repair-qualification.v1","job":root,"source_repository":fixture.temp.path(),"task_key":packet.task_key,"attempt_id":attempt,"source_commit":packet.source_commit,"activation":receipt.activation,"work":receipt.work,"scope":receipt.scope,"runtime":profile.runtime,"declared_objects":preview.declared_objects,"checkpoint_sha256":completed_checkpoint,"real_native_source_verified":true,"original_report_closed_with_original_runtime":true,"same_slot_reused":true,"retained_report_reopened_after_reuse":true,"part_retained":true,"part_task_completed":true,"part_replay_actual_index_unchanged":true,"clean_art_unchanged":true,"reading_pixels_changed":true,"editable_part_matches_local_qualified_candidate":true,"page_panel_balloon_ids_preserved":true,"closing_packet_and_history_preserved":true,"other_waiting_generation_reopened":true,"worker_directory":worker.directory(),"whole_corrected_issue_retained":false,"descendant_source_declarations_pending":true,"contextual_viewing":false,"finding_closed":false,"selected":false,"approved":false,"runtime_adopted":false,"scratch_retired":false});
-    save(&root, "qualification-result.json", &outcome);
-    save(&evidence, "qualification-result.json", &outcome);
+    let outcome = json!({"schema":"reel.native-rooted-part-repair-qualification.v1","job":root,"source_repository":source_repository,"task_key":packet.task_key,"attempt_id":attempt,"source_commit":packet.source_commit,"activation":receipt.activation,"work":receipt.work,"scope":receipt.scope,"runtime":profile.runtime,"declared_objects":preview.declared_objects,"checkpoint_sha256":completed_checkpoint,"real_native_source_verified":true,"original_report_closed_with_original_runtime":true,"same_slot_reused":true,"retained_report_reopened_after_reuse":true,"part_retained":true,"part_task_completed":true,"part_replay_actual_index_unchanged":true,"clean_art_unchanged":true,"reading_pixels_changed":true,"editable_part_matches_local_qualified_candidate":true,"page_panel_balloon_ids_preserved":true,"closing_packet_and_history_preserved":true,"other_waiting_generation_reopened":true,"worker_directory":worker.directory(),"whole_corrected_issue_retained":false,"descendant_source_declarations_pending":true,"contextual_viewing":false,"finding_closed":false,"selected":false,"approved":false,"runtime_adopted":false,"scratch_retired":false});
+    save(root, "qualification-result.json", &outcome);
+    save(evidence, "qualification-result.json", &outcome);
     phase(
-        &root,
+        root,
         "retained-corrected-part-awaiting-fresh-derived-controls-and-complete-issue",
+    );
+}
+
+#[test]
+#[ignore = "Verify only the preserved completed part after fixture binding-observation bookkeeping failed; original runtime/receipt/result, no readmission, input publication or rerender"]
+fn verify_original_completed_part_after_binding_observation_recording_failure() {
+    let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let root = env("REEL_NATIVE_PART_REPAIR_COMPLETED_ROOT");
+    let evidence = env("REEL_NATIVE_PART_REPAIR_VERIFICATION_EVIDENCE");
+    let qualified = env("REEL_NATIVE_PART_REPAIR_CANDIDATE");
+    let controls = env("REEL_NATIVE_PART_REPAIR_CONTROLS");
+    let waiting = env("REEL_NATIVE_PART_REPAIR_WAITING");
+    let marker: serde_json::Value = load(&root, "original-operation.json");
+    let report = PathBuf::from(marker["report"].as_str().unwrap());
+    let completed: serde_json::Value = load(&root, "automatic-completion.json");
+    assert_eq!(completed["task_completed"], true);
+    verify_completed_part(
+        &root,
+        &evidence,
+        &qualified.join("candidate"),
+        &report,
+        &controls,
+        &waiting,
     );
 }
 

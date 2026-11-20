@@ -93,8 +93,13 @@ attempt `issue-report-attempt-1`, operation `whole-issue-report-original`,
 activation `e6f047dd31dded0ab32ee0052220ef790634831d4c81100a22872516968bec93`.
 Its source WorkRef is
 `work-c394e34daae05b8625a1777936c577e8d070f1b92f50496053b0e258d7ca4593`.
-It remains retained on active slot2; no subsequent close/reuse or scratch
-retirement occurred. Do not rerun either fixture or re-admit these generations.
+At that qualification it remained retained on active slot2, without subsequent
+close/reuse or scratch retirement. The later
+[native part repair](2026-11-19-native-part-repair.md) has now closed it through
+its original runtime and reused slot2 for a distinct corrected-part operation;
+that operation's original handles and verification status are recorded separately.
+No scratch is retired. Do not rerun either report fixture or re-admit these
+generations.
 
 This is a scripted technical protocol exercise with no actual model call or
 creative defect assertion. Declared/staged images and a valid report are not
