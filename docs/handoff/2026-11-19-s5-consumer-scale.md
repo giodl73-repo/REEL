@@ -99,6 +99,9 @@ total/object/deadline allowances through returned-file verification and retained
 checks. Omitted allowances keep the legacy 128 MiB behavior. The pinned native
 publisher/reopen hash still has a fixed 30-second deadline; explicit byte budgets
 do not qualify multi-GB native ingestion or complete film production.
+Its separate frozen release fixture verifies an existing 3.6 GB synthetic return
+in 25.66 seconds without publication, new capacity or project adoption. This
+closes the return byte-verification component only; no real media is processed.
 
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy

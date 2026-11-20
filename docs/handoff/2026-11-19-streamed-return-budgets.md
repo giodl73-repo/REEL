@@ -60,8 +60,29 @@ An explicit read-only fixture uses the existing reserved 3,600,000,001-byte
 synthetic source, verifies the original known hash through this return adapter,
 refuses the legacy allowance and holds a mutation guard. It allocates no new
 capacity, creates no native job, publishes no payload and completes no task.
-Its result and frozen source/tool evidence must be recorded before claiming
-that qualification.
+The fixture passed in 25.66 seconds (26.76 seconds including process launch).
+It verified the original hash, refused the legacy allowance before reading and
+refused an attempted write while the file guard remained live. The existing
+source/reservation is preserved. No new native admission, publication, capacity
+reservation, task completion or consumer adoption occurred.
+
+Source: `750eedd9ef11e2b7c9136bf31ba1294acb1348a7`; all 1,940 tracked files
+were archived and individually hash/length compared against the working tree.
+Frozen release test tool: SHA256
+`2d24b367ef9fa6494f46a8ac0ef8638185d7fc23428545f659abd474f31d0f78`,
+15,434,752 bytes. All 82 standard native tests and the 247 SDK source pins pass;
+strict all-target Clippy passes with film and with no default features, and
+`git diff --check` passes. The final snapshot suite completed in 136.86 seconds.
+The source's 62 explicitly ignored effect/large fixtures were excluded from the
+standard suite; only the named read-only large-return fixture ran separately.
+
+Private certificate:
+`F:/src/tig-dev-temp/reel-streamed-return-20261119-v1/qualified-tools.json`,
+SHA256 `f81ee416ebea33a74bf1cf0bcc417bd9349a5ac67f95702c76cf3f443c94cd96`.
+It pins the source archive/manifest, frozen executable, exact input, original
+start/outcome records, large-return log, final standard-test log and both Clippy
+logs. Qualification session 44485 and regression session 9559 both terminated
+successfully; neither is waiting or needs a replacement run.
 
 ## Tig boundary and remaining work
 

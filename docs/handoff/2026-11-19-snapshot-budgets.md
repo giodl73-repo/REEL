@@ -44,6 +44,9 @@ per phase. The existing qualified single-store SDK and source pins are unchanged
 Composite upstream contracts independently retain their 64 MiB limit. Film v2
 dispatch remains gated; generic candidate-return and resolution budgets remain
 unchanged. This does not admit an E7 closure of 600 resources.
+The subsequent [streamed return budget port](2026-11-19-streamed-return-budgets.md)
+adds optional task-bound return allowances; omitted fields keep these original
+declaration bytes and legacy return limits. Large native custody remains open.
 
 ## Evidence and review scope
 

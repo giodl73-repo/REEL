@@ -63,6 +63,11 @@ file verification uses 64 KiB buffers and retained checks use the same budget.
 Full v2 film dispatch remains gated. The pinned SDK's fixed 30-second native
 transfer/reopen checks are a separate qualification boundary; this port does
 not establish multi-GB publication, retained custody or episode-scale recovery.
+The read-only frozen release fixture verifies the existing 3,600,000,001-byte
+synthetic return in 25.66 seconds, including legacy allowance refusal and a live
+mutation guard. All 82 standard native tests, 247 SDK pins and strict Clippy
+feature modes pass. Source/tool/log pins are recorded in the linked handoff;
+there is no new native admission, publication, capacity reservation or adoption.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
