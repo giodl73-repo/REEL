@@ -69,14 +69,19 @@ mutation guard. All 82 standard native tests, 247 SDK pins and strict Clippy
 feature modes pass. Source/tool/log pins are recorded in the linked handoff;
 there is no new native admission, publication, capacity reservation or adoption.
 
-The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
-now also has an independent dependency prerequisite: explicit
+Explicit
 [upstream inputs v3](handoff/2026-11-19-streamed-upstream-inputs.md) bind larger
 retained intermediate allowances and expose guarded borrowed streams, while
 legacy v1/v2 remain at 64 MiB. Synthetic metadata covers seven parents totaling
 7.94 GB; this is not real E7 partitioning or native large-payload qualification.
 Automatic large composition/template generation, complete protected closure
 admission and full edition execution remain open.
+The 29.11-second read-only native fixture streams an existing 10,138-byte retained
+comic artifact, resolves frozen v3 metadata and refuses repeated object opens
+with the actual Index checkpoint unchanged. All 115 workflow, 84 standard native
+and 31 HTTP tests, 247 SDK pins and strict Clippy checks pass. This qualifies the
+bounded borrowed-stream component, not native multi-GB intermediate custody or
+automatic large composition scheduling; no child admission or publication occurs.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole

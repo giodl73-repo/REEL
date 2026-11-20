@@ -104,6 +104,13 @@ Its separate frozen release fixture verifies an existing 3.6 GB synthetic return
 in 25.66 seconds without publication, new capacity or project adoption. This
 closes the return byte-verification component only; no real media is processed.
 
+The [upstream v3 port](2026-11-19-streamed-upstream-inputs.md) now declares
+larger retained intermediate budgets and offers borrowed native streams without
+whole-file capture. A synthetic seven-parent 7.94 GB metadata test and a separate
+10,138-byte retained comic stream pass. The native fixture preserves the actual
+Index checkpoint; neither test qualifies the full E7 closure or large native
+intermediate custody. Automatic component scheduling/composition remains open.
+
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
 recovery, native gates, tickets and claims. Its ten-input movie fixture passes

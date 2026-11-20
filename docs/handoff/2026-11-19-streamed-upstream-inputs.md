@@ -61,8 +61,30 @@ An opt-in read-only fixture targets the existing retained synthetic comic. It
 checks complete original parent proof, frozen v3 composite metadata, streamed
 exact bytes, caller allowance refusal, repeat-open refusal and equality of the
 actual native Index checkpoint. It grants no child admission, native publication,
-new capacity, task completion, selection or adoption. Record its observed result
-and frozen source/tool evidence before claiming that qualification.
+new capacity, task completion, selection or adoption.
+
+The fixture passed in 29.11 seconds (29.88 seconds including process launch),
+streaming a 10,138-byte retained synthetic PNG after complete original parent
+verification. Frozen v3 composite metadata resolved, a too-small caller allowance
+refused, the second open refused before provider access and the actual native
+Index checkpoint remained byte-equal at sequence 19. This is a small native
+dependency fixture, distinct from the separate synthetic 7.94 GB metadata test.
+
+Source `ad2d52a6e69bdc7a12a07534590d7cc2608f3375` is archived with all 1,942
+tracked files individually hash/length compared against the working tree.
+Frozen Windows test executable: SHA256
+`d9043bdd242a18bf49c1f2f0ea83a90a4ba38e0ad50718bf5e46cc9372b760af`,
+43,889,664 bytes. All 115 workflow, 84 standard native and 31 HTTP tests pass;
+all 247 SDK source pins and strict all-target Clippy for workflow and native
+with/without film pass. The 63 ignored native fixtures were excluded from the
+standard suite; only this named existing-parent fixture ran separately.
+
+Private certificate:
+`F:/src/tig-dev-temp/reel-streamed-upstream-20261119-v1/qualified-tools.json`,
+SHA256 `d604a531a0e846cc6a68cf5d492b6aa043161f9ddf618d91eeb54db69ab3d674`.
+It binds source archive/manifest, frozen executable, original start/outcome,
+native result/checkpoints and all three standard test logs. Session 15241
+terminated successfully; the parent and original native jobs remain intact.
 
 This does not qualify multi-GB native dependency bytes, the full 600-resource
 closure, component scheduling, complete bilingual assembly, retained intermediate
