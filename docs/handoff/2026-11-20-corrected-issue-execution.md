@@ -18,6 +18,24 @@ proofs, and completed replay without Index or worker-result changes. The review
 copy is an addressable technical artifact; contextual review, finding closure,
 selection, creative approval, scratch retirement and release are separate steps.
 
-This fixture has not yet been run. It does not qualify real BBJ/S5 scale, provider
-services, owned production-profile adoption or rollback. Evidence must be frozen
-outside Git before recording an actual qualification outcome here.
+The first frozen run at source `f60c514d9246bd14cf26e3a99a434b6c71f076eb`
+stopped after 436.58 seconds with `Budget/worker-output-and-evidence-reservation`.
+The initial fixture used a 64 MiB worker reservation as well as a 64 MiB input
+stage. The assembly's declared output/evidence envelope requires more worker
+capacity. Admission and input staging succeeded; the worker did not execute and
+no result was recorded. The failed run, empty dispatch worker-ticket placeholder,
+immutable config, ready batch, input ticket and Waiting journal are preserved in
+`F:/src/tig-dev-temp/reel-corrected-issue-execution-20261120-v1`.
+
+The corrected initial fixture uses a separate 512 MiB worker reservation. Do not
+rerun it against the admitted job. A distinct opt-in original-operation recovery
+checks the exact refusal, empty ticket and empty worker parent, reopens the actual
+admission, pins all old controls, and explicitly declares the larger first worker
+reservation. It calls the original runtime's existing `prepare-worker` and
+`run-worker` interfaces with the original ready batch, packet, admission and
+attempt, using a separate new ticket path. It never rewrites the failed dispatch
+config or placeholder, readmits the task, or replaces a started worker. This is a
+pre-worker staging correction, not adoption of an already owned workspace.
+
+Recovery qualification remains pending. Real BBJ/S5 scale, provider services,
+owned production-profile adoption and rollback remain separate requirements.

@@ -149,13 +149,13 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         binding(root.join("journal"), root.join("profile.json")),
     );
     save(&root, "bindings.json", &bindings);
-    let staging_profile = |name: &str| {
+    let staging_profile = |name: &str, maximum_bytes| {
         let parent = root.join(name);
         fs::create_dir(&parent).unwrap();
         staging::Profile {
             schema: "reel.workflow-staging.v1".into(),
             parent,
-            maximum_bytes: 64 * 1024 * 1024,
+            maximum_bytes,
             capacity_policy: reel_assets::admission::Policy {
                 minimum_free_bytes: 65536,
                 minimum_free_basis_points: 0,
@@ -166,8 +166,8 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
     };
     let config = dispatch::Config {
         schema: "reel.workflow-dispatch.v1".into(),
-        input_staging: staging_profile("input-workspaces"),
-        worker_staging: Some(staging_profile("worker-workspaces")),
+        input_staging: staging_profile("input-workspaces", 64 * 1024 * 1024),
+        worker_staging: Some(staging_profile("worker-workspaces", 512 * 1024 * 1024)),
         provider: None,
         auxiliary_programs: BTreeMap::new(),
     };
@@ -188,6 +188,168 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         "first-dispatch-result.json",
         &json!({"exit_code":out.status.code(),"stdout":String::from_utf8_lossy(&out.stdout),"stderr":String::from_utf8_lossy(&out.stderr)}),
     );
+    finish(
+        &root,
+        &evidence,
+        &preflight,
+        &out,
+        &root.join("dispatch/worker-ticket.json"),
+    );
+}
+
+#[test]
+#[ignore = "Only the exact recorded pre-worker reservation refusal; reopens the existing Waiting admission, preserves empty failed ticket/config, prepares its first owned worker with explicit 512 MiB profile using original 264 runtime; no readmission or replacement"]
+fn original_waiting_issue_recovers_preworker_reservation_refusal_without_replacing_dispatch() {
+    let original = PathBuf::from(std::env::var_os("REEL_REPAIR_ISSUE_REFUSED_EXECUTION").unwrap());
+    let evidence = PathBuf::from(std::env::var_os("REEL_REPAIR_ISSUE_WORKER_RECOVERY").unwrap());
+    let root = original.join("job");
+    let process: serde_json::Value = load(&original, "process-result.json");
+    assert_eq!(process["exit_code"], 101);
+    let failed: serde_json::Value = load(&root, "first-dispatch-result.json");
+    let refusal: serde_json::Value = decode(failed["stdout"].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(
+        refusal["error"]["code"],
+        "worker-output-and-evidence-reservation"
+    );
+    assert_eq!(refusal["error"]["kind"], "budget");
+    assert!(
+        fs::read(root.join("dispatch/worker-ticket.json"))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        fs::read_dir(root.join("worker-workspaces"))
+            .unwrap()
+            .count(),
+        0
+    );
+    let marker: serde_json::Value = load(&root, "original-operation.json");
+    let preflight = PathBuf::from(marker["preflight"].as_str().unwrap());
+    verify_certificate(&preflight);
+    let packet: Packet = load(&root, "packet.json");
+    assert_eq!(
+        packet.task_key,
+        "69d0d1a011e1a088c283dc64d3e29146a4be3c1a2b5fd931d8e334fb9c536ac9"
+    );
+    let profile: handoff::Profile = load(&root, "profile.json");
+    let journal = Journal::open(&root.join("journal")).unwrap();
+    assert_eq!(journal.state(), State::Waiting);
+    assert!(journal.result().is_none());
+    drop(
+        admission::Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap(),
+    );
+    check_waiting(&PathBuf::from(marker["waiting"].as_str().unwrap()));
+    let mut pins = BTreeMap::new();
+    for name in [
+        "packet.json",
+        "source.json",
+        "admission.json",
+        "receipt.json",
+        "profile.json",
+        "plan.json",
+        "parents.json",
+        "dispatch-config.json",
+        "first-dispatch-result.json",
+        "dispatch/intent.json",
+        "dispatch/worker-ticket.json",
+        "dispatch/ready.json",
+        "dispatch/ready-pin.json",
+        "dispatch/input-ticket.json",
+        "dispatch/input-ticket-pin.json",
+        "dispatch/plan.json",
+        "dispatch/bindings.json",
+        "journal/00000.json",
+    ] {
+        pins.insert(name.to_owned(), digest(&fs::read(root.join(name)).unwrap()));
+    }
+    save(&evidence, "original-pins.json", &pins);
+    let before = Index::open(
+        &profile.admission.index_root,
+        &profile.binding.admission.index_checkpoint,
+    )
+    .unwrap()
+    .checkpoint();
+    let config: dispatch::Config = load(&root, "dispatch-config.json");
+    let mut worker = config.worker_staging.unwrap();
+    assert_eq!(worker.maximum_bytes, 64 * 1024 * 1024);
+    worker.maximum_bytes = 512 * 1024 * 1024;
+    save(&evidence, "worker-profile.json", &worker);
+    save(
+        &evidence,
+        "original-worker-recovery-intent.json",
+        &json!({"schema":"reel.preworker-reservation-recovery.v1","original_job":root,"task_key":packet.task_key,"attempt_id":profile.binding.admission.attempt_id,"operation":profile.admission.scope.operation,"activation":profile.binding.admission.activation,"work":profile.binding.admission.work,"runtime":profile.runtime,"before_checkpoint_sha256":canonical_digest(&before).unwrap(),"original_worker_ticket_empty":true,"original_worker_parent_empty":true,"existing_dispatch_config_preserved":true,"readmission":false,"worker_profile":worker,"first_worker_reservation_only":true}),
+    );
+    let batch: graph::PinnedFile = load(&root.join("dispatch"), "ready-pin.json");
+    let ticket = evidence.join("worker-ticket.json");
+    let out = Command::new(&profile.runtime.path)
+        .arg("prepare-worker")
+        .arg(root.join("dispatch/plan.json"))
+        .arg(root.join("dispatch/bindings.json"))
+        .arg(&batch.path)
+        .arg(&batch.sha256)
+        .arg(&packet.task.id)
+        .arg(evidence.join("worker-profile.json"))
+        .arg(&ticket)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "prepare-worker-result.json", &out);
+    let ticket_pin = digest(&fs::read(&ticket).unwrap());
+    let out = Command::new(&profile.runtime.path)
+        .arg("run-worker")
+        .arg(root.join("dispatch/plan.json"))
+        .arg(root.join("dispatch/bindings.json"))
+        .arg(&ticket)
+        .arg(&ticket_pin)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    save(
+        &evidence,
+        "worker-result.json",
+        &json!({"exit_code":out.status.code(),"stdout":String::from_utf8_lossy(&out.stdout),"stderr":String::from_utf8_lossy(&out.stderr)}),
+    );
+    finish(&root, &evidence, &preflight, &out, &ticket);
+    for (name, pin) in pins {
+        assert_eq!(digest(&fs::read(root.join(name)).unwrap()), pin);
+    }
+    assert!(
+        fs::read(root.join("dispatch/worker-ticket.json"))
+            .unwrap()
+            .is_empty()
+    );
+    save(
+        &evidence,
+        "original-controls-after-recovery.json",
+        &json!({"all_original_pins_unchanged":true,"empty_dispatch_worker_ticket_preserved":true,"original_task_attempt_operation_activation_and_runtime_preserved":true,"readmission":false,"original_worker_execution_started_once":true}),
+    );
+}
+
+fn finish(
+    root: &Path,
+    evidence: &Path,
+    preflight: &Path,
+    out: &std::process::Output,
+    ticket_path: &Path,
+) {
+    let packet: Packet = load(root, "packet.json");
+    let profile: handoff::Profile = load(root, "profile.json");
+    let receipt: admission::Receipt = load(root, "receipt.json");
+    let parents: upstream::Parents = load(root, "parents.json");
+    let marker: serde_json::Value = load(root, "original-operation.json");
+    let waiting = PathBuf::from(marker["waiting"].as_str().unwrap());
+    let prepared_root = preflight.join("job");
+    let runtime = &profile.runtime;
+    let attempt = profile.binding.admission.attempt_id.as_str();
+    let policy: retention::capacity::Policy = load(root, "declared-owner-recovery-policy.json");
     let journal = Journal::open(&root.join("journal")).unwrap();
     let result = journal
         .result()
@@ -195,8 +357,8 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         .clone();
     check_result(&packet, &result).unwrap();
     assert_eq!(result.attempt_id, attempt);
-    save(&root, "result.json", &result);
-    let ticket: worker::Ticket = load(&root.join("dispatch"), "worker-ticket.json");
+    save(root, "result.json", &result);
+    let ticket: worker::Ticket = decode(&fs::read(ticket_path).unwrap()).unwrap();
     assert_eq!(
         load::<ReturnedResult>(&ticket.directory(), "result.json"),
         result
@@ -212,7 +374,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         );
         assert_eq!(journal.state(), State::ImportPending);
         assert!(journal.acknowledgement().is_none());
-        phase(&root, "stage-explicit-original-result-owner-recovery");
+        phase(root, "stage-explicit-original-result-owner-recovery");
         let preview = retention::capacity_preview(
             &packet,
             &profile.source,
@@ -223,7 +385,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         )
         .unwrap();
         assert!(!preview.resource_bound_ok && !preview.original_retention_work_exists);
-        save(&root, "retention-capacity.json", &preview);
+        save(root, "retention-capacity.json", &preview);
         let recovery = retention::capacity::prepare(
             &packet,
             &profile.source,
@@ -236,7 +398,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         .unwrap();
         let recovery_raw = recovery.canonical_bytes().unwrap();
         let recovery_pin = digest(&recovery_raw);
-        raw_save(&root, "retained-owner-plan.json", &recovery_raw);
+        raw_save(root, "retained-owner-plan.json", &recovery_raw);
         let staged = retention::capacity::stage(
             &recovery,
             &recovery_pin,
@@ -248,7 +410,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
             &profile.binding.target,
         )
         .unwrap();
-        save(&root, "staged-retention.json", &staged);
+        save(root, "staged-retention.json", &staged);
         let out = Command::new(&runtime.path)
             .arg("resume-handoff")
             .arg(root.join("journal"))
@@ -257,7 +419,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
             .arg("--apply")
             .output()
             .unwrap();
-        success(&root, "original-retention-resume.json", &out);
+        success(root, "original-retention-resume.json", &out);
         recovery_used = true;
     } else {
         assert_eq!(journal.state(), State::Retained);
@@ -269,9 +431,9 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         &profile.acknowledgements,
         &format!("retained-{}-{attempt}.json", packet.task_key),
     );
-    save(&root, "retained.json", &ack);
+    save(root, "retained.json", &ack);
     phase(
-        &root,
+        root,
         "verify-complete-native-issue-and-private-review-targets",
     );
     drop(
@@ -307,9 +469,9 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         review::Format::Comic { page_order } => assert_eq!(page_order.len(), 2),
         _ => panic!("comic review required"),
     };
-    save(&root, "retained-review-copy.json", review.copy());
+    save(root, "retained-review-copy.json", review.copy());
     raw_save(
-        &root,
+        root,
         "retained-review-manifest.json",
         review.manifest().expect("complete ordered comic manifest"),
     );
@@ -318,7 +480,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         verify_parent(p);
     }
     check_waiting(&waiting);
-    verify_certificate(&preflight);
+    verify_certificate(preflight);
     let checkpoint = Index::open(&profile.admission.index_root, &ack.index_checkpoint)
         .unwrap()
         .checkpoint();
@@ -330,7 +492,7 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         .arg("--apply")
         .output()
         .unwrap();
-    success(&root, "completed-replay.json", &out);
+    success(root, "completed-replay.json", &out);
     assert_eq!(
         Index::open(&profile.admission.index_root, &checkpoint)
             .unwrap()
@@ -342,12 +504,12 @@ fn pinned_corrected_issue_admits_executes_retains_and_replays_without_rebuilding
         original_worker_result
     );
     save(
-        &evidence,
+        evidence,
         "qualification-result.json",
         &json!({"schema":"reel.native-corrected-whole-issue-qualification.v1","job":root,"task_key":packet.task_key,"attempt_id":attempt,"operation":profile.admission.scope.operation,"activation":receipt.activation,"work":receipt.work,"runtime":runtime,"source_commit":packet.source_commit,"retention_work":ack.work,"explicit_owner_recovery_used":recovery_used,"original_worker_result_sha256":original_worker_result,"complete_issue_bytes_match_preflight":true,"parent_history_preserved":true,"waiting_claims_reopened":true,"review_pages":2,"review_units":6,"whole_corrected_issue_retained":true,"completed_replay_index_unchanged":true,"after_checkpoint_sha256":canonical_digest(&checkpoint).unwrap(),"contextual_report_retained":false,"finding_closed":false,"selected":false,"approved":false,"scratch_retired":false}),
     );
     phase(
-        &root,
+        root,
         "retained-corrected-whole-issue-awaiting-contextual-report",
     );
 }
