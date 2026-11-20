@@ -17,7 +17,57 @@ env:
   CARGO_INCREMENTAL: '0'
 
 jobs:
+  changes:
+    uses: ./.github/workflows/changes.yml
+
+  # These lightweight gates retain the existing required check names. A failed
+  # classifier or failed qualification cannot turn into a successful skipped job.
   rust:
+    if: always()
+    needs: [changes, rust-tests]
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require classification and applicable Rust qualification
+        env:
+          CLASSIFICATION: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          QUALIFICATION: ${{ needs.rust-tests.result }}
+        run: |
+          test "$CLASSIFICATION" = success
+          if [ "$DOCS_ONLY" = true ]; then
+            test "$QUALIFICATION" = skipped
+            echo 'Documentation-only change: Rust compilation and media tests skipped.'
+          else
+            test "$DOCS_ONLY" = false
+            test "$QUALIFICATION" = success
+          fi
+
+  ffmpeg-linux:
+    if: always()
+    needs: [changes, ffmpeg-tests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require classification and applicable FFmpeg qualification
+        env:
+          CLASSIFICATION: ${{ needs.changes.result }}
+          DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
+          QUALIFICATION: ${{ needs.ffmpeg-tests.result }}
+        run: |
+          test "$CLASSIFICATION" = success
+          if [ "$DOCS_ONLY" = true ]; then
+            test "$QUALIFICATION" = skipped
+            echo 'Documentation-only change: FFmpeg qualification skipped.'
+          else
+            test "$DOCS_ONLY" = false
+            test "$QUALIFICATION" = success
+          fi
+
+  rust-tests:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     strategy:
       fail-fast: false
       matrix:
@@ -279,7 +329,9 @@ jobs:
           cargo test --test v0213_cli -- --exact
           cargo test comparison::tests --lib
 
-  ffmpeg-linux:
+  ffmpeg-tests:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
