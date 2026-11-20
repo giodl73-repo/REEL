@@ -68,6 +68,7 @@ fn retained_finding_exports_a_revised_plan_and_refuses_a_stale_report() {
         }],
     };
     let revision = repair::Revision {
+        derivation: None,
         task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v1".into(),
         source_commit: "b".repeat(40),

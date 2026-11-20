@@ -17,10 +17,10 @@ impl InputReader for Captured<'_> {
     }
 }
 
-fn load<T: serde::de::DeserializeOwned>(root: &Path, name: &str) -> T {
+pub(super) fn load<T: serde::de::DeserializeOwned>(root: &Path, name: &str) -> T {
     decode(&fs::read(root.join(name)).unwrap()).unwrap()
 }
-fn raw_save(root: &Path, name: &str, raw: &[u8]) {
+pub(super) fn raw_save(root: &Path, name: &str, raw: &[u8]) {
     let path = root.join(name);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let mut file = fs::OpenOptions::new()
@@ -31,10 +31,10 @@ fn raw_save(root: &Path, name: &str, raw: &[u8]) {
     file.write_all(raw).unwrap();
     file.sync_all().unwrap();
 }
-fn save(root: &Path, name: &str, value: &impl serde::Serialize) {
+pub(super) fn save(root: &Path, name: &str, value: &impl serde::Serialize) {
     raw_save(root, name, &serde_json::to_vec(value).unwrap());
 }
-fn phase(root: &Path, value: &str) {
+pub(super) fn phase(root: &Path, value: &str) {
     fs::write(
         root.join("phase.json"),
         serde_json::to_vec(&json!({"phase":value})).unwrap(),
@@ -48,7 +48,7 @@ fn repin(before: &Artifact, raw: &[u8]) -> Artifact {
         ..before.clone()
     }
 }
-fn native_bytes(source: &NativeProfile, pin: &Artifact) -> Vec<u8> {
+pub(super) fn native_bytes(source: &NativeProfile, pin: &Artifact) -> Vec<u8> {
     assert!(pin.bytes <= 32 * 1024 * 1024);
     let mut stream = tig_git::annex::workflow::reader::open(
         &source.source,
@@ -66,7 +66,7 @@ fn native_bytes(source: &NativeProfile, pin: &Artifact) -> Vec<u8> {
     assert_eq!(repin(pin, &raw), *pin);
     raw
 }
-fn success(root: &Path, name: &str, output: &std::process::Output) {
+pub(super) fn success(root: &Path, name: &str, output: &std::process::Output) {
     save(
         root,
         name,
@@ -79,7 +79,7 @@ fn success(root: &Path, name: &str, output: &std::process::Output) {
         String::from_utf8_lossy(&output.stderr)
     );
 }
-fn verify_parent(parent: &reel_workflow_native::upstream::ParentControl) {
+pub(super) fn verify_parent(parent: &reel_workflow_native::upstream::ParentControl) {
     drop(
         retention::verify(
             &parent.packet,
@@ -92,7 +92,7 @@ fn verify_parent(parent: &reel_workflow_native::upstream::ParentControl) {
         .unwrap(),
     );
 }
-fn binding(journal: PathBuf, profile: PathBuf) -> graph::Binding {
+pub(super) fn binding(journal: PathBuf, profile: PathBuf) -> graph::Binding {
     graph::Binding {
         journal,
         profile: graph::PinnedFile {
@@ -285,6 +285,7 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
     let impact = review::repair_impact(&baseline, &checked, &repair).unwrap();
     assert_eq!(impact.unaffected, ["closing"]);
     let mut revision = repair::Revision {
+        derivation: None,
         task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: fixture.profile.commit.clone(),

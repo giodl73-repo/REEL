@@ -126,6 +126,7 @@ fn explicit_part_repair_preserves_other_part_and_language_at_old_snapshots() {
     assert_eq!(impact.contextual_languages, vec!["es"]);
     assert_eq!(impact.contextual_review, report.copy().clone());
     let revision = repair::Revision {
+        derivation: None,
         task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: "b".repeat(40),
@@ -223,6 +224,7 @@ fn rooted_repairs_refuse_ambiguous_versions_invalid_roots_and_outside_edits() {
         "review-repair-edit-outside-scope"
     );
     let revision = repair::Revision {
+        derivation: None,
         task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v1".into(),
         source_commit: "b".repeat(40),
@@ -250,6 +252,7 @@ fn rooted_resolution_still_requires_whole_corrected_issue_and_explicit_evaluatio
     let (plan, before, repair) = fixture();
     let impact = repair_impact(&plan, &before, &repair).unwrap();
     let revision = repair::Revision {
+        derivation: None,
         task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: "b".repeat(40),
@@ -341,6 +344,7 @@ fn later_consumer_source_commits_preserve_an_already_frozen_repair_root_packet()
     let (baseline, report, repair) = fixture();
     let impact = repair_impact(&baseline, &report, &repair).unwrap();
     let mut revision = repair::Revision {
+        derivation: None,
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: "b".repeat(40),
         task_snapshots: BTreeMap::new(),
@@ -442,6 +446,7 @@ fn explicit_repair_snapshots_refuse_missing_extra_invalid_and_legacy_maps() {
     let (baseline, report, repair) = fixture();
     let impact = repair_impact(&baseline, &report, &repair).unwrap();
     let valid = repair::Revision {
+        derivation: None,
         schema: "reel.workflow-repair-revision.v3".into(),
         source_commit: "c".repeat(40),
         task_snapshots: impact

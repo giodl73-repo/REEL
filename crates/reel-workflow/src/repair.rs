@@ -1,13 +1,16 @@
 //! Materialize an exact-pin repair as a new candidate plan. This does not admit
 //! resources, carry old results across commits, select assets or close findings.
 use crate::*;
+#[path = "repair_derived.rs"]
+mod derived;
+pub use derived::{ConsumerBindings, Derivation, ParentChange, ResultWitness};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Revision {
     pub schema: String,
     pub source_commit: String,
-    /// V1 rebinds every native task. V2/V3 rebind exactly affected/rebuilt native
+    /// V1 rebinds every native task. V2/V3/V4 rebind exactly affected/rebuilt native
     /// tasks and preserve unaffected exact snapshots. Pointers are not custody.
     pub native_inputs: BTreeMap<String, review::Edit>,
     /// V3 names every affected task's exact commit, allowing later-authored
@@ -15,6 +18,10 @@ pub struct Revision {
     /// omit this map and retain their original serialized bytes.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub task_snapshots: BTreeMap<String, String>,
+    /// V4 explicitly rebinds declared dependency inputs to observed new results.
+    /// Witnesses are metadata, not native custody or permission to execute.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derivation: Option<Derivation>,
 }
 
 #[derive(Debug, Serialize)]
@@ -44,7 +51,8 @@ pub fn materialize(
 ) -> Result<Candidate> {
     let impact = review::repair_impact(baseline, report, repair)?;
     let revision_sha256 = canonical_digest(revision)?;
-    let explicit = revision.schema == "reel.workflow-repair-revision.v3";
+    let rebinding = revision.schema == "reel.workflow-repair-revision.v4";
+    let explicit = rebinding || revision.schema == "reel.workflow-repair-revision.v3";
     let scoped = explicit || revision.schema == "reel.workflow-repair-revision.v2";
     if repair.roots.is_some() && !scoped {
         return fail(ErrorKind::Unsupported, "repair-rooted-revision-required");
@@ -59,6 +67,9 @@ pub fn materialize(
     }
     if !explicit && !revision.task_snapshots.is_empty() {
         return fail(ErrorKind::Invalid, "repair-revision-snapshot-mode");
+    }
+    if rebinding != revision.derivation.is_some() {
+        return fail(ErrorKind::Invalid, "repair-revision-derived-mode");
     }
     if explicit {
         if revision.task_snapshots.keys().collect::<BTreeSet<_>>()
@@ -148,6 +159,9 @@ pub fn materialize(
             }
             *pin = edit.after.clone();
         }
+    }
+    if let Some(derivation) = &revision.derivation {
+        derived::apply(baseline, &mut plan, &impact, repair, derivation)?;
     }
     check_plan(&plan)?;
     let candidate = Candidate {

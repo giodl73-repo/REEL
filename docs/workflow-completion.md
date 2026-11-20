@@ -598,6 +598,15 @@ derived-output identity/edge finalization, actual corrected whole-issue executio
 and explicit reviewed-producer binding for repeated mixed-snapshot repair loops
 remain open. A same-logical-ID asset edit cannot rename a task-key-derived output.
 
+The [derived repair-edge contract](handoff/2026-11-20-derived-repair-edges.md)
+adds revision v4 with exact before/after producer-result witnesses, unchanged
+producer/slot roles and transitive ancestry checks. It updates data inputs,
+producer request/source references and upstream declarations while preserving
+already frozen packets. Four additional workflow tests pass (143 total). Its
+actual repaired-part -> new assembly-control fixture still requires frozen native
+qualification. Complete corrected-issue retention/contextual review, native later
+consumer qualification and the rest of the objective remain open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
