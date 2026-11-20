@@ -238,16 +238,185 @@ fn pinned_corrected_issue_controls_retain_and_declare_their_exact_context_report
         .output()
         .unwrap();
     success(&root, "dispatch-result.json", &out);
+    finish(&root, &evidence, &preflight, &waiting);
+}
+
+#[test]
+#[ignore = "Exact original Waiting control after aliased-input export failure; fixed coordinator completes the same owned staging ticket, then original 3fa dispatch executes its first worker; no readmission/runtime/lease replacement; preserves partial files and all original controls"]
+fn original_control_recovers_alias_staging_without_replacing_its_ticket_or_runtime() {
+    let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let original = env("REEL_CONTEXT_ALIAS_ORIGINAL");
+    let evidence = env("REEL_CONTEXT_ALIAS_RECOVERY");
+    let coordinator = env("REEL_CONTEXT_ALIAS_COORDINATOR");
+    let root = original.join("job");
+    let process: serde_json::Value = load(&original, "process-result.json");
+    assert_eq!(process["exit_code"], 101);
+    let failed: serde_json::Value = load(&root, "dispatch-result.json");
+    let failure: serde_json::Value = decode(failed["stdout"].as_str().unwrap().as_bytes()).unwrap();
+    assert_eq!(failure["error"]["code"], "native-input-io");
+    assert_eq!(failure["error"]["kind"], "missing");
+    let marker: serde_json::Value = load(&root, "original-operation.json");
+    let preflight = PathBuf::from(marker["preflight"].as_str().unwrap());
+    let waiting = PathBuf::from(marker["waiting"].as_str().unwrap());
+    certificate(&preflight);
+    let packet: Packet = load(&root, "packet.json");
+    let profile: handoff::Profile = load(&root, "profile.json");
+    assert_eq!(
+        packet.task_key,
+        "ffed8eb7773a4dcf1e914fa3659ba4a9341c2846e3cd8efc60e78894e3a8760c"
+    );
+    assert_eq!(
+        profile.runtime.sha256,
+        "3fa07fff5f99eeaeb60bcbcafd57b6c1b809d265bdbd8b1c0c3ebaac309d244e"
+    );
+    let journal = Journal::open(&root.join("journal")).unwrap();
+    assert_eq!(journal.state(), State::Waiting);
+    assert!(journal.result().is_none());
+    assert!(!root.join("dispatch/ready.json").exists());
+    assert!(!root.join("dispatch/worker-ticket.json").exists());
+    assert_eq!(
+        fs::read_dir(root.join("worker-workspaces"))
+            .unwrap()
+            .count(),
+        0
+    );
+    let stage: staging::Ticket = load(&root.join("dispatch"), "input-ticket.json");
+    let stage_pin: graph::PinnedFile = load(&root.join("dispatch"), "input-ticket-pin.json");
+    assert_eq!(
+        digest(&fs::read(&stage_pin.path).unwrap()),
+        stage_pin.sha256
+    );
+    let workspace = stage.directory();
+    let alias = workspace.join("source/production/receipt.json");
+    let canonical = workspace.join("source/request.json");
+    assert!(!canonical.exists() && !workspace.join("complete.json").exists());
+    let request = &packet.task.tool.as_ref().unwrap().request;
+    assert_eq!(digest(&fs::read(&alias).unwrap()), request.sha256);
+    let before = observe(&profile.admission);
+    drop(
+        admission::Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap(),
+    );
+    check_waiting(&waiting);
+    let mut pins = BTreeMap::new();
+    for name in [
+        "packet.json",
+        "source.json",
+        "admission.json",
+        "receipt.json",
+        "profile.json",
+        "plan.json",
+        "parents.json",
+        "bindings.json",
+        "dispatch-config.json",
+        "dispatch-result.json",
+        "owner-policy.json",
+        "original-operation.json",
+        "journal/00000.json",
+        "dispatch/intent.json",
+        "dispatch/input-ticket.json",
+        "dispatch/input-ticket-pin.json",
+        "dispatch/plan.json",
+        "dispatch/bindings.json",
+        "issue-close/closed.json",
+    ] {
+        let path = root.join(name);
+        pins.insert(path.clone(), digest(&fs::read(path).unwrap()));
+    }
+    for name in [
+        "intent.json",
+        "admission.json",
+        "input-bindings.json",
+        "native-inputs.json",
+        "packet.json",
+        "source/production/receipt.json",
+    ] {
+        let path = workspace.join(name);
+        pins.insert(path.clone(), digest(&fs::read(path).unwrap()));
+    }
+    let input_paths: BTreeMap<String, String> = load(&workspace, "input-bindings.json");
+    for path in input_paths
+        .values()
+        .map(|p| workspace.join(p))
+        .filter(|p| p.exists())
+        .chain(
+            fs::read_dir(workspace.join("parts"))
+                .unwrap()
+                .map(|e| e.unwrap().path()),
+        )
+    {
+        pins.insert(path.clone(), digest(&fs::read(path).unwrap()));
+    }
+    save(&evidence, "original-pins.json", &pins);
+    save(
+        &evidence,
+        "original-alias-recovery-intent.json",
+        &json!({"schema":"reel.original-input-alias-recovery.v1","task_key":packet.task_key,"attempt_id":profile.binding.admission.attempt_id,"operation":profile.admission.scope.operation,"activation":profile.binding.admission.activation,"work":profile.binding.admission.work,"original_runtime":profile.runtime,"coordinator":coordinator,"workspace":workspace,"staging_ticket":stage_pin,"before_checkpoint_sha256":canonical_digest(&before).unwrap(),"alias_exists_with_exact_request_bytes":true,"canonical_path_missing":true,"worker_not_started":true,"readmission":false,"capacity_or_runtime_replacement":false}),
+    );
+    let out = Command::new(&coordinator)
+        .arg("export-stage")
+        .arg(root.join("packet.json"))
+        .arg(root.join("source.json"))
+        .arg(root.join("admission.json"))
+        .arg(&stage_pin.path)
+        .arg(&stage_pin.sha256)
+        .output()
+        .unwrap();
+    success(&evidence, "fixed-export-result.json", &out);
+    assert_eq!(before, observe(&profile.admission));
+    assert_eq!(fs::read(&alias).unwrap(), fs::read(&canonical).unwrap());
+    assert!(workspace.join("complete.json").is_file());
+    for (path, pin) in &pins {
+        assert_eq!(&digest(&fs::read(path).unwrap()), pin);
+    }
+    let out = Command::new(&profile.runtime.path)
+        .arg("dispatch-task")
+        .arg(root.join("plan.json"))
+        .arg(root.join("bindings.json"))
+        .arg(&packet.task.id)
+        .arg(root.join("dispatch-config.json"))
+        .arg(root.join("dispatch"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "original-runtime-resumed-dispatch.json", &out);
+    finish(&root, &evidence, &preflight, &waiting);
+    for (path, pin) in &pins {
+        assert_eq!(&digest(&fs::read(path).unwrap()), pin);
+    }
+    save(
+        &evidence,
+        "original-controls-after-recovery.json",
+        &json!({"original_controls_and_partial_staged_bytes_unchanged":true,"original_staging_ticket_and_capacity_preserved":true,"canonical_alias_materialized_and_verified":true,"original_runtime_executed_first_worker":true,"readmission":false,"runtime_replacement":false,"coordinator_only_completed_owned_input_export":true}),
+    );
+}
+
+fn finish(root: &Path, evidence: &Path, preflight: &Path, waiting: &Path) {
+    let ready = preflight.join("job");
+    let packet: Packet = load(root, "packet.json");
+    let profile: handoff::Profile = load(root, "profile.json");
+    let parents: upstream::Parents = load(root, "parents.json");
+    let receipt: admission::Receipt = load(root, "receipt.json");
+    let closed: closing::Outcome = load(&root.join("issue-close"), "closed.json");
+    let old_packet = &parents.parents["issue-assemble"].packet;
+    let runtime = &profile.runtime;
     let journal = Journal::open(&root.join("journal")).unwrap();
     assert_eq!(journal.state(), State::Retained);
     let result = journal.result().unwrap().clone();
-    save(&root, "result.json", &result);
+    save(root, "result.json", &result);
     let ack: retention::Acknowledgement = load(
         &profile.acknowledgements,
         &format!("retained-{}-{}.json", packet.task_key, receipt.attempt_id),
     );
-    save(&root, "retained.json", &ack);
-    phase(&root, "verify-native-v2-controls-and-producer-chain");
+    save(root, "retained.json", &ack);
+    phase(root, "verify-native-v2-controls-and-producer-chain");
     drop(
         retention::verify(
             &packet,
@@ -266,7 +435,7 @@ fn pinned_corrected_issue_controls_retain_and_declare_their_exact_context_report
     }
     let request: review::Request = load(&root.join("verified"), "review-request.json");
     assert_eq!(request.schema, "reel.workflow-review-request.v2");
-    assert_eq!(request.production.as_ref().unwrap().packet, old_packet);
+    assert_eq!(&request.production.as_ref().unwrap().packet, old_packet);
     let ticket: worker::Ticket = load(&root.join("dispatch"), "worker-ticket.json");
     let worker_result = digest(&fs::read(ticket.directory().join("result.json")).unwrap());
     let complete = observe(&profile.admission);
@@ -278,7 +447,7 @@ fn pinned_corrected_issue_controls_retain_and_declare_their_exact_context_report
         .arg("--apply")
         .output()
         .unwrap();
-    success(&root, "completed-replay.json", &out);
+    success(root, "completed-replay.json", &out);
     assert_eq!(complete, observe(&profile.admission));
     assert_eq!(
         digest(&fs::read(ticket.directory().join("result.json")).unwrap()),
@@ -287,17 +456,17 @@ fn pinned_corrected_issue_controls_retain_and_declare_their_exact_context_report
     for p in parents.parents.values() {
         verify_parent(p);
     }
-    check_waiting(&waiting);
-    certificate(&preflight);
-    let report = report_preflight(&root, &ready, &packet, &profile, &result, &ack, &parents);
+    check_waiting(waiting);
+    certificate(preflight);
+    let report = report_preflight(root, &ready, &packet, &profile, &result, &ack, &parents);
     assert_eq!(complete, observe(&profile.admission));
     save(
-        &evidence,
+        evidence,
         "qualification-result.json",
         &json!({"schema":"reel.corrected-context-control-qualification.v1","job":root,"task_key":packet.task_key,"attempt_id":receipt.attempt_id,"operation":profile.admission.scope.operation,"activation":receipt.activation,"work":receipt.work,"runtime":runtime,"retention_work":ack.work,"original_issue_close":closed,"after_checkpoint_sha256":canonical_digest(&complete).unwrap(),"controls_retained":true,"native_control_bytes_equal_preflight":true,"producer_bound_request":true,"completed_replay_index_and_worker_result_unchanged":true,"parent_history_preserved":true,"waiting_claims_reopened":true,"report_task_key":report.task_key,"report_preflight":root.join("report-preflight"),"report_admitted":false,"report_retained":false,"viewing_verified":false,"finding_closed":false,"selected":false,"approved":false,"scratch_retired":false}),
     );
     phase(
-        &root,
+        root,
         "retained-bound-controls-awaiting-context-report-admission",
     );
 }

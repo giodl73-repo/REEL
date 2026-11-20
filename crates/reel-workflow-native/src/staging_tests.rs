@@ -115,6 +115,7 @@ impl InputStreams for GeneratedStreams {
         &mut self,
         _id: &str,
         expected: &Object,
+        _destination: &str,
         consume: impl FnOnce(&mut dyn Read) -> Result<T>,
     ) -> Result<T> {
         struct Generated<'a> {

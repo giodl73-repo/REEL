@@ -804,6 +804,7 @@ trait InputStreams {
         &mut self,
         id: &str,
         expected: &Object,
+        destination: &str,
         consume: impl FnOnce(&mut dyn Read) -> Result<T>,
     ) -> Result<T>;
 }
@@ -813,6 +814,7 @@ impl InputStreams for BufferedStreams<'_> {
         &mut self,
         id: &str,
         expected: &Object,
+        _destination: &str,
         consume: impl FnOnce(&mut dyn Read) -> Result<T>,
     ) -> Result<T> {
         let (_, raw) = self
@@ -829,7 +831,6 @@ impl InputStreams for BufferedStreams<'_> {
 struct NativeStreams<'a> {
     native: &'a mut NativeInputs,
     root: PathBuf,
-    paths: BTreeMap<String, String>,
     copied: BTreeMap<Object, PathBuf>,
 }
 impl InputStreams for NativeStreams<'_> {
@@ -837,6 +838,7 @@ impl InputStreams for NativeStreams<'_> {
         &mut self,
         id: &str,
         expected: &Object,
+        destination: &str,
         consume: impl FnOnce(&mut dyn Read) -> Result<T>,
     ) -> Result<T> {
         let asset = self
@@ -859,11 +861,11 @@ impl InputStreams for NativeStreams<'_> {
             return consume(&mut held);
         }
         let result = self.native.with_stream(&asset, consume)?;
-        let path = self
-            .paths
-            .get(id)
-            .ok_or_else(|| error(ErrorKind::Missing, "staging-stream-path"))?;
-        self.copied.insert(expected.clone(), self.root.join(path));
+        // One logical input can occupy several declared source paths. Record
+        // the destination just verified by this callback, not a later alias
+        // chosen by collecting the manifest into a logical-id map.
+        self.copied
+            .insert(expected.clone(), self.root.join(destination));
         Ok(result)
     }
 }
@@ -1013,7 +1015,7 @@ fn materialize_streams(
     let resumed = scan(view, profile, plan, &complete)?;
     for (index, (path, entry)) in plan.manifest.files.iter().enumerate() {
         if let Some(id) = &entry.input {
-            streams.with_stream(id, &entry.object, |reader| {
+            streams.with_stream(id, &entry.object, path, |reader| {
                 publish_stream(view, profile, path, index, &entry.object, reader, hook)
             })?;
             continue;
@@ -1103,12 +1105,6 @@ pub fn export(
     let mut streams = NativeStreams {
         native: &mut reader,
         root: view.root.path().into(),
-        paths: plan
-            .manifest
-            .files
-            .iter()
-            .filter_map(|(path, entry)| entry.input.as_ref().map(|id| (id.clone(), path.clone())))
-            .collect(),
         copied: BTreeMap::new(),
     };
     materialize_streams(
