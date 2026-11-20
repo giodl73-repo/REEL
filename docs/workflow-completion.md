@@ -576,6 +576,12 @@ local replay/planning/export; its source declarations are explicitly pending.
 Corrected whole-issue native execution/retention and actual contextual review
 remain open. A planning candidate and private issue drafts close neither gate.
 
+The [native part repair fixture](handoff/2026-11-19-native-part-repair.md) now
+targets the next boundary: a real exact source declaration, guarded original-report
+slot handoff and protected retained execution of only the corrected opening.
+It still requires frozen-source qualification. Complete corrected-issue controls,
+assembly, contextual review and the remaining project requirements stay open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

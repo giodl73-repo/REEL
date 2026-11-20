@@ -70,6 +70,9 @@ mod provider_native;
 #[path = "support/repair_comic.rs"]
 mod repair_comic_native;
 #[cfg(windows)]
+#[path = "support/repair_part.rs"]
+mod repair_part_native;
+#[cfg(windows)]
 #[path = "support/repair_plan.rs"]
 mod repair_plan_native;
 #[cfg(windows)]
