@@ -740,6 +740,23 @@ v2 guard, return/import/history and evidenced contextual finding closure remain
 open. No runtime replacement, readmission, scratch retirement, viewing, creative
 approval, real BBJ/S5 adoption or release follows from this qualification.
 
+[Admitted corrected v2 context report](handoff/2026-11-20-corrected-v2-context-report.md)
+now passes its 467.88-second frozen native qualification. Checked control close
+and original-runtime replay precede one finite-policy report admission. Its own
+claims exercise the exact v2 request/copy/manifest origin guard, reopen and stage
+both original PNGs and retain all six targets. A foreign producer attempt and
+stale-copy/unknown-unit/wrong-evidence returns refuse before import intent; those
+refusals preserve Waiting and actual Index. The scripted empty report is retained,
+native history preserves its exact producer witness, and completed replay and
+parent/Waiting proofs pass. All 98 native tests, 247 SDK pins and strict
+default/film Clippy pass (96 opt-in fixtures ignored). This qualifies transport
+and provenance, not viewing, contextual evaluation or finding closure. The report
+still owns slot2. A follow-on
+[resolution producer projection](handoff/2026-11-20-resolution-producer-projection.md)
+addresses the derived manifest namespace while preserving exact media/context;
+its read-only native qualification remains pending. Explicit resolution/issue
+closure and the wider project/provider/consumer/adoption requirements remain open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

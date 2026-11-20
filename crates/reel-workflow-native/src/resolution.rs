@@ -4,6 +4,9 @@ use crate::{NativeProfile, admission, error, retention};
 use reel_workflow::{ErrorKind, Packet, Result, ReturnedResult, resolution};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[cfg(test)]
+#[path = "resolution_projection_test.rs"]
+mod projection_tests;
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetainedReview {
@@ -28,6 +31,8 @@ pub struct ProductionEvidence {
     pub result_sha256: String,
     pub acknowledgement_sha256: String,
     pub copy_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub producer_copy_sha256: Option<String>,
 }
 #[derive(Serialize)]
 pub struct Proposal {
@@ -47,6 +52,23 @@ fn check_production_copy(
         return Err(error(ErrorKind::Stale, "resolution-production-review-copy"));
     }
     Ok(())
+}
+fn check_bound_production_copy(
+    producer_copy: &reel_workflow::review::Copy,
+    report_copy: &reel_workflow::review::Copy,
+    witness: &reel_workflow::review::Production,
+    packet: &Packet,
+    result: &ReturnedResult,
+) -> Result<()> {
+    if witness.packet != *packet || witness.result != *result {
+        return Err(error(ErrorKind::Stale, "resolution-production-witness"));
+    }
+    // A proven derived control may rename its manifest descriptor. Every
+    // manifest byte property and all publication/language/location metadata
+    // still have to equal the retained producer's independently replayed copy.
+    let mut projected = producer_copy.clone();
+    projected.review.logical_id = report_copy.review.logical_id.clone();
+    check_production_copy(&projected, report_copy)
 }
 fn production_copy(
     plan: &reel_workflow::Plan,
@@ -92,13 +114,28 @@ fn production_copy(
         &result,
         &ack,
     )?;
-    check_production_copy(generated.copy(), report.copy())?;
+    if let Some(witness) = report.production() {
+        check_bound_production_copy(
+            generated.copy(),
+            report.copy(),
+            witness,
+            &job.ticket.packet,
+            &result,
+        )?;
+    } else {
+        check_production_copy(generated.copy(), report.copy())?;
+    }
     Ok(ProductionEvidence {
         task_id: id.into(),
         task_key: task_key.into(),
         result_sha256: reel_workflow::canonical_digest(&result)?,
         acknowledgement_sha256: reel_workflow::canonical_digest(&ack)?,
-        copy_sha256: reel_workflow::canonical_digest(generated.copy())?,
+        copy_sha256: reel_workflow::canonical_digest(report.copy())?,
+        producer_copy_sha256: if generated.copy() != report.copy() {
+            Some(reel_workflow::canonical_digest(generated.copy())?)
+        } else {
+            None
+        },
     })
 }
 impl RetainedReview {
