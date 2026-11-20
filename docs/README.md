@@ -1,6 +1,7 @@
 # Documentation
 
-Start with [getting started](getting-started.md), then choose a
+Start with [capabilities](capabilities.md) for the production overview,
+[getting started](getting-started.md) for a small example, or choose a
 [use case](use-cases.md). [Architecture](architecture.md) explains ownership,
 contracts, engines and the Tig boundary. The root [README](../README.md) provides
 the short capability map.
@@ -9,6 +10,7 @@ the short capability map.
 
 | Goal | Read in order |
 | --- | --- |
+| Understand REEL's scope | [Capabilities](capabilities.md) → [architecture](architecture.md) → [development status](development-status.md) |
 | First local plan | [Install](setup/install.md) → [quickstart](getting-started.md) → [production manifest](production-manifest-v0.2.md) |
 | Native scene or music video | [Scene authoring](scene-authoring-v1.md) → [scene delivery](scene-delivery-v0.1.md) → [native media comparison](native-media-parity.md) |
 | Tig-backed production | [Public integration](tig-public-integration.md) → [native scene compiler](tig-native-scene.md) → [managed jobs](tig-job-runner.md) |
@@ -27,8 +29,9 @@ the short capability map.
   A version in the filename often identifies when a feature was introduced;
   it does not mean a current binary implements every later contract. Check
   the command's feature flags, platform, schema ID and runtime pin.
-- **Roadmaps and proposals:** describe intended work or source/adoption gaps.
-  [The current roadmap](tooling-roadmap.md) names these separately.
+- **Development references:** [development status](development-status.md)
+  points to active workflow work. The [dated roadmap](tooling-roadmap.md) and
+  proposals preserve intended work and source/adoption gaps at their checkpoints.
 - **Reviews, waves and handoffs:** record evidence for a particular source tree,
   fixture or decision. They are historical records, not automatic certification
   of a different runtime or a private project.
