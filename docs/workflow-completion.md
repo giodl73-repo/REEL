@@ -97,6 +97,18 @@ is unchanged. All 118 workflow, 84 standard native and 31 HTTP tests, 247 SDK
 pins and strict Clippy pass. This is private planning export, not native large
 child admission, automatic episode partitioning or production adoption.
 
+The [authored composition planner](handoff/2026-11-19-composition-planner.md)
+now checks a complete declared fixed-resource closure, edition components/control
+parents, language scope, task contexts and worst-case stage/streaming budgets,
+and exports the exact recipe for scheduling. A frozen CLI fixture retains a
+synthetic 600-resource/7.94 GB declaration and checked recipe/report with overwrite
+refusal. Eight tests also cover shared bilingual comic art, hidden tool/control
+pins, stale/missing/extra bindings and scoped versions. All 126 workflow, 84 native
+and 31 HTTP tests, 247 SDK pins and strict Clippy pass. Native binding, opaque
+producer closure, actual editorial order, admission and completion remain false;
+this is not real E7 resource resolution or an executable episode composition.
+The pending large native job is not retried by these metadata commands.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 has an unresolved large-native prerequisite documented by the
 [3.6 GB native result fixture](handoff/2026-11-19-large-native-return.md). The

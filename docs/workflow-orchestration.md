@@ -13,6 +13,15 @@ sources: [Cargo.toml, .roles/ROLE.md, .pitfall/PITFALL.md]
 
 # REEL workflow orchestration
 
+The [completion ledger](workflow-completion.md) records current implementation
+and qualification scopes beyond this original architecture. The additive
+[composition planner](handoff/2026-11-19-composition-planner.md) now checks complete
+authored fixed-resource closures and edition/component recipes through
+`check-composition` and `export-composition`. Its retained synthetic 600-resource
+example establishes metadata accounting and recipe export only; native binding,
+producer closure/order, admission and episode execution still require their
+separate proofs. It does not bypass the pending large-native recovery boundary.
+
 ## Current implementation and boundary
 
 `reel-workflow` is an additive task/result contract prototype, not a production

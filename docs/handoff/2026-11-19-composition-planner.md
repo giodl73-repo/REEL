@@ -76,8 +76,34 @@ steps, missing/extra/stale resources, absent upstream budgets, bilingual shared
 comic art and explicit per-edition order. CLI checks/export/no-clobber exercise
 only metadata and produce a schedulable recipe.
 
-Record final test/tool pins and the retained synthetic example before claiming
-qualification. The pending 3.6 GB native lifecycle is not retried by this work.
+The frozen CLI fixture passed in 1.02 seconds (1.37 seconds including process
+launch), retained the complete synthetic declaration, exported its exact recipe
+and report, and refused an overwrite with unchanged recipe bytes. No payload
+files exist for these fictitious descriptors; no 7.94 GB byte read is claimed.
+
+Source `871a0ec76263dbb6af933fb8ea01a7308a26a61b` is archived with all 1,950
+tracked files individually hash/length verified. Frozen CLI SHA256:
+`3fdc2ed6c20af81e10b32b9eb056f1880ae808b7d36b4accabef3921a40cd187`,
+3,893,248 bytes. Frozen fixture SHA256:
+`a5422d8122996cfd71dd015e9b416e68f16adc10cfe2a1fd3edb116a9b07fe3a`,
+2,696,704 bytes. All 126 workflow, 84 standard native and 31 HTTP tests pass,
+with 247 SDK source pins and strict all-target Clippy for workflow and native
+with/without film. All 67 ignored native fixtures were excluded from the native
+suite; no native effectful fixture was rerun. `git diff --check` passes.
+
+Private example controls:
+`F:/src/tig-dev-temp/reel-composition-planner-20261119-v1/controls/composition.json`,
+`recipe.json` and `report.json` in that same directory. The example declares
+seven explicit component stages plus a final stage and preserves the existing
+base task. It does not establish a real E7 partition or executable film producer.
+
+Private certificate:
+`F:/src/tig-dev-temp/reel-composition-planner-20261119-v1/qualified-tools.json`,
+SHA256 `600ed153e829c6e17f5655295795248be25ddf2405a1817c1d9d11596c91112e`.
+It binds source/archive, frozen tools, start/outcome, retained example controls
+and all three standard-test logs. Session 62993 is terminal success.
+
+The pending 3.6 GB native lifecycle is not retried by this work.
 Automatic episode partitioning, actual native closure protection, producer
 composition, bilingual conformance/captions/credits/delivery and project-owned
 adoption/rollback remain open. Producer-applied editor, comics editor and

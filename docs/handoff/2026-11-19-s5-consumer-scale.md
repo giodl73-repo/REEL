@@ -126,6 +126,14 @@ successful large native lifecycle qualification. The linked
 [Tig requirements](2026-11-19-tig-large-native-io-requirements.md) define the
 remaining bounded I/O/error/reconciliation work.
 
+The [authored composition planner](2026-11-19-composition-planner.md) now accounts
+for an explicit complete fixed-descriptor registry and bounded component/edition
+recipe. Its 600-resource/7.94 GB fixture is synthetic metadata, not a read of E7's
+resource inventory or an automatic partition. The checker includes tool/control
+pins, exact consumer contexts and parent-output ceilings and rejects hidden final
+parents or disconnected stages. Native source binding, actual producer closure,
+order/conform receipts and the lifecycle/production gates above remain open.
+
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
 recovery, native gates, tickets and claims. Its ten-input movie fixture passes
