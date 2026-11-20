@@ -30,6 +30,20 @@ test('both platforms retain every ordinary shard and common media qualification'
   assert.match(job, /timeout-minutes: 28/);
 });
 
+test('all lanes install and verify FFmpeg before compiling or running tests', () => {
+  const steps = job.slice(job.indexOf('    steps:\n')).split(/(?=^      - )/m);
+  const install = steps.find(step => step.includes('      - name: Install pinned GPL FFmpeg build\n'));
+  assert.ok(install);
+  assert.match(install, /uses: AnimMouse\/setup-ffmpeg@178e0b4/);
+  const condition = (install.match(/^        if: (.+)$/m) || [])[1];
+  assert.ok(matrix.every(entry => applies(condition, entry)), 'A qualification lane lacks FFmpeg');
+  const preflight = steps.findIndex(step => step.includes('      - name: Verify shared media runtimes\n'));
+  const tests = steps.findIndex(step => step.includes('      - name: Run ordinary test shard\n'));
+  assert.ok(preflight > steps.indexOf(install) && preflight < tests);
+  assert.match(steps[preflight], /\['ffmpeg', 'ffprobe'\]/);
+  assert.doesNotMatch(steps[preflight], /^        if:/m);
+});
+
 test('every qualification step executes, with no accidental per-platform duplication', () => {
   const steps = job.slice(job.indexOf('    steps:\n')).split(/(?=^      - )/m);
   let checked = 0;
@@ -39,7 +53,7 @@ test('every qualification step executes, with no accidental per-platform duplica
     const condition = (step.match(/^        if: (.+)$/m) || [])[1];
     const selected = matrix.filter(entry => applies(condition, entry));
     assert.ok(selected.length > 0, `Unreachable check: ${title}`);
-    if (!['Run ordinary test shard', 'Build pinned Tig authoring handoff CLI'].includes(title)) {
+    if (!['Run ordinary test shard', 'Build pinned Tig authoring handoff CLI', 'Verify shared media runtimes'].includes(title)) {
       for (const os of ['ubuntu-latest', 'windows-latest']) {
         assert.ok(selected.filter(entry => entry.os === os).length <= 1, `Duplicated check: ${title}`);
       }
