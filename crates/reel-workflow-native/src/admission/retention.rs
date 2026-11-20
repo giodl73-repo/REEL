@@ -38,6 +38,16 @@ impl Prepared {
         result: &reel_workflow::ReturnedResult,
         target: &Target,
     ) -> Result<crate::retention::CapacityPreview> {
+        Ok(self
+            .retained_capacity_observation(receipt, result, target)?
+            .preview)
+    }
+    pub(crate) fn retained_capacity_observation(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+    ) -> Result<crate::retention::capacity::Observation> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
         self.retained_scope(&index, target)?;
@@ -102,8 +112,17 @@ impl Prepared {
             })
             .transpose()?;
         let limits = self.projection_limits();
-        Ok(crate::retention::CapacityPreview {
-            schema: "reel.workflow-retained-capacity-preview.v1",
+        let state = Object::from_bytes(&encode(&(
+            "reel.workflow-retained-capacity-state.v1",
+            index.checkpoint(),
+            &candidate,
+            &source.selection,
+            &source.revision,
+            &retained.selection,
+            &retained.revision,
+        ))?);
+        let preview = crate::retention::CapacityPreview {
+            schema: "reel.workflow-retained-capacity-preview.v1".into(),
             source_objects: source_objects.len(),
             retained_objects,
             combined_objects: objects.len(),
@@ -116,7 +135,8 @@ impl Prepared {
             changed_path_bound_ok: additional <= protection::MAX_CHANGES,
             original_retention_work_exists: original.is_some(),
             original_retention_work_complete: complete,
-        })
+        };
+        Ok(crate::retention::capacity::Observation { preview, state })
     }
     /// Read-only preflight; later retention still rechecks actual coverage.
     pub(crate) fn check_retained_target(&self, target: &Target) -> Result<()> {

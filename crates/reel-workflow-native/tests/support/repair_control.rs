@@ -214,6 +214,208 @@ fn pending_control_reports_exact_retained_capacity_without_changing_original_sta
 }
 
 #[test]
+#[ignore = "Read-only finite retained-owner capacity plan over original pending control; rejects edited/stale/foreign plans and preserves real Index, journal, runtime and Waiting claims"]
+fn pending_control_exports_and_rechecks_pinned_capacity_plan_without_native_effects() {
+    use retention::capacity::{self, Policy};
+    let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let original = env("REEL_REPAIR_CONTROL_PENDING");
+    let evidence = env("REEL_REPAIR_CONTROL_PLAN_EVIDENCE");
+    let executable = env("REEL_NATIVE_HANDOFF_TOOL");
+    let waiting = env("REEL_REPAIR_CONTROL_WAITING");
+    check_waiting(&waiting);
+    let packet: Packet = load(&original, "packet.json");
+    let profile: handoff::Profile = load(&original, "profile.json");
+    let receipt: admission::Receipt = load(&original, "receipt.json");
+    let journal = reel_workflow::handoff::Journal::open(&original.join("journal")).unwrap();
+    assert_eq!(
+        journal.state(),
+        reel_workflow::handoff::State::ImportPending
+    );
+    assert!(journal.acknowledgement().is_none());
+    assert_eq!(journal.ticket().packet, packet);
+    assert_eq!(
+        journal.ticket().native_binding,
+        profile.binding.artifact().unwrap()
+    );
+    let result = journal.result().unwrap().clone();
+    let checkpoint = || {
+        let index = tig_store::source_claims::protection::Index::open(
+            &profile.admission.index_root,
+            &receipt.index_checkpoint,
+        )
+        .unwrap();
+        canonical_digest(&index.checkpoint()).unwrap()
+    };
+    let before = checkpoint();
+    let mut pins: BTreeMap<PathBuf, String> = [
+        "packet.json",
+        "source.json",
+        "admission.json",
+        "receipt.json",
+        "profile.json",
+        "original-operation.json",
+    ]
+    .into_iter()
+    .map(|name| {
+        let path = original.join(name);
+        let pin = digest(&fs::read(&path).unwrap());
+        (path, pin)
+    })
+    .collect();
+    for entry in fs::read_dir(original.join("journal")).unwrap() {
+        let path = entry.unwrap().path();
+        pins.insert(path.clone(), digest(&fs::read(path).unwrap()));
+    }
+    save(&evidence, "original-pins.json", &pins);
+    save(&evidence, "result.json", &result);
+    save(&evidence, "target.json", &profile.binding.target);
+    let policy = Policy {
+        schema: "reel.workflow-retained-owner-policy.v1".into(),
+        objects: 1024,
+        logical_bytes: 1024 * 1024 * 1024,
+    };
+    save(&evidence, "policy.json", &policy);
+    let plan = capacity::prepare(
+        &packet,
+        &profile.source,
+        &profile.admission,
+        &receipt,
+        &result,
+        &profile.binding.target,
+        policy,
+    )
+    .unwrap();
+    assert_eq!(
+        (
+            plan.observed.combined_objects,
+            plan.required_objects,
+            plan.required_changed_paths
+        ),
+        (525, 526, 53)
+    );
+    assert_eq!(plan.observed.object_limit, 512);
+    let pin = digest(&plan.canonical_bytes().unwrap());
+    let out = Command::new(&executable)
+        .arg("plan-retention-capacity")
+        .arg(original.join("packet.json"))
+        .arg(original.join("source.json"))
+        .arg(original.join("admission.json"))
+        .arg(original.join("receipt.json"))
+        .arg(evidence.join("result.json"))
+        .arg(evidence.join("target.json"))
+        .arg(evidence.join("policy.json"))
+        .arg(evidence.join("plan.json"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "plan-cli-result.json", &out);
+    assert_eq!(
+        fs::read(evidence.join("plan.json")).unwrap(),
+        plan.canonical_bytes().unwrap()
+    );
+    let exported: serde_json::Value = decode(&out.stdout).unwrap();
+    assert_eq!(exported["plan_sha256"], pin);
+    assert_eq!(exported["native_effects_applied"], false);
+    let check = |name: &str, pin: &str| {
+        Command::new(&executable)
+            .arg("check-retention-capacity-plan")
+            .arg(evidence.join(name))
+            .arg(pin)
+            .arg(original.join("packet.json"))
+            .arg(original.join("source.json"))
+            .arg(original.join("admission.json"))
+            .arg(original.join("receipt.json"))
+            .arg(evidence.join("result.json"))
+            .arg(evidence.join("target.json"))
+            .output()
+            .unwrap()
+    };
+    let out = check("plan.json", &pin);
+    success(&evidence, "recheck-cli-result.json", &out);
+    let mut refusals = Vec::new();
+    let out = check("plan.json", &"0".repeat(64));
+    assert!(!out.status.success());
+    let refusal: serde_json::Value = decode(&out.stdout).unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("retained-capacity-plan-pin"));
+    refusals.push(refusal);
+    for which in ["state", "request", "reservation"] {
+        let mut edited = plan.clone();
+        match which {
+            "state" => edited.state = tig_core::Object::from_bytes(b"stale target revision"),
+            "request" => {
+                edited.request = tig_core::Object::from_bytes(b"foreign activation or runtime")
+            }
+            _ => edited.required_objects -= 1,
+        }
+        let name = format!("{which}-plan.json");
+        let raw = edited.canonical_bytes().unwrap();
+        raw_save(&evidence, &name, &raw);
+        let out = check(&name, &digest(&raw));
+        assert!(!out.status.success());
+        assert!(String::from_utf8_lossy(&out.stdout).contains("retained-capacity-plan-stale"));
+        refusals.push(decode::<serde_json::Value>(&out.stdout).unwrap());
+    }
+    let out = Command::new(&executable)
+        .arg("plan-retention-capacity")
+        .arg(original.join("packet.json"))
+        .arg(original.join("source.json"))
+        .arg(original.join("admission.json"))
+        .arg(original.join("receipt.json"))
+        .arg(evidence.join("result.json"))
+        .arg(evidence.join("target.json"))
+        .arg(evidence.join("policy.json"))
+        .arg(evidence.join("plan.json"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert_eq!(
+        fs::read(evidence.join("plan.json")).unwrap(),
+        plan.canonical_bytes().unwrap()
+    );
+    refusals.push(decode::<serde_json::Value>(&out.stdout).unwrap());
+    save(&evidence, "refusals.json", &refusals);
+    capacity::recheck(
+        &plan,
+        &pin,
+        &packet,
+        &profile.source,
+        &profile.admission,
+        &receipt,
+        &result,
+        &profile.binding.target,
+    )
+    .unwrap();
+    check_waiting(&waiting);
+    assert_eq!(before, checkpoint());
+    for (path, pin) in pins {
+        assert_eq!(digest(&fs::read(path).unwrap()), pin);
+    }
+    let observed = retention::capacity_preview(
+        &packet,
+        &profile.source,
+        &profile.admission,
+        &receipt,
+        &result,
+        &profile.binding.target,
+    )
+    .unwrap();
+    assert!(!observed.original_retention_work_exists);
+    save(
+        &evidence,
+        "qualification-result.json",
+        &json!({
+            "schema":"reel.retained-capacity-plan-qualification.v1", "original":original,
+            "plan_sha256":pin,"checkpoint_sha256":before,"refusals":refusals.len(),
+            "original_controls_and_journal_unchanged":true,"actual_index_unchanged":true,
+            "waiting_claims_reopened":true,"original_retention_work_not_staged":true,
+            "native_effects_applied":false,"runtime_adopted":false,"retained_acknowledged":false,
+            "task_completed":false,"native_payloads_verified":false,
+        }),
+    );
+}
+
+#[test]
 #[ignore = "Existing retained repaired part and old sibling only; isolated exact source C, witnessed edge finalization, guarded part close and same-slot assembly-control retention; preserves every root and Waiting job"]
 fn retained_repaired_part_and_historical_sibling_drive_fresh_native_assembly_control() {
     let env = |key| PathBuf::from(std::env::var_os(key).expect(key));

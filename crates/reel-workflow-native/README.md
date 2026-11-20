@@ -99,6 +99,25 @@ These are metadata/admission budgets, not evidence of large native byte access,
 available capacity, a 600-resource lifecycle or v2 film execution. See the
 [snapshot budget qualification](../../docs/handoff/2026-11-19-snapshot-budgets.md).
 
+Retained owners accumulate earlier jobs, so a job's projection budget may reject
+retention even when its own input/output closure fits. `inspect-retention-capacity`
+reports this exact metadata union without reading payloads or changing claims.
+`plan-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET POLICY OUTPUT
+--apply` creates a private immutable recovery proposal; `--apply` here only writes
+that new control file with exclusive creation. The policy has schema
+`reel.workflow-retained-owner-policy.v1`, `objects` and `logical_bytes`, bounded by
+4,096 objects / 128 GiB. These are adapter safety ceilings, not qualified episode
+capacity. Each plan reserves one object, one changed path and 64 KiB for retaining
+its own evidence. The native 128 changed-path limit remains separate.
+
+`check-retention-capacity-plan PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT
+TARGET` verifies the caller's canonical plan pin and rechecks the exact original
+request, response candidate, actual Index checkpoint and source/owner selections
+and revisions under their actor fences. Existing or uncertain retention work must
+be reconciled through its original handles. Planning and rechecking do not stage
+work, widen frozen job limits, adopt a runtime, acknowledge ownership or complete
+the task. Applying this policy and interrupted-application recovery remain open.
+
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and
 `verify_millis`. Total is at most 16 GiB and no greater than projection allowance;

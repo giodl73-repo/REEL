@@ -15,6 +15,7 @@ use tig_store::{
     Key, metadata,
     source_claims::{self, protection::work::WorkRef},
 };
+pub mod capacity;
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -26,9 +27,10 @@ pub struct Target {
 
 /// Read-only aggregation/admission observations. Does not verify native payloads,
 /// acknowledge retained ownership, change limits or authorize retrying effects.
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct CapacityPreview {
-    pub schema: &'static str,
+    pub schema: String,
     pub source_objects: usize,
     pub retained_objects: usize,
     pub combined_objects: usize,

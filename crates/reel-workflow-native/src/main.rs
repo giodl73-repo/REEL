@@ -287,6 +287,71 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             profile,
             receipt,
             result,
+            target,
+            policy,
+            output,
+            apply,
+        ] if command == "plan-retention-capacity" && apply == "--apply" => {
+            use std::io::Write;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            check_receipt_scope(Path::new(output), &source, &profile)?;
+            let plan = reel_workflow_native::retention::capacity::prepare(
+                &read_control(Path::new(packet))?,
+                &source,
+                &profile,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(target))?,
+                read_control(Path::new(policy))?,
+            )?;
+            let raw = plan.canonical_bytes()?;
+            let pin = reel_workflow::digest(&raw);
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "retained-capacity-plan-write-preserve-partial".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-retained-capacity-plan","plan_sha256":pin,
+                "native_effects_applied":false,"native_payloads_verified":false,"retained_acknowledged":false}),
+            )
+        }
+        [
+            command,
+            plan,
+            pin,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
+            target,
+        ] if command == "check-retention-capacity-plan" => {
+            reel_workflow_native::retention::capacity::recheck(
+                &read_control(Path::new(plan))?,
+                pin,
+                &read_control(Path::new(packet))?,
+                &read_control(Path::new(source))?,
+                &read_control(Path::new(profile))?,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(target))?,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"original-retained-capacity-plan-recheck",
+                "native_effects_applied":false,"native_payloads_verified":false,"retained_acknowledged":false}),
+            )
+        }
+        [
+            command,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
             ack,
             plan,
             repair,
@@ -1299,6 +1364,8 @@ fn main() -> ExitCode {
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
             "reel-workflow-native inspect-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
+            "reel-workflow-native plan-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET POLICY OUTPUT --apply\n",
+            "reel-workflow-native check-retention-capacity-plan PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
             "reel-workflow-native prepare-close JOURNAL PROFILE TARGET NEW_TICKET --apply\n",
             "reel-workflow-native close-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",
