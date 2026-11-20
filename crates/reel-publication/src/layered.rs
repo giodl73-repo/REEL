@@ -370,6 +370,7 @@ pub fn prepare_bbj(
     let mut files = BTreeMap::new();
     let mut pages = Vec::new();
     let mut source_paths = BTreeSet::new();
+    let mut reading_bindings = BTreeMap::new();
     for (index, sheet) in sheets.iter().enumerate() {
         ensure!(
             sheet["sheet"].as_u64() == Some(index as u64 + 1),
@@ -477,11 +478,203 @@ pub fn prepare_bbj(
             format!("{directory}/bindings.json"),
             serde_json::to_vec_pretty(&bindings)?,
         );
+        let png: Asset = serde_json::from_value(sheet["png"].clone())?;
+        ensure!(portable(&png.file), "reading PNG path");
+        reading_bindings.insert(png.file.clone(), root.join(&png.file));
         pages.push(serde_json::json!({"page_id":page_id,"sheet":index+1,"kind":sheet["kind"],"request":format!("{directory}/request.json"),"bindings":format!("{directory}/bindings.json"),"selected_svg":sheet["svg"],"selected_png":sheet["png"],"review_ids":author["page"]["reading_order"]}));
     }
     files.insert("book.json".into(), serde_json::to_vec_pretty(&serde_json::json!({"schema":"reel.bbj-book-import.v1","publication_id":publication,"language":language,"selection":object(&selected),"pages":pages,"native_admitted":false,"payloads_verified":false}))?);
     files.insert("selected-book.json".into(), selected);
+    files.insert(
+        "reading-bindings.json".into(),
+        serde_json::to_vec_pretty(&reading_bindings)?,
+    );
     write_new(&std::path::absolute(output)?, &files)
+}
+
+/// Sequential local book export. A partial export is preserved on failure.
+/// Selected reading pixels are reused only after exact SVG reproduction.
+/// This is not native job admission, retained completion or a release.
+pub fn compose_book(prepared: &Path, output: &Path) -> Result<()> {
+    use std::io::Write;
+    let prepared = std::path::absolute(prepared)?;
+    let output = std::path::absolute(output)?;
+    let raw = read(&prepared.join("book.json"), crate::MAX_CONTROL_BYTES as u64)?;
+    let book: serde_json::Value = serde_json::from_slice(&raw)?;
+    ensure!(
+        book["schema"] == "reel.bbj-book-import.v1",
+        "prepared book schema"
+    );
+    let pages = book["pages"].as_array().context("prepared pages")?;
+    ensure!(
+        !pages.is_empty() && pages.len() <= 128,
+        "prepared page count"
+    );
+    let reading_raw = read(
+        &prepared.join("reading-bindings.json"),
+        crate::MAX_CONTROL_BYTES as u64,
+    )?;
+    let readings: BTreeMap<String, PathBuf> = serde_json::from_slice(&reading_raw)?;
+    let mut controls = Vec::new();
+    let mut upper_bytes = 0u64;
+    let mut ids = BTreeSet::new();
+    let mut reading_paths = BTreeSet::new();
+    for (index, page) in pages.iter().enumerate() {
+        let id = page["page_id"]
+            .as_str()
+            .context("prepared stable page ID")?;
+        ensure!(
+            crate::valid_id(id) && ids.insert(id),
+            "prepared page identity"
+        );
+        let folder = format!("sheet-{:03}", index + 1);
+        ensure!(
+            page["request"] == format!("{folder}/request.json")
+                && page["bindings"] == format!("{folder}/bindings.json")
+                && page["sheet"].as_u64() == Some(index as u64 + 1),
+            "prepared page order"
+        );
+        let request_raw = read(
+            &prepared.join(format!("{folder}/request.json")),
+            crate::MAX_CONTROL_BYTES as u64,
+        )?;
+        let request: Request = serde_json::from_slice(&request_raw)?;
+        ensure!(
+            request.page_id == id && Some(request.language.as_str()) == book["language"].as_str(),
+            "prepared request scope"
+        );
+        let bindings_raw = read(
+            &prepared.join(format!("{folder}/bindings.json")),
+            crate::MAX_CONTROL_BYTES as u64,
+        )?;
+        let svg: Asset = serde_json::from_value(page["selected_svg"].clone())?;
+        let png: Asset = serde_json::from_value(page["selected_png"].clone())?;
+        ensure!(
+            portable(&png.file)
+                && png.bytes > 24
+                && png.bytes <= 16 * 1024 * 1024
+                && reading_paths.insert(png.file.clone()),
+            "reading PNG bound/identity"
+        );
+        let reading = readings.get(&png.file).context("missing reading binding")?;
+        ensure!(reading.is_absolute(), "absolute reading binding");
+        let allowance = request
+            .input_bytes
+            .checked_add(svg.bytes)
+            .and_then(|n| n.checked_add(png.bytes))
+            .and_then(|n| n.checked_add(1024 * 1024))
+            .context("book page size overflow")?;
+        upper_bytes = upper_bytes
+            .checked_add(allowance)
+            .context("book byte overflow")?;
+        ensure!(
+            upper_bytes <= 8 * 1024 * 1024 * 1024,
+            "local book 8 GiB output bound"
+        );
+        controls.push((
+            folder,
+            request,
+            request_raw,
+            bindings_raw,
+            svg,
+            png,
+            reading.clone(),
+        ));
+    }
+    ensure!(
+        reading_paths == readings.keys().cloned().collect(),
+        "unused reading bindings"
+    );
+    let intent = serde_json::to_vec_pretty(
+        &serde_json::json!({"schema":"reel.layered-book-intent.v1","book":object(&raw),"reading_bindings":object(&reading_raw),"pages":controls.iter().map(|(dir,_,req,bindings,_,_,_)| serde_json::json!({"directory":dir,"request":object(req),"bindings":object(bindings)})).collect::<Vec<_>>(),"output_upper_bytes":upper_bytes,"native_admitted":false,"preserve_partial_on_failure":true}),
+    )?;
+    write_new(&output, &BTreeMap::from([("intent.json".into(), intent)]))?;
+    let put = |name: &str, bytes: &[u8]| -> Result<()> {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(output.join(name))?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        Ok(())
+    };
+    let mut completed = Vec::new();
+    let mut html = String::from("<!doctype html><html lang=\"");
+    html += &esc(book["language"].as_str().context("book language")?);
+    html += "\"><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>REEL private comic review</title><style>body{margin:0;background:#222;color:#eee;font:16px system-ui}header,figcaption{padding:1rem}figure{margin:1rem auto;max-width:1000px}img{display:block;width:100%;height:auto}a{color:#9df}</style><header>Private comic review — selected reading pixels; source compositions verified.</header>";
+    for (index, (folder, request, request_raw, bindings_raw, svg, png, reading)) in
+        controls.iter().enumerate()
+    {
+        let bindings: BTreeMap<String, PathBuf> = serde_json::from_slice(bindings_raw)?;
+        let mut opened = BTreeSet::new();
+        let files = compose_with(request, |pin| {
+            let path = bindings.get(&pin.path).context("source binding")?;
+            ensure!(path.is_absolute(), "absolute source binding");
+            opened.insert(pin.path.clone());
+            read(path, pin.bytes)
+        })?;
+        ensure!(
+            opened == bindings.keys().cloned().collect(),
+            "unused source bindings"
+        );
+        ensure!(
+            object(&files["page.svg"])
+                == Object {
+                    sha256: svg.sha256.clone(),
+                    bytes: svg.bytes
+                },
+            "composed SVG differs from selected page"
+        );
+        let pixels = read(reading, png.bytes)?;
+        ensure!(
+            object(&pixels)
+                == Object {
+                    sha256: png.sha256.clone(),
+                    bytes: png.bytes
+                }
+                && pixels.starts_with(b"\x89PNG\r\n\x1a\n")
+                && &pixels[12..16] == b"IHDR",
+            "selected reading PNG differs"
+        );
+        let w = u32::from_be_bytes(pixels[16..20].try_into()?);
+        let h = u32::from_be_bytes(pixels[20..24].try_into()?);
+        ensure!(
+            (1..=4096).contains(&w) && (1..=6144).contains(&h),
+            "reading PNG dimensions"
+        );
+        let mut page_files = files;
+        page_files.insert("page.png".into(), pixels);
+        write_new(&output.join(folder), &page_files)?;
+        let checkpoint = serde_json::json!({"page_id":request.page_id,"sheet":index+1,"request":object(request_raw),"source_receipt":object(&page_files["receipt.json"]),"svg":object(&page_files["page.svg"]),"reading_png":object(&page_files["page.png"]),"reading_pixels_reused":true});
+        put(
+            &format!("completed-{:03}.json", index + 1),
+            &serde_json::to_vec_pretty(&checkpoint)?,
+        )?;
+        completed.push(checkpoint);
+        html += &format!(
+            "<figure id=\"{}\"><img loading=\"lazy\" src=\"{folder}/page.png\" alt=\"{}\"><figcaption>{} <a href=\"{folder}/page.svg\">SVG</a> <a href=\"{folder}/receipt.json\">Sources</a>",
+            esc(&request.page_id),
+            esc(&request.page_id),
+            esc(&request.page_id)
+        );
+        if let Some(units) = pages[index]["review_ids"].as_array() {
+            for unit in units {
+                html += &format!(
+                    " <span>{}</span>",
+                    esc(unit.as_str().context("review unit ID")?)
+                );
+            }
+        }
+        html += "</figcaption></figure>";
+    }
+    html += "</html>";
+    put("index.html", html.as_bytes())?;
+    put(
+        "receipt.json",
+        &serde_json::to_vec_pretty(
+            &serde_json::json!({"schema":"reel.layered-book-receipt.v1","publication_id":book["publication_id"],"language":book["language"],"book":object(&raw),"pages":completed,"reader":object(html.as_bytes()),"reading_pixels_reused":true,"native_admitted":false,"retained_owner_acknowledged":false,"human_approval":false,"rasterized":false,"print_ready":false}),
+        )?,
+    )
 }
 
 #[cfg(test)]

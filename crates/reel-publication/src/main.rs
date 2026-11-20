@@ -28,11 +28,19 @@ fn main() -> std::process::ExitCode {
             "reel-publication check MANIFEST\nreel-publication comic-render REQUEST NEW_DIRECTORY\nreel-publication comic-check REQUEST PACKET\nreel-publication comic-restore PACKET NEW_DIRECTORY RECEIPT_SHA256\nreel-publication comic-issue-check PLAN\nreel-publication comic-issue-assemble REQUEST NEW_DIRECTORY\nMetadata checks are read-only. Comic production/check/restore are explicit private operations, without native retention, selection or release."
         );
         println!(
-            "reel-publication bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\nreel-publication layered-compose REQUEST INPUT_BINDINGS NEW_DIRECTORY\nBBJ preparation reads named controls; layered composition verifies SVG sources and writes an editable source bundle without rasterization or native retention."
+            "reel-publication bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\nreel-publication layered-compose REQUEST INPUT_BINDINGS NEW_DIRECTORY\nreel-publication layered-compose-book PREPARED_BOOK NEW_DIRECTORY\nBBJ preparation reads named controls; layered composition verifies SVG sources and writes an editable source bundle without rasterization or native retention. Book composition reuses exact selected reading PNGs after SVG comparison."
         );
         return std::process::ExitCode::SUCCESS;
     }
     let result = match args.as_slice() {
+        #[cfg(feature = "comic")]
+        [command, prepared, output] if command == "layered-compose-book" => {
+            reel_publication::layered::compose_book(
+                std::path::Path::new(prepared),
+                std::path::Path::new(output),
+            )
+            .map_err(|_| "layered-compose-book-refused-preserve-partial")
+        }
         #[cfg(feature = "comic")]
         [command, selection, root, publication, language, output] if command == "bbj-prepare" => {
             reel_publication::layered::prepare_bbj(
@@ -99,7 +107,7 @@ fn main() -> std::process::ExitCode {
                 "{}",
                 serde_json::json!({"ok":true,"scope":if metadata {"publication-metadata-only"} else {"explicit-private-comic-operation"},
                 "payloads_verified":!metadata,"rendered":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-check" || command=="comic-issue-assemble"),
-                "outputs_written":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-restore" || command=="comic-issue-assemble" || command=="layered-compose" || command=="bbj-prepare"),
+                "outputs_written":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-restore" || command=="comic-issue-assemble" || command=="layered-compose" || command=="bbj-prepare" || command=="layered-compose-book"),
                 "selected":false,"print_ready":false,"retained_owner_acknowledged":false})
             );
             std::process::ExitCode::SUCCESS
