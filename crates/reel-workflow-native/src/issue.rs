@@ -400,12 +400,21 @@ pub(crate) fn native_proof(
                 .map_err(|_| error(ErrorKind::Invalid, "issue-native-object"))?,
             bytes: asset.bytes,
         };
-        let mut guard = reader::open(&profile.source, &object).map_err(io_error)?;
-        let mut raw = Vec::new();
-        Read::by_ref(&mut guard)
-            .take(asset.bytes + 1)
-            .read_to_end(&mut raw)
-            .map_err(io_error)?;
+        // A layered page deliberately reuses its selected PNG. Its exact input
+        // binding and bytes are already verified, and _generated keeps that
+        // native gate alive. A second SDK open of the same object is refused.
+        // Output identities still pass the original receipt/alias checks below.
+        let (raw, guard) = if let Some(raw) = generated._inputs.captured(&object) {
+            (raw.to_vec(), None)
+        } else {
+            let mut guard = reader::open(&profile.source, &object).map_err(io_error)?;
+            let mut raw = Vec::new();
+            Read::by_ref(&mut guard)
+                .take(asset.bytes + 1)
+                .read_to_end(&mut raw)
+                .map_err(io_error)?;
+            (raw, Some(guard))
+        };
         if raw.len() as u64 != asset.bytes
             || reel_workflow::digest(&raw) != asset.sha256
             || generated
@@ -418,7 +427,9 @@ pub(crate) fn native_proof(
         if name == "receipt.json" {
             receipt(&generated, result, &raw)?;
         }
-        held.push(guard);
+        if let Some(guard) = guard {
+            held.push(guard);
+        }
     }
     let files = capture.then(|| generated.files.clone());
     Ok(Proof {
@@ -432,6 +443,92 @@ pub(crate) fn native_proof(
 mod composition_tests {
     use super::*;
     use reel_workflow::upstream::{BoundInput, Reference, Selector};
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "Read-only proof of the existing original BBJ ImportPending job; no publication, retention, new admission, runtime adoption or scratch changes"]
+    fn original_layered_candidate_reuses_held_png_input_gate_during_native_output_proof() {
+        let root = std::path::PathBuf::from(
+            std::env::var_os("REEL_LAYERED_ORIGINAL_JOB").expect("Set original pending job"),
+        );
+        let profile: crate::handoff::Profile =
+            crate::read_control(&root.join("profile.json")).unwrap();
+        let ticket: serde_json::Value =
+            crate::read_control(&root.join("execution/worker-ticket.json")).unwrap();
+        let packet: Packet = serde_json::from_value(ticket["packet"].clone()).unwrap();
+        assert_eq!(
+            packet.task_key,
+            "11b16e3e0081a5e3d134f520b12d4154dc30fc09775206debe882632bd0aa5b0"
+        );
+        let journal = reel_workflow::handoff::Journal::open(&root.join("journal")).unwrap();
+        assert_eq!(
+            journal.state(),
+            reel_workflow::handoff::State::ImportPending
+        );
+        let result = journal.result().unwrap();
+        let png = &result.artifacts["page.png"];
+        assert!(
+            packet
+                .task
+                .inputs
+                .iter()
+                .any(|a| a.sha256 == png.sha256 && a.bytes == png.bytes)
+        );
+        let before = tig_store::source_claims::protection::Index::open(
+            &profile.admission.index_root,
+            &profile.admission.index_minimum,
+        )
+        .unwrap()
+        .checkpoint();
+        let claims = crate::admission::Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &result.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap();
+        let proof = native_proof(
+            &packet,
+            &profile.source,
+            result,
+            false,
+            claims.input_permit(),
+        )
+        .unwrap();
+        assert!(proof._generated.layered.is_some());
+        assert_eq!(
+            proof._outputs.len(),
+            3,
+            "The PNG's original input gate remains held instead of being reopened"
+        );
+        assert!(
+            proof
+                ._generated
+                ._inputs
+                .captured(&tig_core::Object {
+                    sha256: tig_core::Digest::parse(&png.sha256).unwrap(),
+                    bytes: png.bytes
+                })
+                .is_some()
+        );
+        drop(proof);
+        drop(claims);
+        let after = tig_store::source_claims::protection::Index::open(
+            &profile.admission.index_root,
+            &profile.admission.index_minimum,
+        )
+        .unwrap()
+        .checkpoint();
+        assert_eq!(before, after);
+        assert_eq!(
+            reel_workflow::handoff::Journal::open(&root.join("journal"))
+                .unwrap()
+                .state(),
+            reel_workflow::handoff::State::ImportPending
+        );
+    }
 
     #[test]
     fn composition_requires_original_receipt_and_bundle_producers_and_exact_parent_set() {

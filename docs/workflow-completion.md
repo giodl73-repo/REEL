@@ -17,8 +17,8 @@ That frozen preview predates the newer layered native capability; do not
 represent the bundle as a completed native comic or S5 production system.
 
 The actual 19-file BBJ story-page intake (65,306,700 bytes) reached retained
-ownership and closed into retained coverage. Its child composition remains
-Waiting, with its original runtime, claims and scratch preserved at
+ownership and closed into retained coverage. Its child composition failed while
+Waiting, with its original runtime and scratch preserved at
 `F:/src/tig-dev-temp/reel-bbj-native-story001-20261120-v1/compose`.
 It did not run a worker or retain a composition. The initial staging profile
 was invalid; the first valid staging ticket was then prepared. Ready export
@@ -26,6 +26,13 @@ subsequently refused the authored publication control: the PowerShell driver
 had serialized empty panel/utterance arrays as null. This is a known control
 error, not uncertain publication. Preserve that admitted task and all failed
 dispatch artifacts; do not edit its pinned inputs or silently replace runtime.
+The explicit source-only cancellation adapter subsequently cancelled this task
+and closed all its protected references into retained coverage. Evidence at
+`F:/src/tig-dev-temp/reel-bbj-abandon-failed-composer-20261120-v1` records clear
+completion and an idle actor at Index checkpoint 334. All seven checked original
+evidence/scratch files are unchanged; no result or retained-result acknowledgement
+was fabricated. The original parent intake remains Retained and the failed
+composer now appears as Cancelled in the native frontier.
 
 Preparation now writes the publication contract directly from typed Rust.
 Actual evidence at `F:/src/tig-dev-temp/reel-bbj-typed-controls-20261120-v1`
@@ -60,8 +67,20 @@ composition-template preparation. Actual sheet 3 evidence lives at
 native recipe and successful exact SVG/PNG replay. Existing-output refusal is
 also recorded. The declared native preview reports 19 resources/162,638,243
 bytes with 16 actors and 128 changed paths; it explicitly has not checked
-admission or native payload availability. No new job was accepted in this run.
-The earlier failed composer remains Waiting under its original identity.
+admission or native payload availability. The subsequent actual `native-intake`
+job in that directory accepted the generated packet and reached retained
+ownership. Composition retention remains an acceptance gate.
+
+`prepare-abandon`, `abandon-job` and `recover-abandon` now implement bounded
+Waiting-task cancellation with source-only retained handoff. A durable intent
+binds the original close operation before cancellation. Pending imports refuse;
+missing intents and changed close operations refuse; interrupted handoffs recover
+their original WorkRef, and old closes cannot clear reused actors. This uses the
+unchanged qualified slot module and all 247 pinned SDK files. Source commit
+`cb67043` passes 102 standard native checks and strict Clippy with/without film.
+The closer's runtime is separately pinned, while the admitted runtime is held
+unchanged. Scratch retirement, producer adoption and retained completion remain
+distinct operations.
 
 Producer checklist lenses: comics editor (stable order/targets retained;
 fresh lettering-edit restoration and full-issue viewing still open) and

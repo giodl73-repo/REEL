@@ -35,6 +35,7 @@ mod qualified;
 pub mod resolution;
 pub mod resolution_job;
 pub mod response;
+pub mod reconciliation;
 pub mod retention;
 mod review;
 pub mod runner;

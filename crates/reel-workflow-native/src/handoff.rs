@@ -135,6 +135,7 @@ struct Adapter<'a> {
     result: Option<ReturnedResult>,
     acknowledgement: Option<Artifact>,
     returns: Option<&'a response::Returns>,
+    verification_only_reconciliation: bool,
 }
 struct Guard<'a, 'p> {
     adapter: &'a mut Adapter<'p>,
@@ -260,7 +261,11 @@ impl<'p> Lifecycle for Adapter<'p> {
         {
             return Err(error(ErrorKind::Conflict, "handoff-ticket-native-binding"));
         }
-        let runtime = runtime(&p.runtime)?;
+        let runtime = if self.verification_only_reconciliation {
+            hold_tool(&p.runtime)?
+        } else {
+            runtime(&p.runtime)?
+        };
         let prepared = Prepared::open(&ticket.packet, &p.source, &p.admission, &ticket.attempt_id)?;
         prepared.validate_retained_target(&p.binding.admission, &p.binding.target)?;
         let mut claims = None;
@@ -642,6 +647,7 @@ pub fn create(path: &Path, packet: &Packet, profile: &Profile) -> Result<State> 
         result: None,
         acknowledgement: None,
         returns: None,
+        verification_only_reconciliation: false,
     };
     Ok(Journal::create(path, ticket, &mut adapter)?.state())
 }
@@ -658,6 +664,7 @@ pub fn import(
         result: Some(result.clone()),
         acknowledgement: None,
         returns: Some(returns),
+        verification_only_reconciliation: false,
     };
     // Validate immutable profile/runtime binding before recording import intent.
     {
@@ -693,6 +700,62 @@ pub fn resume(
         result: journal.result().cloned(),
         acknowledgement: journal.acknowledgement().cloned(),
         returns,
+        verification_only_reconciliation: false,
+    };
+    journal.resume(&mut adapter)?;
+    Ok(journal.state())
+}
+
+/// Called only by the separately pinned reconciliation-control adapter. It may
+/// replay a layered result for verification, but never invoke a worker/provider
+/// or change the producer runtime, result, admission, attempt or operation.
+pub(crate) fn reconcile_layered_original(
+    path: &Path,
+    profile: &Profile,
+    expected: &Ticket,
+    expected_result: &ReturnedResult,
+    returns: &response::Returns,
+    witness: &[u8],
+) -> Result<State> {
+    let _controls = controls(path, profile)?;
+    let mut journal = Journal::open(path)?;
+    let _original_runtime = inspection_binding(&journal, profile)?;
+    if journal.ticket() != expected
+        || journal.result() != Some(expected_result)
+        || !matches!(journal.state(), State::ImportPending | State::Retained)
+        || expected.packet.task.tool.as_ref().map(|t| t.capability)
+            != Some(reel_workflow::ToolCapability::LayeredComicCompose)
+        || expected_result.provenance.mode != reel_workflow::Mode::Tool
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "reconcile-original-layered-result-required",
+        ));
+    }
+    let directory = profile
+        .admission
+        .scope
+        .coordination_root
+        .join("workflow-reconciliation-intents");
+    match std::fs::create_dir(&directory) {
+        Ok(()) => (),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+        Err(e) => return Err(io_error(e)),
+    }
+    let owned = reel_assets::jobs::open_workspace_directory(&directory)
+        .map_err(|_| error(ErrorKind::Denied, "reconcile-intent-directory"))?;
+    let intent = owned.path().join(format!(
+        "{}.json",
+        profile.binding.admission.operation_identity()?
+    ));
+    crate::advancement::persist(&intent, witness)?;
+    let (_, _intent) = crate::staging::read_held(&intent, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+    let mut adapter = Adapter {
+        profile,
+        result: journal.result().cloned(),
+        acknowledgement: journal.acknowledgement().cloned(),
+        returns: Some(returns),
+        verification_only_reconciliation: true,
     };
     journal.resume(&mut adapter)?;
     Ok(journal.state())

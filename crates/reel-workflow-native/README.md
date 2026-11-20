@@ -946,3 +946,35 @@ or a missing original cancellation intent refuses. A completed old close cannot
 clear a reused actor. The closer is separately pinned; the admitted job's runtime
 is held and preserved rather than replaced. This is a source-only lifecycle
 transition, not producer-runtime adoption, payload retirement or task completion.
+
+## Reconcile an original layered result with a corrected verifier
+
+A layered composer can reuse its input reading PNG as an output. Verification
+now reuses that operation's already-verified input bytes and held native gate;
+it does not open the same SDK object gate a second time. Exact input bindings,
+output identities, native candidate registration and original receipt comparison
+still apply. No SDK gate, alias check or source claim is bypassed.
+
+For an original layered result that is already ImportPending, a separately
+pinned verification-only reconciliation control can finish its existing native
+operation. It retains the original producer runtime/profile, source snapshot,
+result, admission, attempt, activation and WorkRefs:
+
+```powershell
+reel-workflow-native prepare-original-reconciliation JOURNAL PROFILE RETURNS RETURNS_SHA256 NEW_TICKET --apply
+reel-workflow-native reconcile-original NEW_TICKET TICKET_SHA256 NEW_RECEIPT --apply
+```
+
+Preparation requires the exact pending layered worker result and pins its
+original return-file control and the current verification runtime. It applies
+no native effects. Application binds one immutable reconciliation witness in
+the original coordination namespace, then reconciles the original publication
+and retained-owner work through the managed interfaces. Its receipt identifies
+both runtimes and the original acknowledgement. A lost response is recovered
+with the same ticket/runtime and a new exclusive receipt path.
+
+This is restricted to `layered-comic-compose` results with their original worker
+receipt. It performs deterministic replay verification, invokes no worker or
+provider, creates no new task/attempt and does not change producer provenance.
+It is not general producer/profile adoption, film recovery or permission to
+replace an admitted executable. Other capabilities refuse this adapter.

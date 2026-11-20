@@ -1217,6 +1217,35 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "task_completed":state == reel_workflow::handoff::State::Retained,"selected":false,"input_claims_released":false,"scratch_retirement_authorized":false}),
             )
         }
+        [command, journal, profile, returns, pin, output, apply]
+            if command == "prepare-original-reconciliation" && apply == "--apply" =>
+        {
+            let ticket = reel_workflow_native::reconciliation::prepare(
+                Path::new(journal),
+                read_control(Path::new(profile))?,
+                reel_workflow_native::graph::PinnedFile {
+                    path: returns.into(),
+                    sha256: pin.clone(),
+                },
+            )?;
+            let sha = ticket.export(Path::new(output))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-original-layered-reconciliation","ticket_sha256":sha,
+                "native_effects":false,"worker_invoked":false,"producer_runtime_replaced":false}),
+            )
+        }
+        [command, ticket, pin, output, apply]
+            if command == "reconcile-original" && apply == "--apply" =>
+        {
+            let (ticket, _held) =
+                reel_workflow_native::reconciliation::read_pinned(Path::new(ticket), pin)?;
+            let state = ticket.execute_to(Path::new(output))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"original-layered-result-reconciliation","state":state,
+                "task_completed":state==reel_workflow::handoff::State::Retained,
+                "worker_invoked":false,"provider_invoked":false,"producer_runtime_replaced":false,"scratch_retired":false,"selected":false}),
+            )
+        }
         [command, journal, profile, returns, apply]
             if command == "resume-handoff" && apply == "--apply" =>
         {
@@ -1550,6 +1579,8 @@ fn main() -> ExitCode {
             "reel-workflow-native create-handoff PACKET HANDOFF_PROFILE NEW_JOURNAL --apply\n",
             "reel-workflow-native import-handoff JOURNAL HANDOFF_PROFILE RESULT RETURNS --apply\n",
             "reel-workflow-native resume-handoff JOURNAL HANDOFF_PROFILE RETURNS_OR_DASH --apply\n",
+            "reel-workflow-native prepare-original-reconciliation JOURNAL PROFILE RETURNS RETURNS_SHA256 NEW_TICKET --apply\n",
+            "reel-workflow-native reconcile-original TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "Response staging records work; registration admits output claims; ingestion publishes native bytes.\n",
             "Retain-response acknowledges retained ownership; verify-retained checks live retained protection and bytes.\n",
             "Native handoff completion requires original work, actual retained-owner proof and exact output bytes.\n",
