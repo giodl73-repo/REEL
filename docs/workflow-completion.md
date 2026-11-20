@@ -119,7 +119,10 @@ matcher tests cover these checks. The [derived intent-control producer](handoff/
 now generates v2 assembly requests after exact parent bytes exist, validates its
 declared control role and required/allowed parents, and carries original receipt/
 carrier selector requirements into native production/replay. Legacy request bytes
-remain stable; all 131 workflow tests pass. Managed v2 comic lifecycle
+remain stable; all 131 workflow tests pass. A frozen 2.11-second replay uses the
+existing exported synthetic two-part issue, generates v2 controls and reproduces
+its exact PDF/transcript descriptors, including self-contained replay and swapped
+producer refusal. It does not establish native byte access or lifecycle. Managed v2 comic lifecycle
 qualification, film integration and real S5 production remain open.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
