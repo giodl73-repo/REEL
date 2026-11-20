@@ -52,8 +52,17 @@ does not complete a production task.
 For an existing BBJ book, the [comic publication guide](../reel-publication/README.md)
 provides `bbj-prepare` and `layered-compose-book`: actual selected SVG sources are
 composed and compared, exact reading PNGs are reused, and a private reader plus
-layer/source bundles are written with stable review IDs. This local adapter is
-not yet wired into native workflow admission or the issue/fix task graph.
+layer/source bundles are written with stable review IDs. The workflow also
+exposes a `layered-comic-compose` native capability, but actual BBJ composition
+retention and the issue/fix task graph are not yet qualified end to end.
+
+`bbj-prepare` also writes a typed, validated `publication.json`, with stable
+page/panel/dialogue IDs and explicit empty arrays for silent/matter pages.
+Its `bbj/input/...` source IDs are prospective unselected candidates; preparing
+the contract does not register them in Tig or adopt BBJ's selected profile.
+Use `check-layered-task PACKET INPUT_BINDINGS` before native admission and
+`replay-layered-task PACKET INPUT_BINDINGS` to verify the declared page bytes
+locally. Neither command admits a task or acknowledges retained ownership.
 
 The same operations are available from the main workflow CLI built with `comic`:
 

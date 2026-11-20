@@ -7,6 +7,57 @@ or a small comic fixture does not establish project completion. The original
 ownership reference. Actual implementation and qualification evidence must be
 checked again before closing the objective.
 
+## Current delivery checkpoint — November 20
+
+The usable local BBJ reader is at
+`F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html` (28 sheets).
+The packaged development preview starts at
+`F:/src/REEL-releases/workflow-preview-20261120-v2/START-HERE.md`.
+That frozen preview predates the newer layered native capability; do not
+represent the bundle as a completed native comic or S5 production system.
+
+The actual 19-file BBJ story-page intake (65,306,700 bytes) reached retained
+ownership and closed into retained coverage. Its child composition remains
+Waiting, with its original runtime, claims and scratch preserved at
+`F:/src/tig-dev-temp/reel-bbj-native-story001-20261120-v1/compose`.
+It did not run a worker or retain a composition. The initial staging profile
+was invalid; the first valid staging ticket was then prepared. Ready export
+subsequently refused the authored publication control: the PowerShell driver
+had serialized empty panel/utterance arrays as null. This is a known control
+error, not uncertain publication. Preserve that admitted task and all failed
+dispatch artifacts; do not edit its pinned inputs or silently replace runtime.
+
+Preparation now writes the publication contract directly from typed Rust.
+Actual evidence at `F:/src/tig-dev-temp/reel-bbj-typed-controls-20261120-v1`
+shows 28 valid page contracts, no null item arrays and all 59 prior preparation
+files unchanged. A separate, explicitly local corrected-control packet replays
+the real story-page SVG and selected PNG exactly and constructs the editable
+carrier. It does not claim native admission, retained completion or selection.
+Dispatch also checks all input/worker/provider capacity settings before writing
+its intent, preventing the initial configuration error from creating dispatch
+recovery artifacts in future runs.
+
+Finish the product through these concrete deliveries:
+
+1. Replace the remaining manual task/control glue with Rust planning, then run
+   corrected BBJ candidates through retention, full-issue assembly, an actual
+   review issue, a bounded fix and affected-page rebuild. Preserve the failed
+   original task and its source history explicitly.
+2. Resolve the Tig large-object original-operation recovery gate, then qualify
+   an actual S5 bilingual episode at its declared resource/byte/time bounds,
+   including conform-derived captions and all required delivery editions.
+3. Ship one pinned installation with operational commands for both projects,
+   resume/status/error handling and owned profile adoption/rollback. Exercise
+   direct/proxy/manual providers with the project's real authorized settings.
+
+These deliveries remain acceptance work. Additional synthetic checks alone do
+not close them, and the existing S4 approvals and S5 recordings remain intact.
+
+Producer checklist lenses: comics editor (stable order/targets retained;
+fresh lettering-edit restoration and full-issue viewing still open) and
+rights/provenance (unselected candidate namespace; no upload, creative approval
+or profile adoption). These are implementation checks, not independent reviews.
+
 The [S5 consumer scale review](handoff/2026-11-19-s5-consumer-scale.md) records
 the assembly lane's reported 600-resource/~7.94 GB E7 closure and 2.9–3.36 GB
 masters. Current task, movie output/workspace, contained-input hashing, staging,

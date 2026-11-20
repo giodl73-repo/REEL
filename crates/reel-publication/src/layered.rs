@@ -11,12 +11,27 @@ use std::{
 
 pub use crate::layered_source::*;
 /// Validate the bounded reading-image payload before a managed result uses it.
-pub fn check_reading_png(raw:&[u8])->Result<()> {
-    ensure!(raw.len()>=24 && raw.len()<=16*1024*1024 && raw.starts_with(b"\x89PNG\r\n\x1a\n") && &raw[12..16]==b"IHDR", "reading PNG framing");
-    let w=u32::from_be_bytes(raw[16..20].try_into()?);let h=u32::from_be_bytes(raw[20..24].try_into()?);
-    ensure!((1..=4096).contains(&w) && (1..=6144).contains(&h) && u64::from(w)*u64::from(h)<=16*1024*1024,"reading pixel bound");
-    let decoded=resvg::tiny_skia::Pixmap::decode_png(raw)?;
-    ensure!(decoded.width()==w && decoded.height()==h,"reading PNG dimensions");
+pub fn check_reading_png(raw: &[u8]) -> Result<()> {
+    ensure!(
+        raw.len() >= 24
+            && raw.len() <= 16 * 1024 * 1024
+            && raw.starts_with(b"\x89PNG\r\n\x1a\n")
+            && &raw[12..16] == b"IHDR",
+        "reading PNG framing"
+    );
+    let w = u32::from_be_bytes(raw[16..20].try_into()?);
+    let h = u32::from_be_bytes(raw[20..24].try_into()?);
+    ensure!(
+        (1..=4096).contains(&w)
+            && (1..=6144).contains(&h)
+            && u64::from(w) * u64::from(h) <= 16 * 1024 * 1024,
+        "reading pixel bound"
+    );
+    let decoded = resvg::tiny_skia::Pixmap::decode_png(raw)?;
+    ensure!(
+        decoded.width() == w && decoded.height() == h,
+        "reading PNG dimensions"
+    );
     Ok(())
 }
 fn portable(path: &str) -> bool {
@@ -323,6 +338,7 @@ pub fn prepare_bbj(
     );
     let mut files = BTreeMap::new();
     let mut pages = Vec::new();
+    let mut publication_pages = Vec::new();
     let mut source_paths = BTreeSet::new();
     let mut reading_bindings = BTreeMap::new();
     for (index, sheet) in sheets.iter().enumerate() {
@@ -424,6 +440,41 @@ pub fn prepare_bbj(
             output_bytes: 512 * 1024 * 1024,
         };
         let directory = format!("sheet-{:03}", index + 1);
+        let kind = match sheet["kind"].as_str().context("book page kind")? {
+            "story" => crate::PageKind::Story,
+            "front-cover" | "back-cover" => crate::PageKind::Cover,
+            _ => crate::PageKind::Matter,
+        };
+        let panel_order: Vec<String> = if kind == crate::PageKind::Story {
+            serde_json::from_value(author["page"]["reading_order"].clone())?
+        } else {
+            Vec::new()
+        };
+        let utterance_order = author
+            .get("dialogue")
+            .and_then(|v| v.as_array())
+            .into_iter()
+            .flatten()
+            .map(|v| {
+                v["id"]
+                    .as_str()
+                    .map(String::from)
+                    .context("dialogue stable ID")
+            })
+            .collect::<Result<Vec<_>>>()?;
+        publication_pages.push(crate::ComicPage {
+            id: page_id.clone(),
+            kind,
+            source: crate::Artifact {
+                logical_id: format!("bbj/input/{publication}/{directory}/source.json"),
+                sha256: asset.sha256.clone(),
+                bytes: asset.bytes,
+                media_type: "application/json".into(),
+            },
+            panel_order,
+            utterance_order,
+            spread_id: None,
+        });
         files.insert(
             format!("{directory}/request.json"),
             serde_json::to_vec_pretty(&request)?,
@@ -437,6 +488,43 @@ pub fn prepare_bbj(
         reading_bindings.insert(png.file.clone(), root.join(&png.file));
         pages.push(serde_json::json!({"page_id":page_id,"sheet":index+1,"kind":sheet["kind"],"request":format!("{directory}/request.json"),"bindings":format!("{directory}/bindings.json"),"selected_svg":sheet["svg"],"selected_png":sheet["png"],"review_ids":author["page"]["reading_order"]}));
     }
+    // These are prospective unselected candidate IDs, not canonical BBJ bindings.
+    // Serialize typed collections here so silent/matter pages always contain [].
+    let publication_contract = crate::Publication {
+        schema: "reel.publication.v1".into(),
+        id: publication.into(),
+        editions: vec![crate::Edition {
+            id: format!("{publication}-{language}"),
+            language: language.into(),
+            content: crate::Content::Comic {
+                reading_direction: crate::ReadingDirection::LeftToRight,
+                pages: publication_pages,
+            },
+            outputs: BTreeMap::from([
+                (
+                    "reading.html".into(),
+                    crate::OutputContract {
+                        media_type: "text/html".into(),
+                        max_bytes: 16 * 1024 * 1024,
+                        required: true,
+                    },
+                ),
+                (
+                    "source-index.json".into(),
+                    crate::OutputContract {
+                        media_type: "application/json".into(),
+                        max_bytes: 1024 * 1024,
+                        required: true,
+                    },
+                ),
+            ]),
+        }],
+    };
+    crate::check_publication(&publication_contract)?;
+    files.insert(
+        "publication.json".into(),
+        serde_json::to_vec_pretty(&publication_contract)?,
+    );
     files.insert("book.json".into(), serde_json::to_vec_pretty(&serde_json::json!({"schema":"reel.bbj-book-import.v1","publication_id":publication,"language":language,"selection":object(&selected),"pages":pages,"native_admitted":false,"payloads_verified":false}))?);
     files.insert("selected-book.json".into(), selected);
     files.insert(

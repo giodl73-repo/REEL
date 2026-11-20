@@ -43,6 +43,51 @@ mod capability_tests {
             "dispatch-operation-mode"
         );
     }
+
+    #[test]
+    fn dispatch_rejects_capacity_smaller_than_input_or_worker_workspace() {
+        let stage = staging::Profile {
+            schema: "reel.workflow-staging.v1".into(),
+            parent: "unused".into(),
+            maximum_bytes: 256 * 1024 * 1024,
+            capacity_policy: reel_assets::admission::Policy {
+                max_object_bytes: 512 * 1024 * 1024,
+                ..Default::default()
+            },
+        };
+        let mut config = Config {
+            schema: "reel.workflow-dispatch.v1".into(),
+            input_staging: stage.clone(),
+            worker_staging: Some(stage),
+            provider: None,
+            auxiliary_programs: Default::default(),
+        };
+        config
+            .check_operation(Operation::DeterministicTool, None)
+            .unwrap();
+        config.input_staging.capacity_policy.max_object_bytes = 128 * 1024 * 1024;
+        assert_eq!(
+            config
+                .check_operation(Operation::DeterministicTool, None)
+                .unwrap_err()
+                .code,
+            "staging-profile-bounds"
+        );
+        config.input_staging.capacity_policy.max_object_bytes = 512 * 1024 * 1024;
+        config
+            .worker_staging
+            .as_mut()
+            .unwrap()
+            .capacity_policy
+            .max_object_bytes = 128 * 1024 * 1024;
+        assert_eq!(
+            config
+                .check_operation(Operation::DeterministicTool, None)
+                .unwrap_err()
+                .code,
+            "staging-profile-bounds"
+        );
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -74,6 +119,12 @@ impl Config {
                 ErrorKind::Unsupported,
                 "dispatch-qualified-tool-required",
             ));
+        }
+        for profile in std::iter::once(&self.input_staging)
+            .chain(self.worker_staging.iter())
+            .chain(self.provider.iter().map(|p| &p.workspace))
+        {
+            profile.validate()?;
         }
         Ok(())
     }

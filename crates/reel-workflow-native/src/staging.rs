@@ -355,19 +355,27 @@ fn check_entries(files: &BTreeMap<String, Entry>) -> Result<()> {
     }
     Ok(())
 }
-fn configuration(profile: &Profile, coordination: &Path) -> Result<reel_assets::Config> {
-    let ceiling = match profile.schema.as_str() {
-        "reel.workflow-staging.v1" => MAX_BYTES,
-        "reel.workflow-staging.v2" => MAX_STREAMED_BYTES,
-        _ => return Err(error(ErrorKind::Budget, "staging-profile-bounds")),
-    };
-    if profile.maximum_bytes == 0
-        || profile.maximum_bytes > ceiling
-        || profile.maximum_bytes > profile.capacity_policy.max_object_bytes
-    {
-        return Err(error(ErrorKind::Budget, "staging-profile-bounds"));
+impl Profile {
+    /// Validate declared capacity without creating a reservation or workspace.
+    pub(crate) fn validate(&self) -> Result<()> {
+        let profile = self;
+        let ceiling = match profile.schema.as_str() {
+            "reel.workflow-staging.v1" => MAX_BYTES,
+            "reel.workflow-staging.v2" => MAX_STREAMED_BYTES,
+            _ => return Err(error(ErrorKind::Budget, "staging-profile-bounds")),
+        };
+        if profile.maximum_bytes == 0
+            || profile.maximum_bytes > ceiling
+            || profile.maximum_bytes > profile.capacity_policy.max_object_bytes
+        {
+            return Err(error(ErrorKind::Budget, "staging-profile-bounds"));
+        }
+        profile.capacity_policy.validate().map_err(scoped_error)?;
+        Ok(())
     }
-    profile.capacity_policy.validate().map_err(scoped_error)?;
+}
+fn configuration(profile: &Profile, coordination: &Path) -> Result<reel_assets::Config> {
+    profile.validate()?;
     Ok(reel_assets::Config {
         cache_roots: vec![profile.parent.clone()],
         coordination_root: Some(coordination.into()),
