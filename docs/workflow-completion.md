@@ -124,6 +124,12 @@ existing exported synthetic two-part issue, generates v2 controls and reproduces
 its exact PDF/transcript descriptors, including self-contained replay and swapped
 producer refusal. It does not establish native byte access or lifecycle. Managed v2 comic lifecycle
 qualification, film integration and real S5 production remain open.
+The [managed v2 issue attempt](handoff/2026-11-19-native-intent-issue.md) now runs
+against the explicitly declared existing synthetic pool with frozen source and
+runtime, fresh job roots and preserved original operation identities. Its first
+part admission is recorded and retention is pending at this checkpoint. The
+lifecycle gate remains open until the actual terminal result and retained history
+are verified. Continue the original run; do not re-admit or retarget on timeout.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 has an unresolved large-native prerequisite documented by the
