@@ -28,7 +28,29 @@ native qualifier borrows the existing retained two-page synthetic issue, holds
 its original retained fences, reads exact native snapshot inputs and retained
 outputs, and invokes the actual native replay callback. It checks six targets,
 both reading pins, structured request binding, changed original receipt refusal
-and an unchanged actual Index checkpoint. Qualification is pending.
+and an unchanged actual Index checkpoint. The frozen qualifier passed in 105.70
+seconds with exit 0 on 2026-11-20. Both reading pins, all six targets, the
+structured request and changed-original-receipt refusal passed. All 133 workflow
+and 85 standard native tests pass (74 explicit native fixtures excluded), with
+all 247 original SDK pins and strict all-target Clippy for workflow and native
+with/without film.
+
+Evidence is retained at
+`F:/src/tig-dev-temp/reel-whole-issue-review-controls-20261119-v1`.
+`qualified-controls.json` SHA256 is
+`213dfbe6afc0de721dbd60bc2444081075b87411d4c5b0c5c20a624a041bddbc`.
+It pins the controls, prospective child/report packets, result, terminal log and
+source/tool packet. Source commit
+`d393ae49b89dfd208adb7ff49601c3471c2221fc` has 1,961 verified archived files,
+source-manifest SHA256
+`9931fb12b2e4e605a8cceb28e4e620b4273ef7804c9dce382b0e8ad732526dab`.
+The frozen fixture is 29,321,728 bytes with SHA256
+`bb791052038ff378b9349bed00a108f6ca0e086133602eac5958cf7ab71cc9cd`.
+The candidate native CLI is separately frozen at 39,210,496 bytes with SHA256
+`e0ce54d8c1aabdda41a72434aaca10f91336766c4139dee89e7ab8b2c08b81d4`;
+it is only pinned in prospective controls, not adopted or invoked for lifecycle
+effects. The original B9 producer runtime stays unchanged. Regression log pins
+and strict-check results are recorded in `qualified-validation.json`.
 
 The qualifier generates prospective task/control bytes without admitting a
 child or selecting a slot. Owned child input protection, retained control

@@ -43,9 +43,11 @@ read-only verifier is not lifecycle runtime adoption.
 
 These exports are private JSON controls, not retained review-task inputs,
 verified viewing, model findings or creative approval. The owned derived
-`ComicReviewControl` producer still requires a `ComicRender` parent; whole-issue
-owned control generation and the subsequent model/review/fix lifecycle remain
-separate work. No new admission, actor, runtime adoption, provider call, selection,
+`ComicReviewControl` producer at source `62ccc62` requires a `ComicRender` parent.
+The additive [whole-issue control generator](2026-11-19-whole-issue-review-controls.md)
+now supports complete issue replay; child admission/retained completion and the
+subsequent model/review/fix lifecycle remain separate work. No new admission,
+actor, runtime adoption, provider call, selection,
 scratch retirement or payload deletion is needed for the read-only export.
 
 The final issue's source actor was deliberately stripped of coverage for the

@@ -34,7 +34,11 @@ and full film production remain open. The [whole-issue review export](handoff/20
 now verifies complete retained issue replay and exports exact page/panel/balloon
 targets and ordered reading pins. Its two-page native qualification leaves the
 actual Index checkpoint unchanged; owned whole-issue review-task controls and
-the subsequent complete issue review/fix lifecycle remain open.
+the subsequent complete issue review/fix lifecycle remain open. The additive
+[whole-issue control generator](handoff/2026-11-19-whole-issue-review-controls.md)
+now derives prospective review-task inputs through the native replay callback
+and checks structured request binding. Its retained-parent borrowing qualifier
+has no child admission, retained control completion or model/review effects.
 
 ## Current implementation and boundary
 
