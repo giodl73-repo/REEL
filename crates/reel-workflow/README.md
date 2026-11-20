@@ -20,7 +20,7 @@ qualification reports as operating instructions.
 From the REEL checkout:
 
 ```powershell
-cargo build --manifest-path crates/reel-workflow/Cargo.toml --locked --bin reel-workflow
+cargo build --manifest-path crates/reel-workflow/Cargo.toml --locked --features comic --bin reel-workflow
 ```
 
 With `reel-workflow.exe` on PATH, check the supplied synthetic two-task plan and
@@ -41,6 +41,24 @@ native ingestion and retained-owner acknowledgement. A prompt response alone
 does not complete a production task.
 
 ## Run protected work
+
+For an existing BBJ book, the [comic publication guide](../reel-publication/README.md)
+provides `bbj-prepare` and `layered-compose-book`: actual selected SVG sources are
+composed and compared, exact reading PNGs are reused, and a private reader plus
+layer/source bundles are written with stable review IDs. This local adapter is
+not yet wired into native workflow admission or the issue/fix task graph.
+
+The same operations are available from the main workflow CLI built with `comic`:
+
+```powershell
+reel-workflow bbj-prepare $selection F:/src/bbj my-issue en F:/work/my-issue-prepared
+reel-workflow bbj-compose F:/work/my-issue-prepared F:/work/my-issue-review
+```
+
+Open the resulting `index.html`. Use a new directory; partial outputs are retained
+on failure. `bbj-compose-page REQUEST INPUT_BINDINGS NEW_DIRECTORY` composes one
+candidate SVG separately. These commands are local publication operations;
+the native workflow lifecycle below governs protected production jobs.
 
 Build the separate native workspace explicitly:
 

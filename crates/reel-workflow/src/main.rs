@@ -254,6 +254,54 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"private-contract-check","task_count":order.len(),"production_admitted":false}),
             )
         }
+        #[cfg(feature = "comic")]
+        [command, selection, root, publication, language, output] if command == "bbj-prepare" => {
+            reel_publication::layered::prepare_bbj(
+                Path::new(selection),
+                Path::new(root),
+                publication,
+                language,
+                Path::new(output),
+            )
+            .map_err(|_| error(ErrorKind::Invalid, "bbj-prepare-refused-preserve-partial"))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-bbj-book-preparation","outputs_written":true,"payloads_verified":false,"native_admitted":false,"selected":false}),
+            )
+        }
+        #[cfg(feature = "comic")]
+        [command, prepared, output] if command == "bbj-compose" => {
+            reel_publication::layered::compose_book(Path::new(prepared), Path::new(output))
+                .map_err(|_| {
+                    error(
+                        ErrorKind::NeedsRecovery,
+                        "bbj-compose-refused-preserve-partial",
+                    )
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-bbj-book-composition","outputs_written":true,"selected_svgs_reproduced":true,"reading_pixels_reused":true,"rasterized":false,"native_admitted":false,"retained_owner_acknowledged":false,"selected":false,"approved":false}),
+            )
+        }
+        #[cfg(feature = "comic")]
+        [command, request, bindings, output] if command == "bbj-compose-page" => {
+            reel_publication::layered::compose(
+                Path::new(request),
+                Path::new(bindings),
+                Path::new(output),
+            )
+            .map_err(|_| error(ErrorKind::Invalid, "bbj-page-refused-preserve-partial"))?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-bbj-page-composition","outputs_written":true,"rasterized":false,"retained_owner_acknowledged":false,"selected":false}),
+            )
+        }
+        #[cfg(not(feature = "comic"))]
+        [command, ..]
+            if matches!(
+                command.as_str(),
+                "bbj-prepare" | "bbj-compose" | "bbj-compose-page"
+            ) =>
+        {
+            Err(error(ErrorKind::Unsupported, "comic-feature-disabled"))
+        }
         [command, path] if command == "check-composition" => {
             let declaration: reel_workflow::composition::Declaration = control(path)?;
             let report = reel_workflow::composition::check(&declaration)?;
@@ -367,6 +415,9 @@ fn main() -> std::process::ExitCode {
         println!(
             "reel-workflow: private task/result contract prototype\n\
 Usage: reel-workflow check-plan PLAN\n\
+       reel-workflow bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\n\
+       reel-workflow bbj-compose PREPARED_BOOK NEW_DIRECTORY\n\
+       reel-workflow bbj-compose-page REQUEST INPUT_BINDINGS NEW_DIRECTORY\n\
        reel-workflow check-composition DECLARATION\n\
        reel-workflow export-composition DECLARATION NEW_RECIPE NEW_REPORT\n\
        reel-workflow export-composition-intent DECLARATION NEW_INTENT\n\
@@ -382,7 +433,8 @@ Usage: reel-workflow check-plan PLAN\n\
        reel-workflow cancel-handoff DIRECTORY\n\
        reel-workflow check-publication-task PACKET INPUT_BINDINGS TOOL\n\
        reel-workflow check-publication-result PACKET INPUT_BINDINGS TOOL RESULT RECEIPT PAYLOAD_BINDINGS\n\
-No storage admission, provider/tool execution, retention, task completion or selection.\n\
+BBJ commands require the comic feature and perform explicit private local source composition.\n\
+No native storage admission, provider calls, retained task completion or selection.\n\
 Packets contain private context; output files must be new. Preserve failed writes."
         );
         return std::process::ExitCode::SUCCESS;

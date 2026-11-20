@@ -7,6 +7,9 @@ license = "MIT"
 publish = false
 description = "Bounded task and returned-candidate contracts for REEL workflow adapters"
 
+[features]
+comic = ["reel-publication/comic"]
+
 [dependencies]
 reel-publication = { path = "../reel-publication" }
 reel-assembly = { path = "../reel-assembly" }
