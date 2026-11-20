@@ -676,8 +676,16 @@ preflight before returning the original control slot. Its first frozen run match
 the complete local issue bytes but refused an early admission preview while that
 slot remained occupied, with no close or new issue effects. Declared-input
 inspection now has a separate read-only Rust/CLI path; the corrected fixture
-checks real admission only after original-policy close. Frozen qualification,
-actual issue admission/retention and contextual review remain pending.
+checks real admission only after original-policy close. Its 258.80-second frozen
+qualification now passes: all parent packets/proofs and original pins survive,
+full PDF/transcript bytes equal the local candidate, the actual declared-input
+CLI reports 63 resources / 189,676,626 bytes, and the original control closes via
+the exact retained policy with the same staged close WorkRef. Historical replay
+and the other Waiting claim reopen; actual post-close admission preview matches
+declared totals. Standard native tests pass (98 passed, 90 opt-in ignored), all
+247 SDK pins and strict default/film Clippy pass. The full issue packet/plan/source
+are pinned and slot2 is idle, but actual issue admission/retained execution and
+contextual review remain pending.
 
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect

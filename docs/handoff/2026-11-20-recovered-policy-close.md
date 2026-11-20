@@ -50,7 +50,7 @@ from original retained work, then stage/recover the original control's explicit
 policy close. Historical replay must use its original 264efd runtime, and the
 other Waiting job and every original parent/profile pin must remain valid. It
 does not admit or execute the issue task; those controls are pinned for that next
-step. Frozen-source qualification is pending.
+step. Its frozen qualification is recorded below.
 
 The first frozen issue preflight at source
 `ef9b0ec105313943d4792e08f02ae011dcb4b8dd` passed packet/witness correspondence and
@@ -81,6 +81,58 @@ custody and slot-admission preview, without accepting the issue yet. That final
 preview must equal the earlier declared resource totals. This is not a retry of
 an uncertain admission: the first attempt stopped during a dry preview before
 creating any new operation.
+
+The corrected qualification now passes in 258.80 seconds at source
+`60df4a1f0ca67475b49d25946911d34693756f07`. It proves the earlier dry refusal
+left the original retained Index unchanged, reopens the actual parent proofs and
+preserves all three parent packets. The complete preflight reading PDF (4,497
+bytes) and transcript (857 bytes) equal the qualified local candidate. The actual
+CLI reports 63 declared resources / 189,676,626 logical bytes while the control
+still owns the slot; no payload availability or admission is inferred from that
+resource report.
+
+Wrong-pin and foreign-policy previews refuse without creating tickets or changing
+Index state. The valid v2 close ticket consumes the exact retained recovery plan,
+stages/reconstructs the same close WorkRef and returns slot2 under ready retained
+coverage. Original control runtime 264efd remains unchanged. All parent histories,
+the other Waiting generation and original file pins reopen; original-runtime
+historical replay leaves actual Index unchanged. Full live-parent admission
+preview after slot return equals the earlier declared totals.
+
+The actual close operation is
+`workflow-close-7afb425f1986cd5b77468231aabb0343697d1d0ecf1c4daf34ae25156bda5392`,
+handoff WorkRef
+`work-a00f468e8fff059a1c867ea2eb89d97a5f3bc7247951287475b671b58464f098`,
+clear WorkRef
+`work-586b145063e148208da38bdad31eb40d4a31bf1531d296f9ccab201da7e577a5`.
+The main synthetic Index advances from
+`86b01188bc32a8c70ad5ed503c56d9e8b7d2e0688d1f5ab96654778942b49df3` to
+`1c62662cc64d6d98e4075104163e3b06239437f8abcdb7dc0dee3b65c06e265b`.
+Old part/control operations remain historical; do not re-admit or restart them.
+
+Evidence and the ready child controls are in
+`F:/src/tig-dev-temp/reel-corrected-issue-preflight-20261120-v2/job`. The desired
+new issue is task
+`69d0d1a011e1a088c283dc64d3e29146a4be3c1a2b5fd931d8e334fb9c536ac9`,
+attempt `rooted-issue-attempt-1`, operation `rooted-issue-assembly-original`,
+source C `c184b3db9b94e6001b91c3b69c2546a82750b7c1`. This is its complete pinned
+preflight, not an accepted job, managed worker execution, retained full issue or
+contextual review. The source slot is idle; its own admission must still acquire
+the declared closure with live retained parents before execution.
+
+The frozen source packet verifies 1,987 files, manifest SHA256
+`e0428374d46ad08a4e38a8836908b5ffa6dccda032eee8f7232f2aacbb23ba7e`.
+Coordinator `4fdd5d1958b17c06f08ce56f3c09472db043c0b1b54a54af000780e1b2bf8806`
+is 25,295,872 bytes; fixture
+`6b16662da9fb81d93a2a3a7d30c070a134c6b6843ec618bde9bff201b6f82820`
+is 31,072,256 bytes. These do not replace the original 264efd lifecycle runtime.
+Standard native tests pass (98 passed, 90 opt-in ignored), all 247 SDK pins and
+strict default/film Clippy pass. The 70-artifact `qualified-report.json` is
+`d58310ce59f099bcc942c14197a467be21cfee59ca82cf1d65a86ae2ffc0054e`;
+`qualified-validation.json` is
+`21dab092f7cb9cc6ba5518dc4c5c8b26f21cb41544e56eebc79eda5d024c623c`.
+Earlier retained-policy and automatic-owner certificates still verify. Failed
+source/logs, original profiles, archived source and scratch remain preserved.
 
 Producer-applied rights/provenance and comics-editor checklists preserve immutable
 lineage and require complete issue context after a local fix. They do not confer

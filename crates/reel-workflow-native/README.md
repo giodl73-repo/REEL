@@ -175,7 +175,8 @@ original result/work, without changing the old job binding or lifecycle runtime.
 The plan must reopen through that job's immutable retained selection; a supplied
 larger allowance alone is insufficient. Binding-v2 jobs continue to use their own
 declared policy. See [recovered-policy close](../../docs/handoff/2026-11-20-recovered-policy-close.md)
-for the contract and pending corrected-issue qualification.
+for the contract and its qualified corrected-issue preflight/original-control
+close. That complete issue still needs its own admission, execution and review.
 
 `inspect-input-closure PACKET SOURCE ADMISSION ATTEMPT` (Rust:
 `admission::Prepared::declared_preview`) checks the declared resource envelope and

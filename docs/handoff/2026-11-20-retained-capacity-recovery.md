@@ -57,9 +57,12 @@ The original identity is preserved:
 
 The original journal is now Retained, with its acknowledgement in the original
 profile's acknowledgement directory. Its earlier immutable journal segments and
-all 51 diagnosis / 34 planning certificate pins still verify. The source actor
-remains active and protected; there is no slot return, scratch retirement, history
-release or change to the other Waiting job. Historical corrected-opening and
+all 51 diagnosis / 34 planning certificate pins still verify. At that recovery
+boundary the source actor remained active and protected, with no slot return,
+scratch retirement, history release or change to the other Waiting job. The
+subsequent [exact retained-policy close](2026-11-20-recovered-policy-close.md)
+now returns this control's slot without replacing its runtime or discarding
+history. Historical corrected-opening and
 untouched-closing parent proofs both reopen after the handoff.
 
 Evidence is in `F:/src/tig-dev-temp/reel-retained-capacity-recovery-20261120-v1`.
