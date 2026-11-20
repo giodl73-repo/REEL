@@ -29,6 +29,20 @@ The captured intake has 88 files / 127,066,343 bytes, including the native
 runtime; reading PNGs account for 100,401,060 bytes. There were no provider calls,
 changes to BBJ/Melena, native admissions, selection changes or scratch retirement.
 
+Private preview v4 is at
+`F:/src/REEL-releases/workflow-preview-20261120-v4/START-HERE.md`.
+Both optimized binaries identify source commit
+`a347b1d` in its manifest. The core binary SHA256 is
+`dd666ce6019928bad1510a9e407f93fa9ec33c7a7595466b1d9eae28e356a980`;
+the native binary SHA256 is
+`a62c825756d1be63374d74627855a275c53ec49c628889e960f26aa8d0181070`.
+Installed hashes and command availability are checked; the packaged synthetic
+planning example passes. This revision passed 155 core workflow tests, 103
+standard native tests and all 247 SDK source pins. Strict Clippy passed for core
+comic/default and native film/default. The print suite and explicit actual-book
+pixel check pass. Opt-in native production tests were not run as part of the
+standard suite and are not included in those counts.
+
 ## Contracts and checks
 
 Source, authoring and PNG associations must match every selected sheet exactly.

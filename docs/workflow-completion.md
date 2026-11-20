@@ -22,8 +22,8 @@ review/fix/rebuild and editable source restoration remain open.
 The usable local BBJ reader is at
 `F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html` (28 sheets).
 The packaged development preview starts at
-`F:/src/REEL-releases/workflow-preview-20261120-v3/START-HERE.md`.
-It packages the actual layered page planner and corrected native bridge, with
+`F:/src/REEL-releases/workflow-preview-20261120-v4/START-HERE.md`.
+It packages the actual layered page and complete reading-issue planners and native bridge, with
 per-binary pins and a passing installed planning smoke check. This remains a
 development preview, not a completed full-issue comic or S5 production system.
 

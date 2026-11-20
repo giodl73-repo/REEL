@@ -16,11 +16,12 @@ records the detailed boundaries. Start here instead of following its historical
 qualification reports as operating instructions.
 
 The current Windows bundle is
-`F:/src/REEL-releases/workflow-preview-20261120-v3/START-HERE.md`. Its main
+`F:/src/REEL-releases/workflow-preview-20261120-v4/START-HERE.md`. Its main
 `reel-workflow.exe` is an optimized build with `comic` enabled. It has passed
 actual BBJ preparation, exact page SVG composition and existing-output refusal;
 the underlying publication adapter has completed the selected 28-sheet local
-book. The bundle manifest records the separate native bridge and publisher pins.
+book. The complete selected reading PDF has also passed an exact pixel check
+against all 28 selected PNGs. The bundle manifest pins both workflow binaries.
 
 ## Run the planning CLI
 
