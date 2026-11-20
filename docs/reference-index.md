@@ -22,6 +22,16 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 - [Capability and adoption roadmap](tooling-roadmap.md)
 - [Use cases and workflow choices](use-cases.md)
 
+## Illustrated walkthroughs
+
+- [Episodes, cues and language editions](guides/episodes-and-languages.md)
+- [Cels, animation and semantic effects](guides/animation-and-effects.md)
+- [Voice, alignment and sound layers](guides/voice-and-sound.md)
+- [Songs, scores, albums and journeys](guides/music-and-albums.md)
+- [Comic issues, pages and editable layers](guides/comic-layers.md)
+- [Editions, captions, print and delivery history](guides/editions-and-delivery.md)
+- [git-asset, revisions and reproducible production](guides/assets-and-revisions.md)
+
 ## Tig integration and managed execution
 
 - [Asset IDs as native REEL inputs](tig-asset-inputs.md)
