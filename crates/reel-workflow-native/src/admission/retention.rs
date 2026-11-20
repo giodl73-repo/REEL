@@ -102,7 +102,7 @@ impl Prepared {
         Ok(())
     }
     #[allow(clippy::too_many_arguments)]
-    fn read_owner_policy(
+    pub(super) fn read_owner_policy(
         &self,
         receipt: &Receipt,
         candidate: &Candidate,

@@ -72,6 +72,36 @@ injects a failure at native Prepare, then asks a separate frozen CLI process to
 reconcile and complete exactly that original WorkRef. Both frozen-source
 qualifications are pending.
 
+The first frozen automatic run at source
+`786203e09390e74997a045c72753be9a27b7e2d3` passed native import and lost-completion
+reconciliation, then refused close preview with `budget/close-resource-bound`.
+It observed 560 inherited objects plus a 48-object source: 610 combined objects,
+611 including the policy record, with 52 changed paths. The old close adapter
+still applied the job's 512-object limit to cumulative owner history. No close
+ticket was exported and no close work began. The original result remains retained;
+the source slot remains protected. The interrupted-Prepare fixture did not start.
+Evidence, source and tools remain in
+`F:/src/tig-dev-temp/reel-automatic-owner-policy-20261120-v1`.
+
+The close adapter now validates the original owner-policy record and uses its
+declared allowance for cumulative retained-owner handoff, including the unchanged
+qualified SDK closer's repeated bound check. V1 close keeps its original budget.
+The original source projection, task, attempt, activation and workflow runtime
+stay unchanged. A policy-bound close must use its original retained actor/owner;
+moving to another owner is a separate adoption boundary. The SDK closer may
+canonicalize current reference paths while retaining every object and prior tree
+root; original operation-specific policy links remain resolvable through their
+immutable work selection.
+
+The follow-up qualification must reopen that exact retained job and unchanged
+Index, then use a separately pinned closing coordinator to stage/recover the same
+close WorkRef. Its close ticket must retain the original lifecycle-runtime pin.
+Historical replay must run through that original runtime after slot return and
+leave actual Index state unchanged. Do not rerun the original automatic fixture,
+readmit its task, replace its runtime, reset the retained owner or remove history.
+The new close coordinator is an explicit new close operation after the failed
+read-only preview; it does not adopt a worker runtime or replace uncertain work.
+
 Producer-applied rights/provenance review keeps the policy in private controls and
 separates technical custody from selection, consent and release. The comics-editor
 checklist still requires complete corrected-issue assembly and contextual review.

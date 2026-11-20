@@ -506,3 +506,209 @@ fn automatic_case(interrupted: bool) {
         &json!({"schema":"reel.automatic-owner-policy-qualification.v1","job":root,"source":fixture.temp.path(),"task_key":result.task_key,"attempt_id":result.attempt_id,"activation":receipt.activation,"work":receipt.work,"retention_work":ack.work,"runtime":profile.runtime,"policy":policy(1024),"history_objects":history.len(),"owner_objects":owner.required_objects,"changed_paths":record.update.changes.len(),"original_job_object_limit":512,"automatic_retained_completion":true,"wrong_policy_refused":true,"lost_completion_same_work_index_unchanged":true,"original_history_preserved":true,"slot_closed_into_retained_coverage":true,"historical_resume_index_unchanged":true,"after_close_checkpoint_sha256":canonical_digest(&after_close).unwrap(),"selected":false,"approved":false,"scratch_retired":false,"real_production_adopted":false}),
     );
 }
+
+#[test]
+#[ignore = "Original retained binding-v2 job stopped only at close-resource-bound; verify unchanged original checkpoint/claims, use an explicitly pinned new closing coordinator, stage/recover same close work, preserve original d2ac lifecycle runtime and historical proof"]
+fn original_owner_policy_job_closes_after_budget_refusal_without_readmission_or_runtime_replacement()
+ {
+    use reel_workflow::handoff::{Journal, State};
+    let failed = PathBuf::from(
+        std::env::var_os("REEL_OWNER_POLICY_FAILED").expect("REEL_OWNER_POLICY_FAILED"),
+    );
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_OWNER_POLICY_CLOSE_EVIDENCE")
+            .expect("REEL_OWNER_POLICY_CLOSE_EVIDENCE"),
+    );
+    let coordinator = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_HANDOFF_TOOL").expect("REEL_NATIVE_HANDOFF_TOOL"),
+    );
+    let roots: serde_json::Value =
+        serde_json::from_slice(&fs::read(failed.join("automatic/original-roots.json")).unwrap())
+            .unwrap();
+    let original = PathBuf::from(roots["job"].as_str().unwrap());
+    let packet: Packet =
+        serde_json::from_slice(&fs::read(original.join("packet.json")).unwrap()).unwrap();
+    let profile: handoff::Profile =
+        serde_json::from_slice(&fs::read(original.join("profile.json")).unwrap()).unwrap();
+    let result: ReturnedResult =
+        serde_json::from_slice(&fs::read(original.join("result.json")).unwrap()).unwrap();
+    let ack: retention::Acknowledgement =
+        serde_json::from_slice(&fs::read(failed.join("automatic/retained.json")).unwrap()).unwrap();
+    let refusal: serde_json::Value = serde_json::from_slice(
+        &fs::read(failed.join("automatic/prepare-close-result.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(refusal["exit_code"], 1);
+    assert!(
+        refusal["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("close-resource-bound")
+    );
+    assert!(!original.join("close/ticket.json").exists());
+    assert_eq!(
+        Journal::open(&original.join("journal")).unwrap().state(),
+        State::Retained
+    );
+    assert_eq!(
+        profile.runtime.sha256,
+        "d2ac0d431753c951ef8a6e68541cf0ade8383d8b626a4be02499546ed1c5f621"
+    );
+    assert_eq!(
+        digest(&fs::read(&profile.runtime.path).unwrap()),
+        profile.runtime.sha256
+    );
+    assert_ne!(
+        digest(&fs::read(&coordinator).unwrap()),
+        profile.runtime.sha256
+    );
+    assert_eq!(profile.binding.retained_owner_policy, Some(policy(1024)));
+    let before = Index::open(&profile.admission.index_root, &ack.index_checkpoint)
+        .unwrap()
+        .checkpoint();
+    assert_eq!(before, ack.index_checkpoint);
+    drop(
+        retention::verify(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission,
+            &result,
+            &ack,
+        )
+        .unwrap(),
+    );
+    drop(
+        Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &result.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap(),
+    );
+    let originals: BTreeMap<PathBuf, String> =
+        ["packet.json", "profile.json", "result.json", "returns.json"]
+            .into_iter()
+            .map(|name| {
+                let path = original.join(name);
+                let raw = fs::read(&path).unwrap();
+                fs::write(evidence.join(format!("before-{name}")), &raw).unwrap();
+                (path, digest(&raw))
+            })
+            .collect();
+    save(&evidence, "original-pins.json", &originals);
+    save(
+        &evidence,
+        "original-identity.json",
+        &json!({"job":original,"task_key":packet.task_key,"attempt_id":result.attempt_id,"receipt":profile.binding.admission,"retained":ack,"runtime":profile.runtime,"before_checkpoint_sha256":canonical_digest(&before).unwrap(),"original_close_preview_had_no_index_effect":true}),
+    );
+    save(&evidence, "target.json", &profile.binding.target);
+    let out = Command::new(&coordinator)
+        .arg("prepare-close")
+        .arg(original.join("journal"))
+        .arg(original.join("profile.json"))
+        .arg(evidence.join("target.json"))
+        .arg(evidence.join("ticket.json"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "prepare-close-result.json", &out);
+    let ticket_raw = fs::read(evidence.join("ticket.json")).unwrap();
+    let pin = digest(&ticket_raw);
+    let ticket: reel_workflow_native::closing::Ticket =
+        serde_json::from_slice(&ticket_raw).unwrap();
+    assert_eq!(ticket.profile.runtime.sha256, profile.runtime.sha256);
+    assert_eq!(
+        ticket.runtime.sha256,
+        digest(&fs::read(&coordinator).unwrap())
+    );
+    assert_ne!(ticket.runtime.sha256, ticket.profile.runtime.sha256);
+    let out = Command::new(&coordinator)
+        .arg("stage-close")
+        .arg(evidence.join("ticket.json"))
+        .arg(&pin)
+        .arg(evidence.join("staged.json"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "stage-close-result.json", &out);
+    let staged: reel_workflow_native::closing::Outcome =
+        serde_json::from_slice(&fs::read(evidence.join("staged.json")).unwrap()).unwrap();
+    assert!(staged.handoff.is_some() && !staged.slot_idle && !staged.original_clear_complete);
+    let out = Command::new(&coordinator)
+        .arg("recover-close")
+        .arg(evidence.join("ticket.json"))
+        .arg(&pin)
+        .arg(evidence.join("closed.json"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "recover-close-result.json", &out);
+    let closed: reel_workflow_native::closing::Outcome =
+        serde_json::from_slice(&fs::read(evidence.join("closed.json")).unwrap()).unwrap();
+    assert!(closed.slot_idle && closed.original_clear_complete);
+    assert_eq!(closed.handoff, staged.handoff);
+    let after = Index::open(&profile.admission.index_root, &closed.index_checkpoint)
+        .unwrap()
+        .checkpoint();
+    let out = Command::new(&profile.runtime.path)
+        .arg("resume-handoff")
+        .arg(original.join("journal"))
+        .arg(original.join("profile.json"))
+        .arg("-")
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "original-runtime-historical-resume.json", &out);
+    assert_eq!(
+        Index::open(&profile.admission.index_root, &after)
+            .unwrap()
+            .checkpoint(),
+        after
+    );
+    let out = Command::new(&coordinator)
+        .arg("recover-close")
+        .arg(evidence.join("ticket.json"))
+        .arg(&pin)
+        .arg(evidence.join("replayed.json"))
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "completed-close-replay.json", &out);
+    assert_eq!(
+        Index::open(&profile.admission.index_root, &after)
+            .unwrap()
+            .checkpoint(),
+        after
+    );
+    for (path, pin) in originals {
+        assert_eq!(digest(&fs::read(path).unwrap()), pin);
+    }
+    let mut nodes = MetadataStore::open(
+        &profile.admission.metadata_root,
+        &closed.metadata_checkpoint,
+    )
+    .unwrap();
+    let mut index = Index::open(&profile.admission.index_root, &after).unwrap();
+    let current = index
+        .actor(&mut nodes, &profile.binding.target.actor)
+        .unwrap();
+    let present = Tree::from_root(current.selection.root)
+        .entries(&mut nodes, TreeLimits::default())
+        .unwrap()
+        .0;
+    let history: BTreeMap<LogicalPath, Object> =
+        serde_json::from_slice(&fs::read(failed.join("automatic/before-history.json")).unwrap())
+            .unwrap();
+    for (path, pin) in &history {
+        assert_eq!(present.get(path), Some(pin));
+    }
+    save(
+        &evidence,
+        "qualification-result.json",
+        &json!({"schema":"reel.original-owner-policy-close-qualification.v1","original":original,"task_key":packet.task_key,"attempt_id":result.attempt_id,"activation":profile.binding.admission.activation,"work":profile.binding.admission.work,"retention_work":ack.work,"original_runtime":profile.runtime,"coordinator":ticket.runtime,"close_operation":closed.operation,"close_handoff":closed.handoff,"close_clear":closed.clear,"policy":policy(1024),"original_close_preview_index_unchanged":true,"same_close_work_recovered":true,"slot_idle":true,"original_clear_complete":true,"original_runtime_historical_proof_passed":true,"historical_and_close_replay_index_unchanged":true,"history_objects_preserved":history.len(),"after_checkpoint_sha256":canonical_digest(&after).unwrap(),"new_admission":false,"republished":false,"worker_runtime_replaced":false,"selected":false,"approved":false,"scratch_retired":false}),
+    );
+}

@@ -26,6 +26,7 @@ impl Prepared {
         target: &Target,
         operation: &Key,
         action: Action,
+        owner_policy: Option<(&crate::retention::capacity::Policy, &Object)>,
     ) -> Result<Outcome> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
@@ -65,6 +66,24 @@ impl Prepared {
             return Err(error(ErrorKind::Conflict, "close-original-candidate"));
         }
         self.verify_ack(receipt, ack, &mut index, &mut nodes)?;
+        // This allowance governs the cumulative retained-owner union. The
+        // original job's input/projection budget and activation stay unchanged.
+        let close_limits = if let Some((policy, request)) = owner_policy {
+            policy.validate()?;
+            if target != &ack.target {
+                return Err(error(ErrorKind::Conflict, "close-owner-policy-target"));
+            }
+            self.read_owner_policy(
+                receipt, &candidate, target, &ack.work, request, policy, &mut index, &mut nodes,
+            )?;
+            projection::Limits {
+                objects: policy.objects,
+                logical_bytes: policy.logical_bytes,
+                ..self.projection_limits()
+            }
+        } else {
+            self.projection_limits()
+        };
         if handoff.is_none() {
             // Preflight only: the qualified function repeats all checks while
             // holding its own ordered source/retained fences before effects.
@@ -95,7 +114,7 @@ impl Prepared {
                 .chain([source.selection.root, retained.selection.root])
                 .collect();
             let total = objects.iter().try_fold(0u64, |n, o| n.checked_add(o.bytes));
-            let limits = self.projection_limits();
+            let limits = close_limits;
             if objects.len() > limits.objects || total.is_none_or(|n| n > limits.logical_bytes) {
                 return Err(error(ErrorKind::Budget, "close-resource-bound"));
             }
@@ -133,7 +152,7 @@ impl Prepared {
                 index_root: &self.profile.index_root,
                 metadata_root: &self.profile.metadata_root,
             },
-            self.projection_limits(),
+            close_limits,
             apply,
             |stage| {
                 if action == Action::Stage && stage == slots::Stage::HandoffStaged {

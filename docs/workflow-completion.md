@@ -651,8 +651,11 @@ and named original-work link and checks the full union. Historical handoff proof
 also verifies that policy after source-slot return. Legacy bindings omit the new
 field and keep their bytes. Standard tests cover binding/config immutability,
 lower-bound refusal and independent object/byte/path reservations. Normal native
-completion and interrupted-retention Prepare reconciliation are pending their
-frozen effectful fixtures. This does not change the 512-object job projection
+import/lost-completion passed in the first frozen run, but close preview refused
+`close-resource-bound` before a close ticket or native effect. The close adapter
+now applies and verifies the same declared owner policy for cumulative handoff;
+the original retained job's close follow-up and interrupted-retention Prepare
+reconciliation remain pending frozen qualification. This does not change the 512-object job projection
 limit or qualify actual S5/BBJ scale, complete corrected-issue review or owned
 production-profile adoption/rollback.
 

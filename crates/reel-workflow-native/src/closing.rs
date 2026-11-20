@@ -175,6 +175,23 @@ impl Ticket {
             handoff::verify_observation(&self.journal, &self.profile, &observed)?;
         }
         let result = &self.original.result;
+        let owner_request = self
+            .profile
+            .binding
+            .retained_owner_policy
+            .as_ref()
+            .map(|policy| {
+                crate::retention::capacity::request(
+                    &self.original.ticket.packet,
+                    &self.profile.source,
+                    &self.profile.admission,
+                    &self.profile.binding.admission,
+                    result,
+                    &self.profile.binding.target,
+                )
+                .map(|request| (policy, request))
+            })
+            .transpose()?;
         Prepared::open(
             &self.original.ticket.packet,
             &self.profile.source,
@@ -188,6 +205,9 @@ impl Ticket {
             &self.target,
             &self.operation,
             action,
+            owner_request
+                .as_ref()
+                .map(|(policy, request)| (*policy, request)),
         )
     }
     fn output(&self, path: &Path) -> Result<(reel_assets::jobs::WorkspaceDirectory, PathBuf)> {
