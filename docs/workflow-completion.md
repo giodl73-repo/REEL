@@ -562,6 +562,15 @@ explicit selection/retirement and project adoption qualification. Independent
 pieces may proceed in another order when actual evidence makes that useful.
 No item is complete merely because its design exists or a narrower fixture passes.
 
+The [rooted part-repair contract](handoff/2026-11-19-rooted-part-repair.md) adds
+explicit changed branches for parts sharing master/plan records. It preserves
+other exact task packets and snapshots while rebuilding every dependent consumer
+and retaining full-issue/affected-language contextual requirements. Three new
+workflow tests pass (137 total), together with strict workflow Clippy. The opt-in
+native/local replay and export fixture still requires frozen-source qualification;
+corrected whole-issue native execution/retention and actual contextual review
+remain open. A planning candidate and private issue drafts close neither gate.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

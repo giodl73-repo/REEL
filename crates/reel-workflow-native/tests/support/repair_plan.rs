@@ -58,6 +58,7 @@ fn retained_finding_exports_a_revised_plan_and_refuses_a_stale_report() {
         }],
     };
     let mut repair = review::Repair {
+        roots: None,
         schema: "reel.workflow-repair.v1".into(),
         report_sha256: checked.report_sha256().into(),
         finding_keys: checked.findings().keys().cloned().collect(),

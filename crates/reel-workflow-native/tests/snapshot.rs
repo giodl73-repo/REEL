@@ -73,6 +73,9 @@ mod repair_comic_native;
 #[path = "support/repair_plan.rs"]
 mod repair_plan_native;
 #[cfg(windows)]
+#[path = "support/repair_roots.rs"]
+mod repair_roots_native;
+#[cfg(windows)]
 #[path = "support/resolution_automatic.rs"]
 mod resolution_automatic_native;
 #[cfg(windows)]

@@ -434,6 +434,7 @@ fn retained_finding_drives_corrected_comic_render_retention_and_contextual_revie
         tasks: vec![old_packet.task.clone()],
     };
     let repair = review::Repair {
+        roots: None,
         schema: "reel.workflow-repair.v1".into(),
         report_sha256: checked.report_sha256().into(),
         finding_keys: checked.findings().keys().cloned().collect(),

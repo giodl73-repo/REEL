@@ -685,6 +685,10 @@ pub struct Repair {
     pub report_sha256: String,
     pub finding_keys: Vec<String>,
     pub edits: Vec<Edit>,
+    /// V2 explicitly chooses changed branches. Other tasks retain their exact
+    /// historical references/snapshots even when they share a logical input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub roots: Option<Vec<String>>,
 }
 #[derive(Debug, Serialize)]
 pub struct Impact {
@@ -737,7 +741,13 @@ pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Re
         return fail(ErrorKind::Stale, "review-repair-baseline");
     }
     let repair_sha256 = canonical_digest(repair)?;
-    if repair.schema != "reel.workflow-repair.v1" || repair.report_sha256 != report.report_sha256 {
+    if !matches!(
+        (repair.schema.as_str(), &repair.roots),
+        ("reel.workflow-repair.v1", None) | ("reel.workflow-repair.v2", Some(_))
+    ) {
+        return fail(ErrorKind::Invalid, "review-repair-version-envelope");
+    }
+    if repair.report_sha256 != report.report_sha256 {
         return fail(ErrorKind::Stale, "review-repair-report");
     }
     if repair.finding_keys.is_empty()
@@ -777,7 +787,7 @@ pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Re
             return fail(ErrorKind::Stale, "review-repair-input-pin");
         }
     }
-    let direct: BTreeSet<_> = plan
+    let mut direct: BTreeSet<_> = plan
         .tasks
         .iter()
         .filter(|t| {
@@ -787,6 +797,40 @@ pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Re
         })
         .map(|t| t.id.clone())
         .collect();
+    if let Some(roots) = &repair.roots {
+        if roots.is_empty() || roots.len() > MAX_TASKS {
+            return fail(ErrorKind::Budget, "review-repair-root-count");
+        }
+        let mut allowed = BTreeSet::new();
+        for root in roots {
+            if !direct.contains(root) {
+                return fail(ErrorKind::Stale, "review-repair-root-input");
+            }
+            if !allowed.insert(root.clone()) {
+                return fail(ErrorKind::Conflict, "review-repair-root-duplicate");
+            }
+        }
+        for id in &order {
+            let task = plan
+                .tasks
+                .iter()
+                .find(|t| &t.id == id)
+                .expect("checked plan order");
+            if task.depends_on.iter().any(|id| allowed.contains(id)) {
+                allowed.insert(id.clone());
+            }
+        }
+        for edit in &repair.edits {
+            if !plan
+                .tasks
+                .iter()
+                .any(|t| allowed.contains(&t.id) && task_references(t).contains(&&edit.before))
+            {
+                return fail(ErrorKind::Conflict, "review-repair-edit-outside-scope");
+            }
+        }
+        direct.retain(|id| allowed.contains(id));
+    }
     let mut affected = direct.clone();
     let mut rebuild = Vec::new();
     let mut unaffected = Vec::new();
@@ -812,7 +856,12 @@ pub fn repair_impact(plan: &Plan, report: &CheckedReport, repair: &Repair) -> Re
         .into_iter()
         .collect();
     let impact = Impact {
-        schema: "reel.workflow-repair-impact.v1".into(),
+        schema: if repair.roots.is_some() {
+            "reel.workflow-repair-impact.v2"
+        } else {
+            "reel.workflow-repair-impact.v1"
+        }
+        .into(),
         plan_sha256: canonical_digest(plan)?,
         repair_sha256,
         directly_affected: direct.into_iter().collect(),

@@ -21,6 +21,11 @@ changed packet, grants custody or applies a selection. A scoped baseline's
 review must link the exact publication and language to a single unambiguous
 task snapshot; absent, mixed or stale context refuses.
 
+[Rooted repair v2](2026-11-19-rooted-part-repair.md) now explicitly selects changed
+branches when parts share master/plan records. Unselected parts retain their
+historical references as well as snapshots; every selected branch's dependent
+consumer still rebuilds. Global repair v1 retains its original behavior.
+
 `reel.workflow-upstream-inputs.v2` permits a child to consume exact parent results
 from different snapshots. The parent packet/result key, project, declared task,
 canonical result SHA, artifact identity and explicit selector remain checked.

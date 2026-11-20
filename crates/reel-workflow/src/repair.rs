@@ -40,6 +40,9 @@ pub fn materialize(
     let impact = review::repair_impact(baseline, report, repair)?;
     let revision_sha256 = canonical_digest(revision)?;
     let scoped = revision.schema == "reel.workflow-repair-revision.v2";
+    if repair.roots.is_some() && !scoped {
+        return fail(ErrorKind::Unsupported, "repair-rooted-revision-required");
+    }
     if (!scoped && revision.schema != "reel.workflow-repair-revision.v1")
         || (!scoped && baseline.schema != PLAN_SCHEMA)
         || !hex(&revision.source_commit, &[40, 64])
@@ -77,6 +80,9 @@ pub fn materialize(
             .collect::<Result<_>>()?;
     }
     for task in &mut plan.tasks {
+        if repair.roots.is_some() && !impact.rebuild.contains(&task.id) {
+            continue;
+        }
         for pin in &mut task.inputs {
             replace(pin, &repair.edits);
         }

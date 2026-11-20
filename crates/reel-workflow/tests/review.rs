@@ -394,6 +394,7 @@ fn plan() -> Plan {
 }
 fn repair(checked: &CheckedReport, before: Artifact) -> Repair {
     Repair {
+        roots: None,
         schema: "reel.workflow-repair.v1".into(),
         report_sha256: checked.report_sha256().into(),
         finding_keys: checked.findings().keys().cloned().collect(),
