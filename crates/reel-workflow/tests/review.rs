@@ -264,6 +264,72 @@ fn copy(comic: bool, language: &str) -> review::Copy {
         )]),
     }
 }
+#[test]
+fn comic_viewing_material_preserves_selected_order_and_exact_pins() {
+    let mut copy = copy(true, "es");
+    copy.format = Format::Comic {
+        page_order: vec!["page-2".into(), "page-1".into()],
+    };
+    let png = |id: &str, raw: &[u8]| Artifact {
+        media_type: "image/png".into(),
+        ..pin(id, raw)
+    };
+    let first = png(
+        "issue/es/part/page-1-reading.png",
+        b"synthetic first PNG bytes",
+    );
+    let second = png(
+        "issue/es/part/page-2-reading.png",
+        b"synthetic second PNG bytes",
+    );
+    let manifest = serde_json::json!({"schema":"reel.workflow-comic-review.v1","task_key":"a".repeat(64),"edition_id":"es","language":"es","page_order":["page-2","page-1"],"reading":{"page-2":second,"page-1":first}});
+    let raw = serde_json::to_vec(&manifest).unwrap();
+    copy.review = pin("review/manifest", &raw);
+    assert_eq!(
+        comic_reading_inputs(&copy, &raw).unwrap(),
+        vec![second, first]
+    );
+    let mut changed = raw.clone();
+    changed.push(b' ');
+    assert_eq!(
+        comic_reading_inputs(&copy, &changed).unwrap_err().code,
+        "review-material-manifest-pin"
+    );
+    for mutation in [
+        "language", "order", "missing", "extra", "alias", "media", "task",
+    ] {
+        let mut invalid = manifest.clone();
+        match mutation {
+            "language" => invalid["language"] = "en".into(),
+            "order" => invalid["page_order"] = serde_json::json!(["page-1", "page-2"]),
+            "missing" => {
+                invalid["reading"].as_object_mut().unwrap().remove("page-2");
+            }
+            "extra" => {
+                invalid["reading"]["page-3"] = invalid["reading"]["page-1"].clone();
+            }
+            "alias" => {
+                invalid["reading"]["page-2"]["logical_id"] =
+                    invalid["reading"]["page-1"]["logical_id"].clone()
+            }
+            "media" => invalid["reading"]["page-1"]["media_type"] = "application/pdf".into(),
+            "task" => invalid["task_key"] = "latest".into(),
+            _ => unreachable!(),
+        }
+        let raw = serde_json::to_vec(&invalid).unwrap();
+        copy.review = pin("review/manifest", &raw);
+        assert!(
+            comic_reading_inputs(&copy, &raw).is_err(),
+            "accepted {mutation}"
+        );
+    }
+    assert_eq!(
+        comic_reading_inputs(&self::copy(false, "es"), &raw)
+            .unwrap_err()
+            .kind,
+        ErrorKind::Unsupported
+    );
+}
 fn report(copy: &review::Copy) -> Report {
     Report {
         schema: "reel.workflow-review-report.v1".into(),

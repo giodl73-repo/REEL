@@ -1,6 +1,9 @@
 //! Versioned review findings and proposed repair impact. These are private
 //! metadata contracts, not proof of viewing, authority, custody or issue delivery.
 use crate::*;
+#[path = "review_material.rs"]
+mod material;
+pub use material::comic_reading_inputs;
 pub const REQUEST_ID: &str = "control/review-request";
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
