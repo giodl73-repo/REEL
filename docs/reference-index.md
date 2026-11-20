@@ -14,7 +14,9 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 ## Orientation
 
 - [Architecture and responsibility](architecture.md)
+- [Capability guide](capabilities.md)
 - [Contributing to REEL](contributing.md)
+- [Development status and active workflow work](development-status.md)
 - [Getting started](getting-started.md)
 - [Documentation](README.md)
 - [Capability and adoption roadmap](tooling-roadmap.md)

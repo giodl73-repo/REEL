@@ -1,38 +1,49 @@
 # REEL
 
-**Rust tooling for declarative media production.** Describe scenes, recordings,
-timing, pictures and delivery rules in versioned files; compile them into jobs;
-render through explicit tools; then independently check the resulting media.
+**A framework for authoring, producing and verifying media.** REEL brings story,
+animation, voice, sound, music and editing into versioned production workflows.
+Describe creative intent in declarative controls, compile exact production jobs,
+render through explicit tools and check the resulting pictures and sound.
 
-REEL supports illustrated episodes, music videos, score and lyric presentations,
-albums, print collections, trailers and explainers. It also provides cel, note
-and lyric-underlay editors. Producing projects own their content and creative
-decisions; REEL supplies reusable contracts, compilers, renderers and checks.
+The framework supports illustrated series, music videos and longer programmes,
+trailers and explainers, songs and albums, scores and bilingual print collections.
+It combines creative authoring tools with frame/sample timing, multilingual
+composition, managed execution, revision tracking and independent media checks.
+Producing projects own their content, creative decisions and release authority.
 
-**Start here:** [Getting started](docs/getting-started.md) ·
-[Use cases](docs/use-cases.md) · [Architecture](docs/architecture.md) ·
-[Documentation](docs/README.md)
+**Explore:** [Capabilities](docs/capabilities.md) ·
+[Getting started](docs/getting-started.md) · [Use cases](docs/use-cases.md) ·
+[Architecture](docs/architecture.md) · [Documentation](docs/README.md)
+
+## Capabilities
+
+| Production area | What REEL provides |
+| --- | --- |
+| Story and series | Briefs, formats, scene/cue contracts, continuity, pacing, openings, credits and ordered episode/programme assembly |
+| Animation and picture | Cel editing, exposure sheets, sprite layers and choreography, camera tracks, effects, mixed-media timelines and frame-clock browser rendering |
+| Voice and sound | Speech-provider integration, performance direction, measured alignment, voice-consistency checks, dialogue/score mixing, dynamic EQ and audio stems |
+| Music | Local generation adapters, auditions and repair, editable note/lyric models, arrangement and score workflows, album mastering and companion videos |
+| Languages and publishing | Shared pictures with language-local performances, captions, chapters, print collections, source and delivery histories |
+| Production engineering | Exact input/runtime pins, dependency-aware change planning, bounded managed jobs, retained recovery, independent frame/sample checks and Tig integration |
+
+The [capability guide](docs/capabilities.md) connects each area to its contracts
+and tools, including optional runtime requirements. The separate
+[workflow orchestration development](docs/development-status.md) extends the
+task, review and handoff lifecycle; its active branch is not part of this main
+checkout's support claim.
 
 ## Choose a workflow
 
 | I want to… | Start with |
 | --- | --- |
 | Try REEL with a small checked-in example | [Validate and plan without rendering](docs/getting-started.md) |
-| Build a scene from cels, cues and measured timing | [Native scene authoring](docs/scene-authoring-v1.md) and [delivery](docs/scene-delivery-v0.1.md) |
-| Resolve versioned assets through Tig | [REEL with public Tig](docs/tig-public-integration.md) |
-| Assemble an episode from retained scenes, openings and credits | [Episode workflow](docs/use-cases.md#assemble-an-illustrated-episode) and [managed jobs](docs/tig-episode-jobs.md) |
-| Build reusable programme sections and episode captions | [Bounded programme parts](docs/programme-parts-v2.md) and [captions](docs/episode-captions-v1.md) |
-| Check a retained delivery candidate against its frozen source | [Retained delivery checker](docs/tig-retained-delivery-check.md) |
-| Inspect exact compiled delivery controls without opening primary media | [Frozen delivery inspection](docs/tig-delivery-inspection.md) |
-| Recover a receipt-pinned compiled episode manifest from existing metadata | [Episode control inspection](docs/tig-episode-control-inspection.md) |
-| Recover a missing original native dialogue/music/effect stem | [Exact native audio recovery](docs/tig-scene-audio-recovery.md) |
-| Inspect or explicitly execute a private speech attempt | [Tig speech adapter](docs/tig-speech-generation.md) |
-| Edit cels and timing visually | [Cel sorter](docs/cel-sorter-v1.md), [project mapping](docs/cel-sorter-project-v1.md) and [local editor host](docs/editor-host-v1.md) |
-| Edit notation or align lyrics to notes | [Note workshop](docs/music-note-editor-v1.md) and [underlay workshop](docs/music-underlay-editor-v1.md) |
-| Make a continuous album or album video | [Album mastering](docs/NATIVE-ALBUM-MASTER.md) and [album video](docs/NATIVE-ALBUM-VIDEO.md) |
-| Produce a songbook, manuscript or bilingual PDF | [Native print collections](docs/native-print-collections.md) |
-| Track output revisions delivered to different targets | [Delivery history workflow](docs/use-cases.md#track-a-delivery-over-time) |
-| Check storage, dependencies and candidate evictions | [Asset-management workflow](docs/asset-manager-workflow-v1.md) and [Tig boundaries](docs/architecture.md#reel-and-tig) |
+| Make an episode, music video or longer programme | [Production use cases](docs/use-cases.md#assemble-an-illustrated-episode) and [scene authoring](docs/scene-authoring-v1.md) |
+| Author animation, camera movement or visual effects | [Picture and animation guide](docs/capabilities.md#picture-and-animation) |
+| Direct voices, align dialogue or mix sound | [Voice and sound guide](docs/capabilities.md#voice-and-sound) |
+| Generate, edit, arrange or publish music | [Music production guide](docs/capabilities.md#music-production) |
+| Make multilingual, captioned or print editions | [Editions and delivery guide](docs/capabilities.md#editions-and-delivery) |
+| Reproduce, revise or recover a production | [Production engineering guide](docs/capabilities.md#production-engineering) and [Tig integration](docs/tig-public-integration.md) |
+| Find an exact command, schema or specialist operation | [Complete reference index](docs/reference-index.md) |
 | Inspect a semantic dependency graph in a browser | [WASM workbench](https://giodl73-repo.github.io/REEL/assembly/) |
 
 ## Try it
@@ -92,8 +103,10 @@ drive layout or cloud provider.
 This is an evolving tooling repository. Use a guide's schema and feature flags,
 and pin the actual producer/checker runtime for a project. Source on `main`, a
 tagged binary and an installed project tool can represent different revisions.
-[The roadmap](docs/tooling-roadmap.md) separates current source from proposals and
-project adoption. [CI](https://github.com/giodl73-repo/REEL/actions/workflows/ci.yml)
+[Development status](docs/development-status.md) separates the main checkout
+from active branch work; the [roadmap](docs/tooling-roadmap.md) preserves its
+dated source/adoption checkpoint.
+[CI](https://github.com/giodl73-repo/REEL/actions/workflows/ci.yml)
 qualifies source with synthetic fixtures; creative acceptance remains a project
 decision.
 
