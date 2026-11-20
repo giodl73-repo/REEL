@@ -2,7 +2,7 @@
 use crate::{publication::InputReader, *};
 use reel_publication::{
     Content, Publication,
-    comic_issue_source::{Assembly, Plan},
+    comic_issue_source::{Assembly, Composition, Plan},
     comic_source::{Limits, Pin, Receipt},
 };
 
@@ -19,6 +19,8 @@ pub struct Request {
     pub plan_path: String,
     pub parts: BTreeMap<String, PartPaths>,
     pub limits: Limits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition: Option<Composition>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -32,6 +34,8 @@ pub struct ControlReceipt {
 pub struct Generated {
     pub outputs: ArtifactSet,
     pub files: BTreeMap<String, Vec<u8>>,
+    /// Required original-parent checks for managed v2 production/replay.
+    pub composition_origins: Option<crate::issue::CompositionOrigins>,
 }
 fn verified(reader: &mut impl InputReader, a: &Artifact, max: u64) -> Result<Vec<u8>> {
     artifact(a)?;
@@ -68,8 +72,13 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         MAX_CONTROL_BYTES as u64,
     )?)?;
     let request: Request = decode(&verified(reader, &tool.request, MAX_CONTROL_BYTES as u64)?)?;
-    if request.schema != "reel.workflow-issue-control.v1"
-        || !(1..=128).contains(&request.parts.len())
+    if !matches!(
+        (request.schema.as_str(), request.composition.is_some()),
+        ("reel.workflow-issue-control.v1", false) | ("reel.workflow-issue-control.v2", true)
+    ) {
+        return fail(ErrorKind::Invalid, "issue-control-version-envelope");
+    }
+    if !(1..=128).contains(&request.parts.len())
         || !(1..=128 * 1024 * 1024).contains(&request.limits.input_bytes)
         || !(1..=128 * 1024 * 1024).contains(&request.limits.output_bytes)
     {
@@ -134,6 +143,37 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
     {
         return fail(ErrorKind::Conflict, "issue-control-master-parts");
     }
+    let mut composition_origins = if let Some(spec) = &request.composition {
+        let (asset, raw) = source(&spec.intent.path, MAX_CONTROL_BYTES as u64)?;
+        if asset.sha256 != spec.intent.sha256 || asset.bytes != spec.intent.bytes {
+            return fail(ErrorKind::Integrity, "issue-control-intent-pin");
+        }
+        let intent: reel_publication::composition::Intent = decode(&raw)?;
+        reel_publication::comic_issue_source::check_composition(&plan, spec, &intent)?;
+        let edition = &intent.editions[&plan.edition_id];
+        let consumed: BTreeSet<_> = packet.dependencies.keys().cloned().collect();
+        let components: BTreeSet<_> = edition.components.iter().cloned().collect();
+        let allowed: BTreeSet<_> = edition
+            .components
+            .iter()
+            .chain(&edition.controls)
+            .filter(|id| *id != &packet.task.id)
+            .cloned()
+            .collect();
+        if intent.project != packet.project
+            || !edition.controls.contains(&packet.task.id)
+            || !components.is_subset(&consumed)
+            || !consumed.is_subset(&allowed)
+        {
+            return fail(ErrorKind::Conflict, "issue-control-intent-task-binding");
+        }
+        Some(crate::issue::CompositionOrigins {
+            parents: consumed,
+            inputs: BTreeMap::new(),
+        })
+    } else {
+        None
+    };
     let mut parts = BTreeMap::new();
     let mut bundles = BTreeMap::new();
     for part in &plan.parts {
@@ -151,6 +191,26 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         let (receipt_asset, raw) = source(&paths.receipt, MAX_CONTROL_BYTES as u64)?;
         let receipt: Receipt = decode(&raw)?;
         let (bundle, _) = source(&paths.bundle, 64 * 1024 * 1024)?;
+        if let Some(origins) = &mut composition_origins {
+            let spec = request.composition.as_ref().expect("checked composition");
+            let producer = &spec.producers[&part.id];
+            origins.insert(
+                receipt_asset.logical_id.clone(),
+                crate::upstream::Reference {
+                    task_id: producer.clone(),
+                    artifact: crate::upstream::Selector::WorkerReceipt,
+                },
+            )?;
+            origins.insert(
+                bundle.logical_id.clone(),
+                crate::upstream::Reference {
+                    task_id: producer.clone(),
+                    artifact: crate::upstream::Selector::Output {
+                        name: "editable.packet".into(),
+                    },
+                },
+            )?;
+        }
         if receipt.part_id.as_deref() != Some(&part.id)
             || receipt.schema != "reel.comic-build-receipt.v1"
             || receipt.publication_id != publication.id
@@ -192,8 +252,13 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         return fail(ErrorKind::Conflict, "issue-control-unused-input");
     }
     let assembly = Assembly {
-        composition: None,
-        schema: "reel.comic-issue-assembly.v1".into(),
+        schema: if request.composition.is_some() {
+            "reel.comic-issue-assembly.v2"
+        } else {
+            "reel.comic-issue-assembly.v1"
+        }
+        .into(),
+        composition: request.composition,
         plan: pin(request.plan_path, &plan_asset),
         parts,
         bundles,
@@ -240,6 +305,7 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         return fail(ErrorKind::Budget, "issue-control-receipt-bytes");
     }
     Ok(Generated {
+        composition_origins,
         outputs,
         files: BTreeMap::from([
             ("assembly.json".into(), raw),

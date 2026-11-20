@@ -47,9 +47,10 @@ native historical replay share this validation path.
 
 Legacy assembly v1 omits `composition`; serialization preserves the existing
 request bytes. A v1 request with composition or a v2 request without it refuses.
-The derived `ComicIssueControl` producer still emits v1. Generating v2 controls
-through that producer is subsequent work; this change accepts explicitly authored
-v2 final-assembly requests rather than silently upgrading existing pipelines.
+The derived `ComicIssueControl` producer also supports an explicit v2 request;
+see [derived intent controls](2026-11-19-derived-intent-controls.md). Existing v1
+pipelines retain their exact request/output bytes rather than being upgraded
+implicitly.
 
 ## Validation and producer checklist findings
 
@@ -87,6 +88,6 @@ No independent reviewer or human approval is claimed. No existing S4/S5 job,
 recording, approval, selection or owned runtime profile is changed. The preserved
 large-native ImportPending job is not retried. The Tig SDK remains unchanged.
 
-Remaining qualification: derived v2 control generation, managed v2 comic lifecycle
+Remaining qualification: managed v2 comic lifecycle
 and post-close history, project-scale comics, film/conform order binding, full
 bilingual S5 composition/delivery and owned profile adoption/rollback.

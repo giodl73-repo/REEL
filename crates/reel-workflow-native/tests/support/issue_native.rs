@@ -435,6 +435,7 @@ fn complete_issue(derived_control: bool) {
         "application/json",
         if derived_control {
             serde_json::to_vec(&reel_workflow::issue_control::Request {
+                composition: None,
                 schema: "reel.workflow-issue-control.v1".into(),
                 plan_path: "issue-plan.json".into(),
                 parts: plan

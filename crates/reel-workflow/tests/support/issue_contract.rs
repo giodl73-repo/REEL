@@ -440,6 +440,7 @@ fn control_fixture() -> (Plan, Memory, Vec<u8>) {
     let original = memory.bytes[&tool.request.logical_id].clone();
     let assembly: Assembly = serde_json::from_slice(&original).unwrap();
     let request = reel_workflow::issue_control::Request {
+        composition: None,
         schema: "reel.workflow-issue-control.v1".into(),
         plan_path: assembly.plan.path,
         parts: BTreeMap::from([(
@@ -565,4 +566,283 @@ fn derived_control_recipe_does_not_depend_on_future_part_hashes() {
     let assembly: Assembly = serde_json::from_slice(&generated.files["assembly.json"]).unwrap();
     assert_eq!(assembly.bundles["opening"].sha256, next.sha256);
     assert_eq!(assembly.parts["opening"].sha256, next_receipt.sha256);
+}
+
+type ControlDependencies = BTreeMap<String, DependencyResult>;
+
+fn replace_control_request(
+    workflow: &mut Plan,
+    memory: &mut Memory,
+    request: &reel_workflow::issue_control::Request,
+) {
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let asset = memory.put(
+        &tool.request.logical_id,
+        "application/json",
+        serde_json::to_vec(request).unwrap(),
+    );
+    for input in &mut task.inputs {
+        if input.logical_id == asset.logical_id {
+            *input = asset.clone();
+        }
+    }
+    tool.request = asset;
+}
+
+fn versioned_control_fixture() -> (Plan, Memory, ControlDependencies) {
+    use reel_publication::{
+        comic_issue_source::Composition,
+        composition::{Edition, Format, Intent},
+    };
+    let (mut workflow, mut memory, _) = control_fixture();
+    let mut parent = workflow.tasks[0].clone();
+    parent.id = "draw-opening".into();
+    parent.operation = Operation::TextProposal;
+    parent.tool = None;
+    parent.prompt = "Synthetic metadata parent; this is not a rendered part.".into();
+    parent.inputs.clear();
+    let carrier = workflow.tasks[0]
+        .inputs
+        .iter()
+        .find(|a| a.logical_id.ends_with("/editable.packet"))
+        .unwrap()
+        .clone();
+    parent.outputs = BTreeMap::from([(
+        "editable.packet".into(),
+        reel_publication::OutputContract {
+            required: true,
+            media_type: carrier.media_type.clone(),
+            max_bytes: 64 * 1024 * 1024,
+        },
+    )]);
+    let dependencies = BTreeMap::from([(
+        parent.id.clone(),
+        DependencyResult {
+            result_sha256: "d".repeat(64),
+            artifacts: BTreeMap::from([("editable.packet".into(), carrier)]),
+        },
+    )]);
+    let intent = Intent {
+        schema: "reel.workflow-composition-intent.v1".into(),
+        project: workflow.project.clone(),
+        format: Format::ComicIssue,
+        editions: BTreeMap::from([(
+            "es".into(),
+            Edition {
+                language: "es".into(),
+                components: vec![parent.id.clone()],
+                controls: vec![workflow.tasks[0].id.clone()],
+                final_task: "assemble-es".into(),
+            },
+        )]),
+    };
+    let asset = memory.put(
+        "issue/intent",
+        "application/json",
+        serde_json::to_vec(&intent).unwrap(),
+    );
+    let task = &mut workflow.tasks[0];
+    task.depends_on = vec![parent.id.clone()];
+    let tool = task.tool.as_mut().unwrap();
+    let mut request: reel_workflow::issue_control::Request =
+        serde_json::from_slice(&memory.bytes[&tool.request.logical_id]).unwrap();
+    request.schema = "reel.workflow-issue-control.v2".into();
+    request.composition = Some(Composition {
+        intent: pin("intent.json", &asset),
+        producers: BTreeMap::from([("opening".into(), parent.id.clone())]),
+    });
+    tool.source_bindings
+        .insert("intent.json".into(), asset.logical_id.clone());
+    task.inputs.push(asset);
+    workflow.tasks.push(parent);
+    replace_control_request(&mut workflow, &mut memory, &request);
+    (workflow, memory, dependencies)
+}
+
+#[test]
+fn derived_v2_controls_preserve_pinned_intent_and_bind_into_the_final_task() {
+    let (workflow, mut memory, dependencies) = versioned_control_fixture();
+    let packet = make_packet(&workflow, "render", dependencies.clone()).unwrap();
+    let generated = reel_workflow::issue_control::generate(&packet, &mut memory).unwrap();
+    let origins = generated.composition_origins.as_ref().unwrap();
+    assert_eq!(
+        origins.parents,
+        std::collections::BTreeSet::from(["draw-opening".into()])
+    );
+    assert_eq!(origins.inputs.len(), 2);
+    assert_eq!(
+        origins.inputs["part/opening/receipt"].artifact,
+        reel_workflow::upstream::Selector::WorkerReceipt
+    );
+    assert_eq!(
+        origins.inputs["issue-demo/es/parts/opening/editable.packet"].artifact,
+        reel_workflow::upstream::Selector::Output {
+            name: "editable.packet".into()
+        }
+    );
+    let assembly: Assembly = serde_json::from_slice(&generated.files["assembly.json"]).unwrap();
+    assembly.check_version().unwrap();
+    assert_eq!(assembly.schema, "reel.comic-issue-assembly.v2");
+    assert_eq!(
+        assembly.composition.as_ref().unwrap().intent.sha256,
+        digest(&memory.bytes["issue/intent"])
+    );
+    let mut final_workflow = workflow.clone();
+    let mut final_task = workflow.tasks[0].clone();
+    final_task.id = "assemble-es".into();
+    final_task.depends_on.push("render".into());
+    let tool = final_task.tool.as_mut().unwrap();
+    final_task.inputs.retain(|a| a != &tool.request);
+    let asset = generated.outputs["assembly.json"].clone();
+    memory.bytes.insert(
+        asset.logical_id.clone(),
+        generated.files["assembly.json"].clone(),
+    );
+    tool.request = asset.clone();
+    tool.capability = ToolCapability::ComicIssueAssembly;
+    final_task.inputs.push(asset);
+    let publication: Publication =
+        serde_json::from_slice(&memory.bytes[&tool.publication.logical_id]).unwrap();
+    final_task.outputs = publication.editions[0].outputs.clone();
+    final_workflow.tasks.push(final_task);
+    let mut dependencies = dependencies;
+    dependencies.insert(
+        "render".into(),
+        DependencyResult {
+            result_sha256: "e".repeat(64),
+            artifacts: generated.outputs,
+        },
+    );
+    let packet = make_packet(&final_workflow, "assemble-es", dependencies).unwrap();
+    let bound = reel_workflow::issue::bind(&packet, &mut memory).unwrap();
+    assert_eq!(
+        bound.composition_origins().unwrap().parents,
+        std::collections::BTreeSet::from(["draw-opening".into(), "render".into()])
+    );
+}
+
+#[test]
+fn derived_v2_controls_refuse_unbound_intent_and_mixed_versions() {
+    use reel_publication::composition::Intent;
+    for mutation in [
+        "project",
+        "control",
+        "language",
+        "producer",
+        "pin",
+        "v1-with-intent",
+        "v2-without-intent",
+        "missing-component",
+        "hidden-parent",
+        "missing-binding",
+    ] {
+        let (mut workflow, mut memory, mut dependencies) = versioned_control_fixture();
+        let tool = workflow.tasks[0].tool.as_ref().unwrap();
+        let mut request: reel_workflow::issue_control::Request =
+            serde_json::from_slice(&memory.bytes[&tool.request.logical_id]).unwrap();
+        let mut intent: Intent = serde_json::from_slice(&memory.bytes["issue/intent"]).unwrap();
+        match mutation {
+            "project" => intent.project = "other-project".into(),
+            "control" => {
+                intent.editions.get_mut("es").unwrap().controls = vec!["different-control".into()]
+            }
+            "language" => intent.editions.get_mut("es").unwrap().language = "en".into(),
+            "producer" => {
+                request
+                    .composition
+                    .as_mut()
+                    .unwrap()
+                    .producers
+                    .insert("opening".into(), "other-drawing".into());
+            }
+            "v1-with-intent" => request.schema = "reel.workflow-issue-control.v1".into(),
+            "v2-without-intent" => request.composition = None,
+            "missing-component" => {
+                workflow.tasks[0].depends_on.clear();
+                dependencies.clear();
+            }
+            "hidden-parent" => {
+                let mut extra = workflow.tasks[1].clone();
+                extra.id = "hidden".into();
+                workflow.tasks[0].depends_on.push(extra.id.clone());
+                dependencies.insert(extra.id.clone(), dependencies["draw-opening"].clone());
+                workflow.tasks.push(extra);
+            }
+            "missing-binding" => {
+                workflow.tasks[0]
+                    .tool
+                    .as_mut()
+                    .unwrap()
+                    .source_bindings
+                    .remove("intent.json");
+            }
+            _ => (),
+        }
+        let asset = memory.put(
+            "issue/intent",
+            "application/json",
+            serde_json::to_vec(&intent).unwrap(),
+        );
+        for input in &mut workflow.tasks[0].inputs {
+            if input.logical_id == asset.logical_id {
+                *input = asset.clone();
+            }
+        }
+        if let Some(spec) = &mut request.composition {
+            spec.intent = pin("intent.json", &asset);
+        }
+        if mutation == "pin" {
+            request.composition.as_mut().unwrap().intent.sha256 = "0".repeat(64);
+        }
+        replace_control_request(&mut workflow, &mut memory, &request);
+        let packet = make_packet(&workflow, "render", dependencies).unwrap();
+        assert!(
+            reel_workflow::issue_control::generate(&packet, &mut memory).is_err(),
+            "accepted {mutation}"
+        );
+    }
+}
+
+#[test]
+fn derived_v2_control_request_stays_fixed_across_unknown_future_part_bytes() {
+    let (mut workflow, mut memory, mut dependencies) = versioned_control_fixture();
+    let original = workflow.tasks[0].tool.as_ref().unwrap().request.clone();
+    let carrier = memory.put(
+        "issue-demo/es/parts/opening/editable.packet",
+        "application/vnd.reel.editable-packet.v1",
+        b"future carrier bytes".to_vec(),
+    );
+    let mut receipt: Receipt =
+        serde_json::from_slice(&memory.bytes["part/opening/receipt"]).unwrap();
+    receipt
+        .outputs
+        .insert("editable.packet".into(), carrier.clone());
+    let receipt = memory.put(
+        "part/opening/receipt",
+        "application/json",
+        serde_json::to_vec(&receipt).unwrap(),
+    );
+    for input in &mut workflow.tasks[0].inputs {
+        if input.logical_id == carrier.logical_id {
+            *input = carrier.clone();
+        }
+        if input.logical_id == receipt.logical_id {
+            *input = receipt.clone();
+        }
+    }
+    dependencies
+        .get_mut("draw-opening")
+        .unwrap()
+        .artifacts
+        .insert("editable.packet".into(), carrier.clone());
+    let generated = reel_workflow::issue_control::generate(
+        &make_packet(&workflow, "render", dependencies).unwrap(),
+        &mut memory,
+    )
+    .unwrap();
+    let assembly: Assembly = serde_json::from_slice(&generated.files["assembly.json"]).unwrap();
+    assert_eq!(assembly.parts["opening"].sha256, receipt.sha256);
+    assert_eq!(assembly.bundles["opening"].sha256, carrier.sha256);
+    assert_eq!(workflow.tasks[0].tool.as_ref().unwrap().request, original);
 }

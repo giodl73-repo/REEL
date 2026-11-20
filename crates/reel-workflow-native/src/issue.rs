@@ -132,6 +132,10 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         .is_some_and(|t| t.capability == reel_workflow::ToolCapability::ComicIssueControl)
     {
         let generated = reel_workflow::issue_control::generate(packet, &mut inputs)?;
+        if let Some(expected) = &generated.composition_origins {
+            let origins = inputs.native.review_origins()?;
+            check_composition_origins(expected, &origins.bound(packet)?)?;
+        }
         return Ok(Generated {
             _inputs: inputs.native,
             bound: None,

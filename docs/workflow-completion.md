@@ -115,8 +115,12 @@ ordered part-to-producer mapping and carries intent into editable replay; workfl
 binding checks project/final task and named exact inputs, while native execution
 and replay require original receipt/output selectors and the exact declared parent
 set. Legacy v1 request bytes are preserved. Rendered synthetic replay and origin
-matcher tests cover these checks. Derived v2 control generation, managed v2 comic
-lifecycle qualification, film integration and real S5 production remain open.
+matcher tests cover these checks. The [derived intent-control producer](handoff/2026-11-19-derived-intent-controls.md)
+now generates v2 assembly requests after exact parent bytes exist, validates its
+declared control role and required/allowed parents, and carries original receipt/
+carrier selector requirements into native production/replay. Legacy request bytes
+remain stable; all 131 workflow tests pass. Managed v2 comic lifecycle
+qualification, film integration and real S5 production remain open.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 has an unresolved large-native prerequisite documented by the

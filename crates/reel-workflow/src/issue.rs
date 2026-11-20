@@ -25,7 +25,11 @@ pub struct CompositionOrigins {
     pub inputs: BTreeMap<String, crate::upstream::Reference>,
 }
 impl CompositionOrigins {
-    fn insert(&mut self, id: String, reference: crate::upstream::Reference) -> Result<()> {
+    pub(crate) fn insert(
+        &mut self,
+        id: String,
+        reference: crate::upstream::Reference,
+    ) -> Result<()> {
         if self.inputs.insert(id, reference).is_some() {
             return fail(ErrorKind::Conflict, "issue-composition-origin-alias");
         }
