@@ -12,9 +12,10 @@ checked again before closing the objective.
 The usable local BBJ reader is at
 `F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html` (28 sheets).
 The packaged development preview starts at
-`F:/src/REEL-releases/workflow-preview-20261120-v2/START-HERE.md`.
-That frozen preview predates the newer layered native capability; do not
-represent the bundle as a completed native comic or S5 production system.
+`F:/src/REEL-releases/workflow-preview-20261120-v3/START-HERE.md`.
+It packages the actual layered page planner and corrected native bridge, with
+per-binary pins and a passing installed planning smoke check. This remains a
+development preview, not a completed full-issue comic or S5 production system.
 
 The actual 19-file BBJ story-page intake (65,306,700 bytes) reached retained
 ownership and closed into retained coverage. Its child composition failed while
@@ -69,7 +70,33 @@ also recorded. The declared native preview reports 19 resources/162,638,243
 bytes with 16 actors and 128 changed paths; it explicitly has not checked
 admission or native payload availability. The subsequent actual `native-intake`
 job in that directory accepted the generated packet and reached retained
-ownership. Composition retention remains an acceptance gate.
+ownership. Its Rust recipe subsequently admitted the real composition and ran
+the original pinned worker. The selected SVG and PNG reproduced exactly and
+the worker emitted a 35,120,734-byte editable carrier.
+
+Initial retention exposed a verifier defect: the unchanged reading PNG was
+already held as an input, and a second native output-gate open was refused.
+Read-only probes confirmed all four published objects were available and the
+nested PNG open failed. The corrected verifier reuses only the same operation's
+already-bound captured bytes and live native gate, retaining all output alias,
+receipt, hash and byte comparisons. The actual pending job passed the read-only
+native proof with the Index checkpoint unchanged.
+
+The separately pinned original-result reconciler then completed the same task,
+attempt, activation and WorkRefs without invoking a worker/provider or editing
+the original profile, pending record, worker result or manifest. The admitted
+producer remains runtime `0d3ce864...`; the verifier is `b340f59e...`, source
+`05f8750`. Evidence at `qualified-reconciliation-v1` records this explicit
+verification-only transition and the native Retained journal event.
+
+The actual `native-review/validation.json` proves native retained review export,
+exact selected SVG/PNG and eight original page/panel/dialogue targets. The page
+job subsequently closed into retained coverage through `native-page-close`;
+the original clear completed and its actor was observed idle. Scratch and every
+historical version remain. This closes one actual native page workflow, not
+full-issue production, edited-lettering restoration, creative viewing, selection
+or S5 qualification. The corrected bridge passes 103 standard native checks,
+all 247 SDK pins and strict Clippy with/without film.
 
 `prepare-abandon`, `abandon-job` and `recover-abandon` now implement bounded
 Waiting-task cancellation with source-only retained handoff. A durable intent
