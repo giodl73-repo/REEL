@@ -110,6 +110,11 @@ whole-file capture. A synthetic seven-parent 7.94 GB metadata test and a separat
 10,138-byte retained comic stream pass. The native fixture preserves the actual
 Index checkpoint; neither test qualifies the full E7 closure or large native
 intermediate custody. Automatic component scheduling/composition remains open.
+The subsequent [streaming expansion port](2026-11-19-streaming-expansion.md)
+connects explicit budgets to v2 templates/recipes and normal native CLI planning
+exports. Its existing-parent fixture preserves the actual Index checkpoint and
+creates no child admission. Automatic partitioning and the full episode-scale
+protection, render, return and recovery requirements remain open.
 
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy

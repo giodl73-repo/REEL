@@ -90,6 +90,12 @@ large-parent tests cover exact fingerprints, budget changes and existing-step
 refusal. This closes the need to hand-author v3 bindings for these planning
 paths; complete episode partitioning, native large-object admission/handoff,
 film execution and consumer-scale recovery remain open.
+The 66.06-second frozen CLI fixture now qualifies both `expand-plan` and
+`schedule-recipe` against a retained 10,138-byte comic artifact. Their v2/v3
+planning outputs have identical child packets and the actual Index checkpoint
+is unchanged. All 118 workflow, 84 standard native and 31 HTTP tests, 247 SDK
+pins and strict Clippy pass. This is private planning export, not native large
+child admission, automatic episode partitioning or production adoption.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole

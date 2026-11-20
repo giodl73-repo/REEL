@@ -48,8 +48,34 @@ An opt-in fixture invokes an explicitly frozen native CLI against an existing
 retained synthetic comic parent. It exports both a v2 expansion and a v2 recipe
 schedule, compares their exact child packets/dependencies, requires their
 no-admission reports and compares the actual Index checkpoint before and after.
-It writes only new owned private controls/evidence. The result and frozen
-source/tool pins must be recorded before claiming that qualification.
+It writes only new owned private controls/evidence.
+
+The fixture passed in 66.06 seconds (66.80 seconds including process launch).
+Both actual CLI commands produced the same exact child packet and original
+dependency digest, with v2 templates and v3 upstream bindings. Their selected
+parent artifact was the existing 10,138-byte synthetic reading PNG, not a
+multi-GB intermediate. The actual Index checkpoint remained unchanged at
+sequence 19. No child was admitted, no provider/producer ran and no task was
+completed or adopted.
+
+Source: `2a56aa27fb769adefb849272ab5398b2b8ce6703`; all 1,944 tracked files
+are archived and individually hash/length compared against the working tree.
+Frozen CLI SHA256
+`9257fd79948479a32b76fb762d10274d8f86d20ed900676723ab6dc893a68175`,
+38,849,024 bytes. Frozen test tool SHA256
+`0c25c7348e5f4702d682b977adb6495b028f27b3d03c1a4bb454aaab22bb44d7`,
+43,981,312 bytes. All 118 workflow, 84 standard native and 31 HTTP tests pass,
+with all 247 SDK pins and strict all-target Clippy for workflow and native
+with/without film. The standard suite excludes its 64 ignored native fixtures;
+only the named read-only CLI fixture ran separately. `git diff --check` passes.
+
+Private certificate:
+`F:/src/tig-dev-temp/reel-streaming-expansion-20261119-v1/qualified-tools.json`,
+SHA256 `18a9294876bd90e6134e19eb8917142bf5ec9c52a78abc9c750df017968ac6a0`.
+It binds the frozen source/tools, original start/outcome, exact exported controls,
+CLI outcome records, unchanged Index checkpoints and all three test logs.
+Qualification session 33930 and regression session 24447 terminated successfully;
+there is no pending child lifecycle to resume or re-admit.
 
 Automatic authoring of a complete bounded episode composition, real multi-GB
 parent/child admission and retained handoff, large film dispatch, interrupted
