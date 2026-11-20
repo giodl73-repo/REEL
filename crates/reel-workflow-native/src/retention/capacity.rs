@@ -41,7 +41,7 @@ pub(crate) struct Observation {
 
 /// Private control data. A digest pin authenticates its exact bytes, not approval.
 /// Rechecking compares the original request and current native state atomically
-/// under source/target fences. Application remains a separate, unimplemented API.
+/// under source/target fences. Native execution stays with the original runtime.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Plan {
@@ -56,6 +56,12 @@ pub struct Plan {
     pub required_changed_paths: usize,
 }
 impl Plan {
+    pub(crate) fn check_observation(&self, observation: Observation) -> Result<()> {
+        compare(
+            self,
+            &Self::build(self.request.clone(), observation, self.policy.clone())?,
+        )
+    }
     fn build(request: Object, observation: Observation, policy: Policy) -> Result<Self> {
         policy.validate()?;
         let p = &observation.preview;
@@ -125,7 +131,21 @@ pub fn prepare(
 ) -> Result<Plan> {
     policy.validate()?;
     super::check(packet, source, receipt, result)?;
-    let request = Object::from_bytes(&admission::encode(&(
+    let request = request(packet, source, profile, receipt, result, target)?;
+    let observation = admission::Prepared::open(packet, source, profile, &receipt.attempt_id)?
+        .retained_capacity_observation(receipt, result, target)?;
+    Plan::build(request, observation, policy)
+}
+
+fn request(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &admission::Receipt,
+    result: &ReturnedResult,
+    target: &Target,
+) -> Result<Object> {
+    Ok(Object::from_bytes(&admission::encode(&(
         "reel.workflow-retained-capacity-request.v1",
         packet,
         source,
@@ -133,10 +153,54 @@ pub fn prepare(
         receipt,
         result,
         target,
-    ))?);
-    let observation = admission::Prepared::open(packet, source, profile, &receipt.attempt_id)?
-        .retained_capacity_observation(receipt, result, target)?;
-    Plan::build(request, observation, policy)
+    ))?))
+}
+
+/// Stage the SAME original retention operation with an explicit finite owner
+/// policy. Reopen native output/producer bytes first, retaining original claims.
+/// Does not execute the work, acknowledge custody, update the journal or retire
+/// scratch. The frozen original runtime can resume the staged work normally.
+#[allow(clippy::too_many_arguments)]
+pub fn stage(
+    plan: &Plan,
+    expected_sha256: &str,
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &admission::Receipt,
+    result: &ReturnedResult,
+    target: &Target,
+) -> Result<super::Acknowledgement> {
+    check_pin(plan, expected_sha256)?;
+    plan.policy.validate()?;
+    // Validate schema/reservations even on an idempotent original-work replay.
+    let reconstructed = Plan::build(
+        plan.request.clone(),
+        Observation {
+            preview: plan.observed.clone(),
+            state: plan.state.clone(),
+        },
+        plan.policy.clone(),
+    )?;
+    compare(plan, &reconstructed)?;
+    super::check(packet, source, receipt, result)?;
+    if plan.request != request(packet, source, profile, receipt, result, target)? {
+        return Err(error(
+            ErrorKind::Conflict,
+            "retained-capacity-original-request",
+        ));
+    }
+    let _annex = crate::hold_tool(&source.annex)?;
+    let guard = admission::Prepared::open(packet, source, profile, &receipt.attempt_id)?
+        .capacity_recovery_guard(receipt, target)?;
+    drop(super::outputs(packet, source, result)?);
+    drop(crate::producer::check_native(
+        packet,
+        source,
+        result,
+        guard.input_permit(),
+    )?);
+    guard.stage_capacity_recovery(receipt, result, target, plan)
 }
 
 /// Read-only stale-plan check. It never stages or resumes native work.

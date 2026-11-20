@@ -265,6 +265,47 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"private-retained-resolution-proposal","findings":proposal.proposal.finding_keys.len(),"issues_closed":false,"selected":false,"approved":false}),
             )
         }
+        [
+            command,
+            plan,
+            pin,
+            packet,
+            source,
+            profile,
+            receipt,
+            result,
+            target,
+            output,
+            apply,
+        ] if command == "stage-retention-capacity" && apply == "--apply" => {
+            use std::io::Write;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            // Reserve the exclusive private acknowledgement destination BEFORE
+            // native staging; any failure preserves it for reconciliation.
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            let ack = reel_workflow_native::retention::capacity::stage(
+                &read_control(Path::new(plan))?,
+                pin,
+                &read_control(Path::new(packet))?,
+                &source,
+                &profile,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(target))?,
+            )?;
+            file.write_all(&ack.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "retained-capacity-stage-write-preserve-original-work".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"native-original-retention-capacity-staged",
+                "work_execution_requested":false,"retained_owner_acknowledged":false,"task_updated":false,
+                "runtime_adopted":false,"scratch_retired":false,"selected":false}),
+            )
+        }
         [command, packet, source, profile, receipt, result, target]
             if command == "inspect-retention-capacity" =>
         {
@@ -1366,6 +1407,7 @@ fn main() -> ExitCode {
             "reel-workflow-native inspect-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
             "reel-workflow-native plan-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET POLICY OUTPUT --apply\n",
             "reel-workflow-native check-retention-capacity-plan PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
+            "reel-workflow-native stage-retention-capacity PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET OUTPUT --apply\n",
             "reel-workflow-native prepare-close JOURNAL PROFILE TARGET NEW_TICKET --apply\n",
             "reel-workflow-native close-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",

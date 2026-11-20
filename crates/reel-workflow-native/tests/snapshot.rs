@@ -15,6 +15,9 @@ use tig_git::{annex::identity::Key, source::native::annex::Binding};
 #[path = "support/automatic_dispatch.rs"]
 mod automatic_dispatch;
 #[cfg(windows)]
+#[path = "support/capacity_recovery.rs"]
+mod capacity_recovery_native;
+#[cfg(windows)]
 #[path = "support/close_native.rs"]
 mod close_native;
 #[cfg(windows)]

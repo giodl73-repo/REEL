@@ -624,6 +624,18 @@ actual Index remain unchanged during the 1.37-second Rust/CLI inspection. All
 The bounded cumulative-owner policy/original-operation recovery and full corrected
 issue remain unfinished; metadata inspection is not retained payload proof.
 
+[Immutable retained-capacity plans](handoff/2026-11-20-retained-capacity-plan.md)
+now separate a finite owner-history proposal from frozen job limits. Five focused
+tests pass, and a frozen 4.72-second actual Rust/CLI qualification exports/rechecks
+the pending control's plan, refuses five invalid/conflicting requests and preserves
+its original journal, controls, actual Index and other Waiting claims. Standard
+native tests pass (91 passed, 85 opt-in ignored), with all 247 SDK pins and strict
+default/film Clippy. The subsequent checked staging adapter preserves the original
+retention operation and immutable policy evidence; its effectful process-exit
+reconstruction/original-runtime completion qualification is still pending.
+Automatic owner-policy admission for future jobs, complete corrected-issue
+assembly/contextual review and broader project qualification remain open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

@@ -40,7 +40,7 @@ fn parent(root: &Path) -> upstream::ParentControl {
         acknowledgement: load(root, "retained.json"),
     }
 }
-fn check_waiting(root: &Path) {
+pub(super) fn check_waiting(root: &Path) {
     let packet: Packet = load(root, "next-packet.json");
     let p: handoff::Profile = load(root, "next-handoff-profile.json");
     let journal = reel_workflow::handoff::Journal::open(&root.join("next-journal")).unwrap();

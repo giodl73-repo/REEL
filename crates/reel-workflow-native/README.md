@@ -116,7 +116,19 @@ request, response candidate, actual Index checkpoint and source/owner selections
 and revisions under their actor fences. Existing or uncertain retention work must
 be reconciled through its original handles. Planning and rechecking do not stage
 work, widen frozen job limits, adopt a runtime, acknowledge ownership or complete
-the task. Applying this policy and interrupted-application recovery remain open.
+the task.
+
+`stage-retention-capacity PLAN SHA256 PACKET SOURCE ADMISSION RECEIPT RESULT TARGET
+OUTPUT --apply` reopens exact native output/producer bytes under original source
+and target fences. It checks the pinned request and current capacity plan, then
+stages the original v1 retention operation with the policy record included in its
+additive selection. A retry reopens that same work and verifies the exact policy
+evidence; it cannot replace existing work or replan after staging. The finite
+owner allowance applies only to this explicit staging call. Normal retention,
+job budgets and original runtime pins stay unchanged. Staging does not execute
+the work, acknowledge retained ownership or complete the journal. The original
+frozen runtime must reconcile/execute it through its normal resume protocol;
+effectful qualification and interrupted-execution coverage remain separate gates.
 
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and

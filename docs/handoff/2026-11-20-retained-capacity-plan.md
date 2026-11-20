@@ -3,8 +3,9 @@
 The [actual capacity diagnosis](2026-11-20-retained-owner-capacity.md) identifies a
 cumulative-owner limit, not a failed render or oversized job input. The native
 adapter now exports and rechecks an immutable proposal for a separate, finite
-owner-history allowance. This is a read-only planning boundary; there is no
-capacity-policy application API yet.
+owner-history allowance. Planning is read-only. The separate staging adapter
+preserves the original retention identity and leaves work execution with the
+frozen original runtime.
 
 `retention::capacity::{prepare,recheck}` and these CLI commands expose the boundary:
 
@@ -50,10 +51,31 @@ comics-editor checklist requires complete corrected-issue assembly and contextua
 review after the repaired part and assembly control. Neither checklist supplies
 human creative approval or closes a finding.
 
-Remaining recovery work: implement a checked application transaction that retains
-the immutable policy evidence, preserves the original retention operation and
-validates payloads, plus interrupted-stage/execute reconciliation and proof that
-the frozen original runtime can acknowledge/resume that exact work. Recheck and
-mutation must share the same fences and expected revisions; a successful read-only
-check must never be treated as an admission token. Full corrected-issue assembly,
-contextual report and the wider film/comic qualifications remain open.
+The read-only qualification passed in 4.72 seconds at source
+`2928ed19d444f51102ec2c0d040cc880c29f4b7c`. Evidence is in
+`F:/src/tig-dev-temp/reel-retained-capacity-plan-20261120-v1`: 1,981 source files,
+source-manifest SHA256
+`af396705107df28897d61f6a106692e71ed4cccb624fc09bdc0269e62a01c09c`,
+CLI `e278e6a4453289eff6cac4f74a8438ca2f5b3d077feb9f9d1d59aca6c364b907`
+and fixture `833babe32847dae38bde90174a0ce0f9d2319982b2ccba4ab3064878defd158e`.
+The actual exported plan is
+`15af034bf386eb6e7b6b5c368b41144df62bd63e769622a7b365466370ed9005`.
+Five actual CLI refusals pass, with the original journal, controls, actual Index
+and other Waiting claims unchanged. Standard native tests pass (91 passed, 85
+opt-in ignored), all 247 SDK pins and strict default/film Clippy pass. The
+34-artifact certificate is
+`27871ec96645dbca74b0ef98a5f7e14dbe9aa20eb8abae7f2af66a6e99c870f1`;
+validation is `a60d77714e62231b50ce5d27b749339e4e74418cdd265cc772141eb214c18647`.
+
+The subsequent `stage-retention-capacity` API checks the caller's pin, original
+request and live source/target under their same fences. It reopens native output
+and producer bytes before staging, retains the immutable policy record alongside
+unchanged v1 registration evidence and preserves every existing target reference.
+The original operation key is unchanged. An already-staged work is accepted only
+with that exact policy record; no stale-plan regeneration or new work identity is
+allowed. Its descriptor alone does not establish execution, retained ownership or
+task completion. Effectful staging/process-exit recovery and original-runtime
+completion require their own frozen qualification. Interrupted native execution
+retains the existing original-WorkRef recovery protocol; broader crash coverage
+remains open. Full corrected-issue assembly, contextual report and the wider
+film/comic qualifications remain open.

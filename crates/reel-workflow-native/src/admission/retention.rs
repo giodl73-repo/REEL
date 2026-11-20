@@ -48,10 +48,22 @@ impl Prepared {
         result: &reel_workflow::ReturnedResult,
         target: &Target,
     ) -> Result<crate::retention::capacity::Observation> {
+        let (index, _) = self.stores(Some(receipt))?;
+        self.retained_scope(&index, target)?;
+        let _fences = self.actor_fences(&index, Some(&target.actor))?;
+        drop(index);
+        self.retained_capacity_observation_fenced(receipt, result, target)
+    }
+    // Caller owns both original source and target actor fences.
+    fn retained_capacity_observation_fenced(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+    ) -> Result<crate::retention::capacity::Observation> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
         self.retained_scope(&index, target)?;
-        let _fences = self.actor_fences(&index, Some(&target.actor))?;
         self.verify_live(receipt, &mut index, &mut nodes)?;
         let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
         let (operation, raw) = plan(&self.profile, receipt, &candidate, target)?;
@@ -137,6 +149,17 @@ impl Prepared {
             original_retention_work_complete: complete,
         };
         Ok(crate::retention::capacity::Observation { preview, state })
+    }
+    pub(crate) fn capacity_recovery_guard(
+        self,
+        receipt: &Receipt,
+        target: &Target,
+    ) -> Result<ClaimsGuard> {
+        self.check_receipt(receipt)?;
+        let (index, _) = self.stores(Some(receipt))?;
+        self.retained_scope(&index, target)?;
+        drop(index);
+        self.reopen_checked(receipt, Some(&target.actor))
     }
     /// Read-only preflight; later retention still rechecks actual coverage.
     pub(crate) fn check_retained_target(&self, target: &Target) -> Result<()> {
@@ -498,12 +521,43 @@ impl Prepared {
 }
 
 impl ClaimsGuard {
+    pub(crate) fn stage_capacity_recovery(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+        recovery: &crate::retention::capacity::Plan,
+    ) -> Result<Acknowledgement> {
+        let p = &self._prepared;
+        // A staged original work is reconciled by identity below. Never compare
+        // its post-stage Index checkpoint with the pre-stage capacity snapshot.
+        if !p.has_retention_work(receipt, result, target)? {
+            recovery.check_observation(
+                p.retained_capacity_observation_fenced(receipt, result, target)?,
+            )?;
+        }
+        let (mut index, mut nodes) = p.stores(Some(receipt))?;
+        let candidate = p.response_candidate(receipt, result, &mut index, &mut nodes)?;
+        drop(nodes);
+        drop(index);
+        self.retain_response_with_capacity(receipt, &candidate, target, false, Some(recovery))
+    }
     pub(crate) fn retain_response(
         &self,
         receipt: &Receipt,
         candidate: &Candidate,
         target: &Target,
         apply: bool,
+    ) -> Result<Acknowledgement> {
+        self.retain_response_with_capacity(receipt, candidate, target, apply, None)
+    }
+    fn retain_response_with_capacity(
+        &self,
+        receipt: &Receipt,
+        candidate: &Candidate,
+        target: &Target,
+        apply: bool,
+        recovery: Option<&crate::retention::capacity::Plan>,
     ) -> Result<Acknowledgement> {
         let p = &self._prepared;
         let (mut index, mut nodes) = p.stores(Some(receipt))?;
@@ -532,9 +586,29 @@ impl ClaimsGuard {
         let reference = if let Some(reference) =
             work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?
         {
-            p.retained_record(
+            let record = p.retained_record(
                 receipt, candidate, target, &reference, &mut nodes, &mut index,
             )?;
+            if let Some(recovery) = recovery {
+                let raw = recovery.canonical_bytes()?;
+                let evidence = Object::from_bytes(&raw);
+                if !entries(&record.update.selection, &mut nodes)?
+                    .values()
+                    .any(|o| o == &evidence)
+                    || nodes
+                        .get(&evidence)
+                        .map_err(|_| {
+                            error(ErrorKind::Integrity, "retention-capacity-evidence-read")
+                        })?
+                        .as_deref()
+                        != Some(&raw)
+                {
+                    return Err(error(
+                        ErrorKind::Conflict,
+                        "retention-capacity-original-work-policy",
+                    ));
+                }
+            }
             reference
         } else {
             let retained = index
@@ -547,10 +621,25 @@ impl ClaimsGuard {
             let mut objects = source_objects;
             objects.extend([retained.selection.root.clone(), evidence.clone()]);
             objects.extend(next.values().cloned());
+            let recovery_raw = recovery.map(|r| r.canonical_bytes()).transpose()?;
+            if let Some(raw) = &recovery_raw {
+                objects.insert(Object::from_bytes(raw));
+            }
             let total = objects.iter().try_fold(0u64, |n, o| n.checked_add(o.bytes));
             let limits = p.projection_limits();
-            if objects.len() > limits.objects || total.is_none_or(|n| n > limits.logical_bytes) {
+            let (object_limit, byte_limit) = recovery
+                .map(|r| (r.policy.objects, r.policy.logical_bytes))
+                .unwrap_or((limits.objects, limits.logical_bytes));
+            if objects.len() > object_limit || total.is_none_or(|n| n > byte_limit) {
                 return Err(error(ErrorKind::Budget, "retention-resource-bound"));
+            }
+            if let Some(raw) = recovery_raw {
+                nodes.put(&raw).map_err(|_| {
+                    error(
+                        ErrorKind::NeedsRecovery,
+                        "retention-capacity-evidence-write",
+                    )
+                })?;
             }
             nodes
                 .put(&raw)
