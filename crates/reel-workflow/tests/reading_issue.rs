@@ -264,6 +264,25 @@ fn complete_reading_issue_replays_pages_and_preserves_source_review_targets() {
         task_snapshots: BTreeMap::new(),
         tasks: vec![packet.task.clone(), child_task],
     };
+    let mut base = plan.clone();
+    base.tasks.pop();
+    let planned = review_control::recipe(&base, &packet, &result, None, "review-controls").unwrap();
+    let planned_tool = planned.steps[0].tool.as_ref().unwrap();
+    assert_eq!(planned.steps[0].depends_on, vec![packet.task.id.clone()]);
+    assert!(
+        matches!(&planned_tool.request, expansion::Input::Parent { reference }
+        if reference.task_id == packet.task.id && reference.artifact == upstream::Selector::WorkerReceipt)
+    );
+    assert!(planned.steps[0].inputs.iter().any(|input| matches!(input,
+        expansion::Input::Fixed { artifact } if artifact == &reading[0])));
+    base.project = "different-baseline".into();
+    assert_eq!(
+        review_control::recipe(&base, &packet, &result, None, "review-controls")
+            .err()
+            .unwrap()
+            .code,
+        "review-plan-producer-baseline"
+    );
     let child = make_packet(
         &plan,
         "review-controls",

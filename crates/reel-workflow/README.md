@@ -143,6 +143,20 @@ does not establish native retention. The source index explicitly reports that
 editable layer payloads have not been restored by this reading-only operation;
 the layered source archive and printer/accessible derivatives remain separate.
 
+After a producer has completed, plan the protected review-control consumer from
+its exact current plan, packet, result and original upstream declaration:
+
+```powershell
+reel-workflow plan-comic-review PLAN PRODUCER_PACKET RESULT UPSTREAM_OR_DASH NEW_TASK_ID NEW_RECIPE
+```
+
+Use `-` only when the producer has no upstream declaration. The command checks
+the producer against the supplied plan, carries original parent selectors into
+the recipe, and adds the producer's outputs and worker receipt. It preserves the
+original publication/language and source image identities. Run that recipe with
+owned native runner profiles to produce review copy/source/request controls.
+Planning itself performs no admission, review, approval or issue delivery.
+
 ## Run protected work
 
 Build the separate native workspace explicitly:

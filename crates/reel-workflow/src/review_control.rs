@@ -10,6 +10,116 @@ pub const OUTPUTS: [&str; 3] = [
 /// Explicit new-control opt-in. The value is the exact producer receipt input;
 /// legacy source maps omit this entry and reproduce their original v1 request.
 pub const PRODUCTION_RECEIPT: &str = "production/receipt.json";
+
+/// Plan the next review-control job against an exact producer already present
+/// in the base plan. Original upstream selectors are carried through unchanged;
+/// this declaration grants neither retained custody nor review approval.
+pub fn recipe(
+    base: &Plan,
+    producer: &Packet,
+    result: &ReturnedResult,
+    inherited: Option<&upstream::Bindings>,
+    task_id: &str,
+) -> Result<crate::recipe::Recipe> {
+    check_result(producer, result)?;
+    if make_packet(base, &producer.task.id, producer.dependencies.clone())? != *producer {
+        return fail(ErrorKind::Stale, "review-plan-producer-baseline");
+    }
+    let tool = producer.task.tool.as_ref().ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "review-plan-producer-tool".into(),
+    })?;
+    if !matches!(
+        tool.capability,
+        ToolCapability::ComicRender
+            | ToolCapability::ComicIssueAssembly
+            | ToolCapability::LayeredComicCompose
+            | ToolCapability::ComicReadingAssembly
+    ) {
+        return fail(ErrorKind::Unsupported, "review-plan-producer-capability");
+    }
+    let origins = bindings(producer, result, inherited)?;
+    let pins = inputs(producer, result)?;
+    let maximum = if matches!(
+        tool.capability,
+        ToolCapability::LayeredComicCompose | ToolCapability::ComicReadingAssembly
+    ) {
+        256 * 1024 * 1024
+    } else {
+        64 * 1024 * 1024
+    };
+    let total = pins
+        .iter()
+        .try_fold(0u64, |n, a| n.checked_add(a.bytes))
+        .ok_or(Error {
+            kind: ErrorKind::Budget,
+            code: "review-plan-input-overflow".into(),
+        })?;
+    if total > maximum {
+        return fail(ErrorKind::Budget, "review-plan-input-bound");
+    }
+    let input = |a: &Artifact| match origins.inputs.get(&a.logical_id) {
+        Some(reference) => expansion::Input::Parent {
+            reference: reference.clone(),
+        },
+        None => expansion::Input::Fixed {
+            artifact: a.clone(),
+        },
+    };
+    let by_id: BTreeMap<_, _> = pins.iter().map(|a| (a.logical_id.as_str(), a)).collect();
+    let step = expansion::TaskTemplate {
+        id: task_id.into(),
+        operation: Operation::DeterministicTool,
+        language: producer.task.language.clone(),
+        prompt: String::new(),
+        depends_on: origins
+            .inputs
+            .values()
+            .map(|r| r.task_id.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect(),
+        inputs: pins.iter().map(&input).collect(),
+        outputs: OUTPUTS
+            .iter()
+            .map(|n| {
+                (
+                    (*n).into(),
+                    OutputContract {
+                        media_type: "application/json".into(),
+                        max_bytes: MAX_CONTROL_BYTES as u64,
+                        required: true,
+                    },
+                )
+            })
+            .collect(),
+        tool: Some(expansion::Tool {
+            capability: ToolCapability::ComicReviewControl,
+            executable: tool.executable.clone(),
+            auxiliary_executables: BTreeMap::new(),
+            publication: input(&tool.publication),
+            edition_id: tool.edition_id.clone(),
+            request: input(result.worker_receipt.as_ref().unwrap()),
+            sources: bound_source_bindings(producer, result)?
+                .into_iter()
+                .map(|(path, id)| (path, input(by_id[id.as_str()])))
+                .collect(),
+            part: None,
+        }),
+        streaming: Some(upstream::Streaming {
+            schema: "reel.workflow-upstream-streaming.v1".into(),
+            input_bytes: maximum,
+            input_object_bytes: maximum,
+        }),
+    };
+    let recipe = crate::recipe::Recipe {
+        schema: "reel.workflow-recipe.v2".into(),
+        base: base.clone(),
+        steps: vec![step],
+    };
+    crate::recipe::check(&recipe)?;
+    Ok(recipe)
+}
 pub struct Generated {
     pub outputs: ArtifactSet,
     pub files: BTreeMap<String, Vec<u8>>,

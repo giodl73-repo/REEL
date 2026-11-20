@@ -323,6 +323,14 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "runtime_adopted":false,"scratch_retired":false,"selected":false}),
             )
         }
+        [command, profile] if command == "inspect-metadata-capacity" => {
+            let capacity = reel_workflow_native::metadata_capacity::inspect(&read_control(
+                Path::new(profile),
+            )?)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"metadata-capacity-observation","capacity":capacity,"effects_applied":false,"capacity_reserved":false}),
+            )
+        }
         [command, packet, source, profile, attempt] if command == "inspect-input-closure" => {
             let preview = reel_workflow_native::admission::Prepared::open(
                 &read_control(Path::new(packet))?,
@@ -1554,6 +1562,7 @@ fn main() -> ExitCode {
             "reel-workflow-native comic-check REQUEST DIRECTORY\n",
             "reel-workflow-native check-publication-native PACKET PROFILE\n",
             "reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\n",
+            "reel-workflow-native inspect-metadata-capacity ADMISSION_PROFILE\n",
             "reel-workflow-native preview-film-direction PACKET NATIVE_PROFILE\n",
             "reel-workflow-native pack-image-result PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT RETURNS NEW_RESULT --apply\n",
             "reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\n",

@@ -28,6 +28,7 @@ cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --all-target
 reel-workflow-native check-snapshot PACKET SNAPSHOT_PROFILE
 reel-workflow-native check-publication-native PACKET NATIVE_PROFILE
 reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT
+reel-workflow-native inspect-metadata-capacity ADMISSION_PROFILE
 reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply
 reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT
 reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET
@@ -102,6 +103,11 @@ available capacity, a 600-resource lifecycle or v2 film execution. See the
 Retained owners accumulate earlier jobs, so a job's projection budget may reject
 retention even when its own input/output closure fits. `inspect-retention-capacity`
 reports this exact metadata union without reading payloads or changing claims.
+`inspect-metadata-capacity` uses the qualified SDK's read-only metadata reader
+against the profile's exact identity/minimum checkpoint. It reports configured
+node/byte limits, the current counters and remaining headroom. It does not read
+media, walk a payload store, reserve capacity, change limits or predict the cost
+of a future transition. It may return Busy while another writer is active.
 `plan-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET POLICY OUTPUT
 --apply` creates a private immutable recovery proposal; `--apply` here only writes
 that new control file with exclusive creation. The policy has schema

@@ -374,6 +374,26 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"task-bound-review-candidate","findings":checked.findings().len(),"viewing_verified":false,"retention_acknowledged":false,"approved":false}),
             )
         }
+        [command, plan, producer, result, inherited, task, output]
+            if command == "plan-comic-review" =>
+        {
+            let inherited: Option<reel_workflow::upstream::Bindings> = if inherited == "-" {
+                None
+            } else {
+                Some(control(inherited)?)
+            };
+            let recipe = reel_workflow::review_control::recipe(
+                &control(plan)?,
+                &control(producer)?,
+                &control(result)?,
+                inherited.as_ref(),
+                task,
+            )?;
+            publish_control(output, &recipe)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-producer-bound-review-recipe","native_admitted":false,"reviewed":false,"approved":false}),
+            )
+        }
         [command, copy, report] if command == "check-review" => {
             let checked = reel_workflow::review::check_report(&control(copy)?, &control(report)?)?;
             Ok(
@@ -607,6 +627,7 @@ Usage: reel-workflow check-plan PLAN\n\
        reel-workflow check-review COPY REPORT\n\
        reel-workflow check-review-result PACKET RESULT COPY_INPUT COPY_PATH REPORT_OUTPUT REPORT_PATH\n\
        reel-workflow export-review-issues COPY REPORT ROUTES NEW_PROPOSALS\n\
+       reel-workflow plan-comic-review PLAN PRODUCER_PACKET RESULT UPSTREAM_OR_DASH TASK NEW_RECIPE\n\
        reel-workflow plan-repair PLAN COPY REPORT REPAIR NEW_IMPACT\n\
        reel-workflow revise-repair PLAN COPY REPORT REPAIR REVISION NEW_CANDIDATE\n\
        reel-workflow export-task PLAN TASK NEW_PACKET [DEPENDENCY_DESCRIPTORS]\n\

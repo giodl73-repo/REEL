@@ -11,8 +11,8 @@ use std::{
 };
 use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
-pub mod admission;
 pub mod abandon;
+pub mod admission;
 pub mod advancement;
 pub mod closing;
 mod comic;
@@ -27,15 +27,16 @@ pub mod graph;
 pub mod handoff;
 pub mod image;
 mod issue;
+pub mod metadata_capacity;
 #[cfg(all(windows, feature = "film"))]
 pub mod movie;
 mod output_layout;
 mod producer;
 mod qualified;
+pub mod reconciliation;
 pub mod resolution;
 pub mod resolution_job;
 pub mod response;
-pub mod reconciliation;
 pub mod retention;
 mod review;
 pub mod runner;

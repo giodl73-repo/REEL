@@ -18,6 +18,11 @@ produces the local PDF and source/review manifests. See the
 [actual reading issue evidence](handoff/2026-11-20-bbj-reading-issue.md).
 This completes a local reading derivative. Native full-issue retention,
 review/fix/rebuild and editable source restoration remain open.
+The exact full-issue source intake is now admitted and its original import is
+running; see the [native continuation handles](handoff/2026-11-20-bbj-reading-native.md).
+The new `plan-comic-review` command replaces manual preparation of the next
+producer-bound review-control recipe. Neither admission nor that planner is a
+claim that the complete native issue has finished.
 
 The usable local BBJ reader is at
 `F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html` (28 sheets).
