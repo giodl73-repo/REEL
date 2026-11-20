@@ -1,6 +1,6 @@
 # Managed native intent-bound issue qualification
 
-## Active attempt
+## Original attempt and recovery checkpoint
 
 The explicit fixture
 `issue_native::intent_bound_issue_control_retains_and_replays_original_producers_through_native_history`
@@ -11,11 +11,30 @@ and exercises historical reopening and editable export/restoration. The retained
 intent must survive into the self-contained issue packet. This is a bounded
 two-page Spanish synthetic fixture, not project or bilingual production adoption.
 
-The run is active at this checkpoint. The opening part's admission is recorded;
-its retention acknowledgement is still pending. No successful lifecycle
-qualification is claimed. Inspect the live original run and terminal result
-before deciding any next action; never restart this fixture under fresh roots
-merely because observation expires.
+At the original checkpoint the process was live. Later observations found both
+parts and the derived v2 control result retained. Final assembly was admitted,
+with an original input ticket and Waiting journal, but ready export had not
+completed. On `2026-11-20T04:22Z`, the process handle was missing and no original
+fixture/runtime process remained. No terminal log result or `process-result.json`
+was written. The cause/exit status is unknown; do not infer a producer failure or
+a timeout from this observation.
+
+The exact final task key is
+`61b26754d745a431e59527d25b4ac0d075e612080bb3876a48005e97de919d6f`.
+`issue-journal` contains the original Waiting ticket and no returned result.
+`input-ticket.json` and its owned workspace remain intact. There is no
+`ready.json`, worker workspace/ticket, final result or final acknowledgement.
+All original claims and scratch are preserved. Full lifecycle qualification
+remains open; restart of the whole fixture or re-admission is prohibited here.
+
+The bounded recovery entry `issue_native::resume_original_intent_issue_before_ready_export`
+validates that checkpoint, rebuilds the plan from frozen original parent
+packets/results, checks the three retained journals and unchanged runtime, and
+continues the same input ticket through ready export. It creates no new admission
+or attempt and does not rewrite parent profiles. The control's original
+`control-profile.json`/`control-journal` names are used explicitly. Production
+Rust sources and SDK pins are unchanged from the original qualification source;
+only the recovery fixture and notes are added. Recovery results are pending.
 
 Evidence root:
 `F:/src/tig-dev-temp/reel-native-intent-issue-20261119-v1`.

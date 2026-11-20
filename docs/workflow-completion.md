@@ -126,10 +126,13 @@ producer refusal. It does not establish native byte access or lifecycle. Managed
 qualification, film integration and real S5 production remain open.
 The [managed v2 issue attempt](handoff/2026-11-19-native-intent-issue.md) now runs
 against the explicitly declared existing synthetic pool with frozen source and
-runtime, fresh job roots and preserved original operation identities. Its first
-part admission is recorded and retention is pending at this checkpoint. The
-lifecycle gate remains open until the actual terminal result and retained history
-are verified. Continue the original run; do not re-admit or retarget on timeout.
+runtime, fresh job roots and preserved original operation identities. Both parts
+and the derived v2 control result reached retained acknowledgement. The process
+later disappeared without a terminal result, leaving final assembly admitted and
+Waiting before ready export, with its original input ticket preserved. A bounded
+recovery entry reconstructs the frozen three-parent graph and continues that same
+ticket and frozen runtime. The lifecycle gate remains open until the actual
+terminal result and retained history are verified. Do not re-admit or retarget.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 has an unresolved large-native prerequisite documented by the

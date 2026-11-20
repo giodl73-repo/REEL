@@ -1314,6 +1314,147 @@ fn admitted_issue_staging_recovery_preserves_original_close_refusal() {
     });
 }
 
+/// Continue the exact Waiting v2 job after interruption before ready export.
+/// Parent profiles are reused byte-for-byte, including the control's distinct
+/// filename. No new protection, runtime adoption or producer attempt is created.
+#[test]
+#[ignore = "Explicit original Waiting v2 issue only; same admission/input ticket/frozen runtime, preserves every root, no new admission or attempt"]
+fn resume_original_intent_issue_before_ready_export() {
+    fn load<T: serde::de::DeserializeOwned>(path: &Path) -> T {
+        let raw = fs::read(path).unwrap();
+        assert!(raw.len() <= MAX_CONTROL_BYTES);
+        serde_json::from_slice(&raw).unwrap()
+    }
+    let root = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_ISSUE_RECOVERY_ROOT").expect("original root required"),
+    );
+    assert!(root.is_absolute() && root.is_dir());
+    for name in [
+        "ready.json",
+        "worker-scratch",
+        "workflow-plan.json",
+        "workflow-bindings.json",
+        "worker-profile.json",
+        "worker-ticket.json",
+    ] {
+        assert!(!root.join(name).exists(), "later checkpoint exists: {name}");
+    }
+    let packet: Packet = load(&root.join("issue-packet.json"));
+    reel_workflow::check_packet(&packet).unwrap();
+    assert_eq!(packet.project, "synthetic-comic");
+    assert_eq!(packet.task.id, "issue-assemble");
+    assert!(
+        packet
+            .task
+            .tool
+            .as_ref()
+            .unwrap()
+            .source_bindings
+            .contains_key("intent.json")
+    );
+    let profile_path = root.join("issue-profile.json");
+    let profile: reel_workflow_native::handoff::Profile = load(&profile_path);
+    assert!(profile.admission.index_root.starts_with(&root));
+    let expected_runtime = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_ISSUE_ORIGINAL_RUNTIME").expect("original runtime required"),
+    );
+    assert_eq!(profile.runtime.path, expected_runtime);
+    let runtime = fs::read(&expected_runtime).unwrap();
+    assert_eq!(digest(&runtime), profile.runtime.sha256);
+    assert_eq!(runtime.len() as u64, profile.runtime.bytes);
+    let journal = reel_workflow::handoff::Journal::open(&root.join("issue-journal")).unwrap();
+    assert_eq!(journal.state(), reel_workflow::handoff::State::Waiting);
+    assert_eq!(journal.ticket().packet, packet);
+    assert!(journal.result().is_none());
+    let ticket_raw = fs::read(root.join("input-ticket.json")).unwrap();
+    let ticket: staging::Ticket = serde_json::from_slice(&ticket_raw).unwrap();
+    assert_eq!(ticket.canonical_bytes().unwrap(), ticket_raw);
+    let ticket_control: serde_json::Value = serde_json::from_slice(&ticket_raw).unwrap();
+    let original_admission: admission::Receipt =
+        serde_json::from_value(ticket_control["admission"].clone()).unwrap();
+    assert_eq!(
+        original_admission.canonical_bytes().unwrap(),
+        profile.binding.admission.canonical_bytes().unwrap()
+    );
+    let stage: staging::Profile =
+        serde_json::from_value(ticket_control["profile"].clone()).unwrap();
+    let mut bindings = graph::Bindings {
+        schema: "reel.workflow-run-bindings.v1".into(),
+        tasks: BTreeMap::new(),
+    };
+    let mut tasks = Vec::new();
+    let frozen = profile.source.snapshot.upstream.as_ref().unwrap();
+    assert_eq!(
+        frozen
+            .parents
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from(["opening", "closing", "issue-control"])
+    );
+    for (id, evidence) in &frozen.parents {
+        let name = if id == "issue-control" { "control" } else { id };
+        let path = root.join(format!("{name}-profile.json"));
+        let parent: reel_workflow_native::handoff::Profile = load(&path);
+        assert_eq!(parent.runtime.path, profile.runtime.path);
+        assert_eq!(parent.runtime.sha256, profile.runtime.sha256);
+        assert_eq!(parent.runtime.bytes, profile.runtime.bytes);
+        let observed =
+            reel_workflow::handoff::Journal::open(&root.join(format!("{name}-journal"))).unwrap();
+        assert_eq!(observed.state(), reel_workflow::handoff::State::Retained);
+        assert_eq!(observed.ticket().packet, evidence.packet);
+        assert_eq!(observed.result(), Some(&evidence.result));
+        bindings.tasks.insert(
+            id.clone(),
+            graph::Binding {
+                journal: root.join(format!("{name}-journal")),
+                profile: graph::PinnedFile {
+                    path: path.clone(),
+                    sha256: digest(&fs::read(path).unwrap()),
+                },
+                staging_ticket: None,
+            },
+        );
+        tasks.push(evidence.packet.task.clone());
+    }
+    tasks.push(packet.task.clone());
+    let plan = Plan {
+        schema: PLAN_SCHEMA.into(),
+        task_snapshots: Default::default(),
+        project: packet.project.clone(),
+        source_commit: packet.source_commit.clone(),
+        tasks,
+    };
+    assert_eq!(
+        make_packet(&plan, &packet.task.id, packet.dependencies.clone()).unwrap(),
+        packet
+    );
+    if let Some(directory) = std::env::var_os("REEL_NATIVE_ISSUE_EVIDENCE_DIRECTORY") {
+        let directory = PathBuf::from(directory);
+        assert!(directory.is_absolute() && directory.is_dir());
+        let path = directory.join("original-waiting-recovery.json");
+        assert!(!path.exists());
+        save(
+            &path,
+            &json!({"schema":"reel.native-original-issue-recovery.v1","root":root,"task_key":packet.task_key,
+            "attempt_id":profile.binding.admission.attempt_id,"admission":profile.binding.admission,
+            "input_ticket_sha256":digest(&ticket_raw),"runtime":profile.runtime,
+            "new_admission":false,"new_attempt":false,"runtime_adopted":false,"claims_released":false}),
+        );
+    }
+    continue_issue(Continuation {
+        case_root: root,
+        fixture_root: profile.source.snapshot.repository.clone(),
+        packet,
+        profile,
+        profile_path,
+        plan,
+        graph_bindings: bindings,
+        stage,
+        expect_close_refusal: false,
+    });
+}
+
 fn continue_issue(state: Continuation) {
     let Continuation {
         case_root,
