@@ -73,6 +73,25 @@ For example, an author can anchor a story moment to the spoken phrase
 | Sonic | Start the selected door-creak sound on the effects bus |
 | VFX / SVG | Reveal an independently authored light/glow overlay |
 
+> [!NOTE]
+> **One cue, two language performances, two cel transitions**
+>
+> **English (~9.0 s):** "I stopped at the gate. When **the door opened**, I saw my grandmother. **She smiled**, and I stepped inside."
+>
+> **Español (~9.8 s):** "Me detuve junto al portón. Cuando **se abrió la puerta**, vi a mi abuela. **Ella sonrió** y entré."
+>
+> | Shared picture | English entrance and hold | Spanish entrance and hold |
+> | --- | --- | --- |
+> | Cel A: at the gate | Cue start: 0.0–2.7 s (**2.7 s**) | Inicio: 0.0–3.2 s (**3.2 s**) |
+> | Cel B: open doorway | **"the door opened"** at ~2.7 s; hold to 6.3 s (**3.6 s**) | **"se abrió la puerta"** at ~3.2 s; hold to 7.0 s (**3.8 s**) |
+> | Cel C: grandmother's smile | **"She smiled"** at ~6.3 s; hold to 9.0 s (**2.7 s**) | **"Ella sonrió"** at ~7.0 s; hold to 9.8 s (**2.8 s**) |
+>
+> The same door-opening event can also start the Sonic creak and SVG light
+> effect. Both editions reuse the same three cels and event intent; each follows
+> its own performance clock. These times are **illustrative estimates, not
+> recorded measurements**. A real build derives entrances from word alignment
+> on the exact selected take, rather than copying timestamps between languages.
+
 REEL resolves the phrase against the selected recording's measured word timing,
 then compiles the picture and effect intervals onto frame/sample clocks. Spanish
 and English can share the same event intent while entering at different times
