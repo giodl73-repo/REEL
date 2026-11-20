@@ -24,6 +24,9 @@ mod close_native;
 #[path = "support/corrected_context_control.rs"]
 mod corrected_context_control_native;
 #[cfg(windows)]
+#[path = "support/corrected_context_report.rs"]
+mod corrected_context_report_native;
+#[cfg(windows)]
 #[path = "support/direct_review.rs"]
 mod direct_review_native;
 #[cfg(windows)]
