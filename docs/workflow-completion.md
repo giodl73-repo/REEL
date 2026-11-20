@@ -704,6 +704,24 @@ selection, approval or scratch retirement occurs. Contextual corrected-issue
 reporting, evidenced finding closure, checked source-slot return and the larger
 film/comic/project/provider/adoption requirements remain open.
 
+[Producer-bound contextual reviews](handoff/2026-11-20-reviewed-production-binding.md)
+now explicitly identify the exact reviewed task/result in new v2 requests.
+Mixed-snapshot repairs reconstruct that task against the baseline; legacy
+ambiguous requests still refuse and old control request bytes remain unchanged.
+The native port also requires exact admitted request/copy/manifest origins from
+one retained control and its producer dependency, rather than treating a witness
+as custody. Three contract tests cover correspondence and refusal cases. The
+82.13-second frozen read-only preflight borrows the actual retained corrected
+issue, replays its complete producer and generates a two-page/six-unit v2 context
+proposal with both reading images declared. Actual Index and all 75 prior pins
+remain unchanged. The prospective control declares 98 resources / 190,183,121
+bytes. All 146 workflow and 98 standard native tests, 247 SDK pins and strict
+workflow/default-native/film-native Clippy pass (93 opt-in native fixtures ignored).
+The original issue still owns its slot; the new control/report have not been
+admitted or retained. Actual native v2 origin enforcement through an admitted
+report, contextual review and evidenced finding closure remain open alongside
+the broader consumer/provider/adoption requirements.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
