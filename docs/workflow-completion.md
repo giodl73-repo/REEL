@@ -639,9 +639,9 @@ journal with its original frozen 264efd runtime. Actual output/producer and pare
 proofs reopen, the control matches exact preflight, other Waiting claims reopen
 and completed replay leaves actual Index unchanged. The control is now Retained;
 standard native tests pass (91 passed, 86 opt-in ignored), with 247 SDK pins and
-strict default/film Clippy. Native-execution crash injection remains open.
-Automatic owner-policy admission for future jobs, complete corrected-issue
-assembly/contextual review and broader project qualification remain open.
+strict default/film Clippy. The subsequent new-job policy and one native Prepare
+fault qualification are recorded below; broader crash coverage, complete
+corrected-issue assembly/contextual review and project qualification remain open.
 
 [Automatic owner-policy admission](handoff/2026-11-20-automatic-owner-policy.md)
 now has a versioned new-job binding and recipe adoption config. The exact finite
@@ -654,10 +654,18 @@ lower-bound refusal and independent object/byte/path reservations. Normal native
 import/lost-completion passed in the first frozen run, but close preview refused
 `close-resource-bound` before a close ticket or native effect. The close adapter
 now applies and verifies the same declared owner policy for cumulative handoff;
-the original retained job's close follow-up and interrupted-retention Prepare
-reconciliation remain pending frozen qualification. This does not change the 512-object job projection
-limit or qualify actual S5/BBJ scale, complete corrected-issue review or owned
-production-profile adoption/rollback.
+the original retained job's 24.46-second frozen close follow-up passes without
+readmission, publication or lifecycle-runtime replacement. Its close WorkRef is
+reconstructed after staging, and original-runtime historical proof/replay leaves
+actual Index unchanged. A separate 60.88-second native Prepare fault qualification
+reconciles the exact original WorkRef, completes retention/lost-completion replay,
+closes the slot and verifies historical replay. Both preserve 560 inherited
+objects under a 1,024-object / 1 GiB policy (611 required objects, 52 retention
+changed paths). Standard native tests pass (96 passed, 89 opt-in ignored), with
+247 SDK pins and strict default/film Clippy. This qualifies synthetic cumulative
+history and the named recovery boundary; it does not change the 512-object job
+projection limit or qualify actual S5/BBJ scale, complete corrected-issue review,
+other crash points or owned production-profile adoption/rollback.
 
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect

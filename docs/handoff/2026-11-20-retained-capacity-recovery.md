@@ -85,8 +85,10 @@ original job. It is not a new admission or adopted production lane.
 
 This qualifies one synthetic process-exit/staged-work recovery and original-runtime
 completion. It does not add crash injection during native execution, automatically
-apply an owner policy to future jobs or qualify real S5/BBJ volume. Automatic
-owner-policy admission, complete corrected-issue assembly/contextual review,
+apply an owner policy to future jobs or qualify real S5/BBJ volume. A separate
+[new-job binding/config mode](2026-11-20-automatic-owner-policy.md) now qualifies
+automatic policy admission, original-policy close and one native Prepare recovery
+with synthetic history. Complete corrected-issue assembly/contextual review,
 mixed-snapshot reviewed-production binding and the other workflow completion gates
 remain open. Producer-applied rights/provenance and comics-editor checklists
 preserve the immutable lineage and require whole-issue context; no human creative

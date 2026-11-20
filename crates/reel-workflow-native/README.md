@@ -129,8 +129,8 @@ job budgets and original runtime pins stay unchanged. Staging does not execute
 the work, acknowledge retained ownership or complete the journal. The original
 frozen runtime must reconcile/execute it through its normal resume protocol;
 [Staging/process-exit reconstruction and original-runtime completion](../../docs/handoff/2026-11-20-retained-capacity-recovery.md)
-are qualified for one synthetic control. Crash injection during native execution,
-automatic owner-policy admission for new jobs and production scale remain open.
+are qualified for one synthetic control. New-job owner-policy qualification is
+separate below; broader crash coverage and production scale remain open.
 
 New jobs may declare `reel.workflow-native-handoff-binding.v2` with a
 `retained_owner_policy` (the finite policy schema above). V1 requires the field to
@@ -153,10 +153,20 @@ execution follows, with no automatic increase or operator recovery command.
 Resuming an already staged job reopens the named original policy record and
 refuses changed request/policy evidence. Completed/historical handoff verification
 checks that same policy under retained coverage without requiring an active source
-actor. Existing v1 jobs keep their original path; adding this policy to an existing
-ticket is not an adoption operation. The new mode's effectful qualification is
-pending; real source/owner scale, native-execution crash injection and production
-profile adoption/rollback remain separate gates.
+actor. Closing validates that original policy and uses its allowance for the
+cumulative handoff through the unchanged qualified closer. Legacy close keeps its
+original limits. Existing v1 jobs keep their original path; adding this policy to
+an existing ticket is not an adoption operation.
+
+[Automatic policy qualification](../../docs/handoff/2026-11-20-automatic-owner-policy.md)
+now covers native import/lost completion beyond 512 owner objects, the original
+job's staged/recovered close with unchanged lifecycle runtime, a separate native
+Prepare interruption reconciled through the exact original WorkRef, and historical
+replay after slot return. Both cases preserve all 560 history objects under a
+1,024-object / 1 GiB allowance (611 required objects, 52 retention changed paths).
+Standard native tests pass: 96 passed, 89 opt-in ignored; both effectful follow-ups
+are qualified separately. This is synthetic metadata/history scale. Real S5/BBJ
+volume, other crash points and production profile adoption/rollback remain open.
 
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and

@@ -69,8 +69,8 @@ replacement, recover lost completion without new native work, close into retaine
 coverage and verify historical replay after source-slot return. A second case
 records import intent, registers the response, stages the same owner policy,
 injects a failure at native Prepare, then asks a separate frozen CLI process to
-reconcile and complete exactly that original WorkRef. Both frozen-source
-qualifications are pending.
+reconcile and complete exactly that original WorkRef. The frozen results below
+qualify those specific boundaries; the first run's close refusal stays preserved.
 
 The first frozen automatic run at source
 `786203e09390e74997a045c72753be9a27b7e2d3` passed native import and lost-completion
@@ -78,8 +78,9 @@ reconciliation, then refused close preview with `budget/close-resource-bound`.
 It observed 560 inherited objects plus a 48-object source: 610 combined objects,
 611 including the policy record, with 52 changed paths. The old close adapter
 still applied the job's 512-object limit to cumulative owner history. No close
-ticket was exported and no close work began. The original result remains retained;
-the source slot remains protected. The interrupted-Prepare fixture did not start.
+ticket was exported and no close work began. The result stayed retained and its
+source slot stayed protected until the original-operation follow-up below. The
+interrupted-Prepare fixture did not start during that failed run.
 Evidence, source and tools remain in
 `F:/src/tig-dev-temp/reel-automatic-owner-policy-20261120-v1`.
 
@@ -93,14 +94,56 @@ canonicalize current reference paths while retaining every object and prior tree
 root; original operation-specific policy links remain resolvable through their
 immutable work selection.
 
-The follow-up qualification must reopen that exact retained job and unchanged
-Index, then use a separately pinned closing coordinator to stage/recover the same
-close WorkRef. Its close ticket must retain the original lifecycle-runtime pin.
-Historical replay must run through that original runtime after slot return and
-leave actual Index state unchanged. Do not rerun the original automatic fixture,
+The follow-up reopened that exact retained job and unchanged Index, then used a
+separately pinned closing coordinator to stage/recover the same close WorkRef. Its
+ticket retained the original lifecycle-runtime pin. Historical replay through that
+original runtime after slot return and completed close replay left actual Index
+unchanged. Do not rerun the original automatic fixture,
 readmit its task, replace its runtime, reset the retained owner or remove history.
 The new close coordinator is an explicit new close operation after the failed
 read-only preview; it does not adopt a worker runtime or replace uncertain work.
+
+The original-job follow-up passed in 24.46 seconds. The original job remains
+`F:/src/tig-dev-temp/.tmp3dBPhV`, task
+`2af3a178b728e044b869d7a6d0f1bbe175a1b81a58a34077c31e32b2797cefbb`,
+attempt `owner-attempt-1`. Its lifecycle runtime remains
+`d2ac0d431753c951ef8a6e68541cf0ade8383d8b626a4be02499546ed1c5f621`
+(25,244,160 bytes), while the separate close coordinator is
+`1217609b4ae771c0f4f2b013c72445ff35f555bb51d80bfb76083d5e0858cc60`
+(25,261,568 bytes). No admission, publication, result or runtime was replaced.
+All 560 historical entries remain; the source slot is idle under retained
+coverage. Final actual Index checkpoint:
+`a64a4cb06c067f0d35c6e008b955fc4c2b0184ebbde086eccb8c9c526e84ea88`.
+
+The separate interrupted-Prepare case passed in 60.88 seconds, with job
+`F:/src/tig-dev-temp/.tmprCD4zA`, task
+`30eb63b18faab927f6458369aa002cf27c0d1056965aca3cdafafd9b09ec166f`,
+attempt `owner-attempt-1`. It actually reached the SDK's native Prepared fault
+boundary, preserved ImportPending and the staged WorkRef, then reconciled that
+same work in the frozen CLI. Lost-completion replay, close, history preservation
+and historical replay after slot return all pass. Its final actual checkpoint is
+`cbffecd9c3a36c2a9d15da9885570b432ea173f2c08b2cbc56f6a9f8352b1c60`.
+
+Both corrected qualifications use source
+`648531cc6edd9cf77bb5fd00dc7438bf1b61c005`: 1,985 files verified against its
+clean archive, source-manifest SHA256
+`041be51831f327e141ad2afd4b97394210ef8740da51d37a3f8b68063a085fc3`.
+The fixture executable is
+`a8945b092bf3bd54a3ed1f3368e3507fc97522a4cf6548442284615ea0909dad`
+(30,824,960 bytes). Standard native tests pass (96 passed, 89 opt-in ignored),
+all 247 SDK source pins and strict default/film Clippy pass. The original source
+packet/tool hashes remain in the failed-run directory; no source qualification
+is inferred from an ancestry commit alone.
+
+Combined evidence is in
+`F:/src/tig-dev-temp/reel-automatic-owner-close-20261120-v1`; the separate Prepare
+case is in `F:/src/tig-dev-temp/reel-automatic-owner-prepare-20261120-v1` and pins
+the same exact source packet. The 87-artifact `qualified-report.json` hash is
+`f2a0e181ee71dbb5abd94e2411a27b67ed08c3c4e983043bb053704153131d9d`;
+`qualified-validation.json` is
+`9da91240337cc03c2959045d76d95849ef27b233a7536017f13be6133fcdd809`.
+Earlier retained-control/planning certificates still verify. All private source,
+scratch, failed controls, published results and metadata roots remain preserved.
 
 Producer-applied rights/provenance review keeps the policy in private controls and
 separates technical custody from selection, consent and release. The comics-editor
