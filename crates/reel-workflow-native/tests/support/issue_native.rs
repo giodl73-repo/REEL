@@ -112,16 +112,23 @@ struct Parent {
 #[test]
 #[ignore = "Complete synthetic two-part comic issue in explicitly declared existing native pool; no project adoption or automatic actor allocation"]
 fn complete_issue_consumes_retained_parts_and_restores_editable_packets_from_bare_history() {
-    complete_issue(false);
+    complete_issue(false, false);
 }
 
 #[test]
 #[ignore = "Synthetic retained derived-control job and final issue assembly in the explicitly declared existing native pool"]
 fn derived_issue_control_is_retained_upstream_before_final_issue_assembly() {
-    complete_issue(true);
+    complete_issue(true, false);
 }
 
-fn complete_issue(derived_control: bool) {
+#[test]
+#[ignore = "Fresh synthetic v2 issue/control lifecycle in the explicitly declared existing native pool; preserves original operation roots and frozen runtime, no project adoption"]
+fn intent_bound_issue_control_retains_and_replays_original_producers_through_native_history() {
+    complete_issue(true, true);
+}
+
+fn complete_issue(derived_control: bool, intent_bound: bool) {
+    assert!(!intent_bound || derived_control);
     let descriptor: serde_json::Value = serde_json::from_slice(
         &fs::read(std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("native fixture required"))
             .unwrap(),
@@ -130,8 +137,15 @@ fn complete_issue(derived_control: bool) {
     let native: tig_git::annex::workflow::reader::Profile =
         serde_json::from_value(descriptor["source"].clone()).unwrap();
     let annex: Tool = serde_json::from_value(descriptor["annex"].clone()).unwrap();
-    let executable = PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native"));
+    let built_executable = PathBuf::from(env!("CARGO_BIN_EXE_reel-workflow-native"));
+    let executable = std::env::var_os("REEL_NATIVE_ISSUE_RUNTIME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| built_executable.clone());
     let worker_raw = fs::read(&executable).unwrap();
+    assert_eq!(
+        digest(&worker_raw),
+        digest(&fs::read(&built_executable).unwrap())
+    );
     let tool = Artifact {
         logical_id: "tool/native-issue".into(),
         sha256: digest(&worker_raw),
@@ -417,10 +431,51 @@ fn complete_issue(derived_control: bool) {
         part_data[0].1.outputs["reading.pdf"].logical_id,
         part_data[1].1.outputs["reading.pdf"].logical_id
     );
+    let intent_asset = intent_bound.then(|| {
+        let intent = reel_publication::composition::Intent {
+            schema: "reel.workflow-composition-intent.v1".into(),
+            project: "synthetic-comic".into(),
+            format: reel_publication::composition::Format::ComicIssue,
+            editions: BTreeMap::from([(
+                "es".into(),
+                reel_publication::composition::Edition {
+                    language: "es".into(),
+                    components: plan.parts.iter().map(|p| p.id.clone()).collect(),
+                    controls: vec!["issue-control".into()],
+                    final_task: "issue-assemble".into(),
+                },
+            )]),
+        };
+        intent.check().unwrap();
+        let asset = assets.put(
+            "comic/composition-intent",
+            "intent.json",
+            "application/json",
+            serde_json::to_vec(&intent).unwrap(),
+        );
+        issue_paths.insert("intent.json".into(), asset.logical_id.clone());
+        asset
+    });
+    let composition =
+        intent_asset
+            .as_ref()
+            .map(|_| reel_publication::comic_issue_source::Composition {
+                intent: assets.pin("intent.json"),
+                producers: plan
+                    .parts
+                    .iter()
+                    .map(|p| (p.id.clone(), p.id.clone()))
+                    .collect(),
+            });
     let assembly = Assembly {
-        composition: None,
+        composition: composition.clone(),
         bundles: bundle_pins,
-        schema: "reel.comic-issue-assembly.v1".into(),
+        schema: if intent_bound {
+            "reel.comic-issue-assembly.v2"
+        } else {
+            "reel.comic-issue-assembly.v1"
+        }
+        .into(),
         plan: assets.pin("issue-plan.json"),
         parts: receipt_pins,
         limits: Limits {
@@ -435,8 +490,13 @@ fn complete_issue(derived_control: bool) {
         "application/json",
         if derived_control {
             serde_json::to_vec(&reel_workflow::issue_control::Request {
-                composition: None,
-                schema: "reel.workflow-issue-control.v1".into(),
+                composition,
+                schema: if intent_bound {
+                    "reel.workflow-issue-control.v2"
+                } else {
+                    "reel.workflow-issue-control.v1"
+                }
+                .into(),
                 plan_path: "issue-plan.json".into(),
                 parts: plan
                     .parts
@@ -678,7 +738,10 @@ fn complete_issue(derived_control: bool) {
                 )
             })
             .collect();
-        let originals = vec![master.clone(), plan_asset.clone(), assembly_asset.clone()];
+        let mut originals = vec![master.clone(), plan_asset.clone(), assembly_asset.clone()];
+        if let Some(asset) = &intent_asset {
+            originals.push(asset.clone());
+        }
         let mut snapshot = assets.snapshot(&fixture, &originals);
         snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
         snapshot.upstream = Some(upstream::Frozen::capture(&bindings, &refs));
@@ -755,6 +818,12 @@ fn complete_issue(derived_control: bool) {
             &source,
             &assets.values[&assembly_asset.logical_id].1,
         );
+        if let Some(asset) = intent_asset
+            .as_ref()
+            .filter(|a| published.insert(a.sha256.clone()))
+        {
+            publish_input(&case_root, &source, &assets.values[&asset.logical_id].1);
+        }
         let acks = case_root.join("control-acks");
         fs::create_dir(&acks).unwrap();
         let handoff = reel_workflow_native::handoff::Profile {
@@ -883,6 +952,14 @@ fn complete_issue(derived_control: bool) {
         assembly_asset = result.artifacts["assembly.json"].clone();
         let raw = fs::read(directory.join("packet/assembly.json")).unwrap();
         let derived: Assembly = serde_json::from_slice(&raw).unwrap();
+        derived.check_version().unwrap();
+        if intent_bound {
+            assert_eq!(derived.schema, "reel.comic-issue-assembly.v2");
+            assert_eq!(
+                derived.composition.as_ref().unwrap().intent.sha256,
+                intent_asset.as_ref().unwrap().sha256
+            );
+        }
         assert_eq!(derived.parts.len(), 2);
         assert!(!assets.values.contains_key(&assembly_asset.logical_id));
         upstream_refs.insert(
@@ -1336,6 +1413,25 @@ fn continue_issue(state: Continuation) {
         serde_json::from_slice(&fs::read(worker_packet.join("receipt.json")).unwrap()).unwrap();
     assert_eq!(assembled.page_order, ["page01", "page02"]);
     assert_eq!(assembled.parts.len(), 2);
+    if packet
+        .task
+        .tool
+        .as_ref()
+        .unwrap()
+        .source_bindings
+        .contains_key("intent.json")
+    {
+        let captured: Assembly =
+            serde_json::from_slice(&fs::read(worker_packet.join("assembly.json")).unwrap())
+                .unwrap();
+        captured.check_version().unwrap();
+        assert_eq!(captured.schema, "reel.comic-issue-assembly.v2");
+        let pin = &captured.composition.as_ref().unwrap().intent;
+        assert_eq!(pin.path, "composition-intent.json");
+        let raw = fs::read(worker_packet.join(&pin.path)).unwrap();
+        assert_eq!(digest(&raw), pin.sha256);
+        assert_eq!(raw.len() as u64, pin.bytes);
+    }
     assert!(
         !assembled.human_approval
             && !assembled.print_ready
