@@ -254,6 +254,23 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"private-contract-check","task_count":order.len(),"production_admitted":false}),
             )
         }
+        [command, path] if command == "check-composition" => {
+            let declaration: reel_workflow::composition::Declaration = control(path)?;
+            let report = reel_workflow::composition::check(&declaration)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-authored-composition-closure","report":report}),
+            )
+        }
+        [command, path, recipe, report] if command == "export-composition" => {
+            let declaration: reel_workflow::composition::Declaration = control(path)?;
+            let checked = reel_workflow::composition::check(&declaration)?;
+            publish_control(recipe, &declaration.recipe)?;
+            publish_control(report, &checked)?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-composition-recipe-export","production_admitted":false,
+                "producer_order_verified":false,"producer_closure_verified":false,"native_bindings_verified":false,"task_completed":false}),
+            )
+        }
         [command, plan, task_id, new_packet] if command == "export-task" => {
             let packet = reel_workflow::make_packet(&control(plan)?, task_id, Default::default())?;
             publish_packet(new_packet, &packet)?;
@@ -339,6 +356,8 @@ fn main() -> std::process::ExitCode {
         println!(
             "reel-workflow: private task/result contract prototype\n\
 Usage: reel-workflow check-plan PLAN\n\
+       reel-workflow check-composition DECLARATION\n\
+       reel-workflow export-composition DECLARATION NEW_RECIPE NEW_REPORT\n\
        reel-workflow check-review COPY REPORT\n\
        reel-workflow check-review-result PACKET RESULT COPY_INPUT COPY_PATH REPORT_OUTPUT REPORT_PATH\n\
        reel-workflow export-review-issues COPY REPORT ROUTES NEW_PROPOSALS\n\
