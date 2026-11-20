@@ -51,6 +51,17 @@ the other Waiting generation and completed replay with unchanged actual Index.
 This fixture still requires frozen-source qualification. It cannot stand in for
 retention of the full corrected issue, contextual review or native later repairs.
 
+The first frozen native fixture at source
+`3a972f8b419bb17f2097230d8118fe31a8d7ba4c` refused its preflight in 105.95
+seconds with `Stale/native-task-commit`: its cloned fixed-only profile had gained
+upstream origins without changing to the required composite schema. The refusal
+preceded any close ticket, operation marker, admission, journal or native output.
+Raw source/tools/logs and the owned candidate source remain preserved under
+`F:/src/tig-dev-temp/reel-native-repair-control-20261120-v1`. The fixture now
+declares its bounded composite-v1 schema explicitly and saves preflight controls
+before checking them. A separate read-only audit must reopen the original part's
+exact activation and unchanged actual Index before any explicit replan.
+
 Producer-applied comics-editor and rights/provenance checklists preserve source
 wording, stable targets, exact lineage and private technical derivatives. They do
 not establish viewing, independent review, creative/font/translation approval or

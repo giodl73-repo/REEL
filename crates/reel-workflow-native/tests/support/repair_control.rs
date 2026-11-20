@@ -60,6 +60,68 @@ fn check_waiting(root: &Path) {
 }
 
 #[test]
+#[ignore = "Read-only audit of the preserved pre-admission schema refusal; exact original part activation/WorkRef and actual Index checkpoint, no close or new admission"]
+fn preflight_refusal_preserves_the_original_repaired_part_before_control_replanning() {
+    let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let failed = env("REEL_REPAIR_CONTROL_REFUSED");
+    let part_root = env("REEL_REPAIR_CONTROL_PART");
+    let process: serde_json::Value = load(&failed, "process-result.json");
+    assert_eq!(process["exit_code"], 101);
+    assert!(
+        fs::read_to_string(failed.join("run.log"))
+            .unwrap()
+            .contains("code: \"native-task-commit\"")
+    );
+    let entries: BTreeSet<_> = fs::read_dir(failed.join("job"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        entries,
+        BTreeSet::from([
+            "pending-native".to_owned(),
+            "original-pins.json".into(),
+            "source-clone.json".into()
+        ])
+    );
+    let pins: BTreeMap<PathBuf, String> = load(&failed.join("job"), "original-pins.json");
+    for (path, pin) in &pins {
+        assert_eq!(&digest(&fs::read(path).unwrap()), pin);
+    }
+    let part = parent(&part_root);
+    assert_eq!(
+        reel_workflow::handoff::Journal::open(&part_root.join("journal"))
+            .unwrap()
+            .state(),
+        reel_workflow::handoff::State::Retained
+    );
+    drop(
+        admission::Prepared::open(
+            &part.packet,
+            &part.profile.source,
+            &part.profile.admission,
+            &part.profile.binding.admission.attempt_id,
+        )
+        .unwrap()
+        .reopen(&part.profile.binding.admission)
+        .unwrap(),
+    );
+    let index = tig_store::source_claims::protection::Index::open(
+        &part.profile.admission.index_root,
+        &part.profile.binding.admission.index_checkpoint,
+    )
+    .unwrap();
+    let checkpoint = canonical_digest(&index.checkpoint()).unwrap();
+    let previous: serde_json::Value = load(&part_root, "qualification-result.json");
+    assert_eq!(previous["checkpoint_sha256"], checkpoint);
+    save(
+        &failed,
+        "original-part-state-after-refusal.json",
+        &json!({"schema":"reel.repair-control-refusal-audit.v1","task_key":part.packet.task_key,"activation":part.profile.binding.admission.activation,"work":part.profile.binding.admission.work,"checkpoint_sha256":checkpoint,"original_activation_reopened":true,"original_controls_unchanged":true,"close_started":false,"new_admission":false,"runtime_adopted":false}),
+    );
+}
+
+#[test]
 #[ignore = "Existing retained repaired part and old sibling only; isolated exact source C, witnessed edge finalization, guarded part close and same-slot assembly-control retention; preserves every root and Waiting job"]
 fn retained_repaired_part_and_historical_sibling_drive_fresh_native_assembly_control() {
     let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
@@ -274,6 +336,11 @@ fn retained_repaired_part_and_historical_sibling_drive_fresh_native_assembly_con
         &after,
         &parents.borrowed().unwrap(),
     ));
+    assert!(
+        source.snapshot.budget.is_none(),
+        "this qualifier is the bounded v1 source lane"
+    );
+    source.snapshot.schema = "reel.workflow-native-composite-snapshot.v1".into();
     let native_raw = source.snapshot.declaration_bytes().unwrap();
     let mut revision = original_revision;
     revision.schema = "reel.workflow-repair-revision.v4".into();
@@ -359,6 +426,9 @@ fn retained_repaired_part_and_historical_sibling_drive_fresh_native_assembly_con
         part.profile.runtime.sha256
     );
     let runtime = part.profile.runtime.clone();
+    save(&root, "preflight/packet.json", &packet);
+    save(&root, "preflight/source.json", &source);
+    save(&root, "preflight/revision.json", &revision);
     drop(SnapshotInputs::open(&packet, &source.snapshot).unwrap());
     let mut captured = Captured(
         fixed
