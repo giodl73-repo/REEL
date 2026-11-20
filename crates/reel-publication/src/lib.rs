@@ -11,6 +11,8 @@ pub mod comic_issue_source;
 pub mod comic_source;
 pub mod composition;
 #[cfg(feature = "comic")]
+pub mod layered;
+#[cfg(feature = "comic")]
 pub mod packet;
 
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";

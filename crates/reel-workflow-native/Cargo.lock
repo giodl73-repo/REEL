@@ -1707,6 +1707,7 @@ dependencies = [
  "base64 0.22.1",
  "reel-print",
  "resvg",
+ "roxmltree",
  "serde",
  "serde_json",
  "sha2 0.11.0",

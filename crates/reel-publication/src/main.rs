@@ -27,9 +27,32 @@ fn main() -> std::process::ExitCode {
         println!(
             "reel-publication check MANIFEST\nreel-publication comic-render REQUEST NEW_DIRECTORY\nreel-publication comic-check REQUEST PACKET\nreel-publication comic-restore PACKET NEW_DIRECTORY RECEIPT_SHA256\nreel-publication comic-issue-check PLAN\nreel-publication comic-issue-assemble REQUEST NEW_DIRECTORY\nMetadata checks are read-only. Comic production/check/restore are explicit private operations, without native retention, selection or release."
         );
+        println!(
+            "reel-publication bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\nreel-publication layered-compose REQUEST INPUT_BINDINGS NEW_DIRECTORY\nBBJ preparation reads named controls; layered composition verifies SVG sources and writes an editable source bundle without rasterization or native retention."
+        );
         return std::process::ExitCode::SUCCESS;
     }
     let result = match args.as_slice() {
+        #[cfg(feature = "comic")]
+        [command, selection, root, publication, language, output] if command == "bbj-prepare" => {
+            reel_publication::layered::prepare_bbj(
+                std::path::Path::new(selection),
+                std::path::Path::new(root),
+                publication,
+                language,
+                std::path::Path::new(output),
+            )
+            .map_err(|_| "bbj-prepare-refused-preserve-partial")
+        }
+        #[cfg(feature = "comic")]
+        [command, request, bindings, output] if command == "layered-compose" => {
+            reel_publication::layered::compose(
+                std::path::Path::new(request),
+                std::path::Path::new(bindings),
+                std::path::Path::new(output),
+            )
+            .map_err(|_| "layered-compose-refused-preserve-partial")
+        }
         [command, path] if command == "check" => check(path),
         [command, path] if command == "comic-issue-check" => check_issue(path),
         #[cfg(feature = "comic")]
@@ -71,12 +94,12 @@ fn main() -> std::process::ExitCode {
     };
     match result {
         Ok(()) => {
-            let metadata = matches!(args.first(),Some(command) if command=="check" || command=="comic-issue-check");
+            let metadata = matches!(args.first(),Some(command) if command=="check" || command=="comic-issue-check" || command=="bbj-prepare");
             println!(
                 "{}",
                 serde_json::json!({"ok":true,"scope":if metadata {"publication-metadata-only"} else {"explicit-private-comic-operation"},
                 "payloads_verified":!metadata,"rendered":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-check" || command=="comic-issue-assemble"),
-                "outputs_written":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-restore" || command=="comic-issue-assemble"),
+                "outputs_written":matches!(args.first(),Some(command) if command=="comic-render" || command=="comic-restore" || command=="comic-issue-assemble" || command=="layered-compose" || command=="bbj-prepare"),
                 "selected":false,"print_ready":false,"retained_owner_acknowledged":false})
             );
             std::process::ExitCode::SUCCESS
