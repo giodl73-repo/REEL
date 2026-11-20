@@ -656,6 +656,7 @@ fn complete_issue(derived_control: bool) {
     }
     if derived_control {
         let bindings = reel_workflow::upstream::Bindings {
+            streaming: None,
             schema: "reel.workflow-upstream-inputs.v1".into(),
             inputs: upstream_refs.clone(),
         };
@@ -917,6 +918,7 @@ fn complete_issue(derived_control: bool) {
         })
         .collect();
     let bindings = reel_workflow::upstream::Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: upstream_refs,
     };

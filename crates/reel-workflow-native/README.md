@@ -715,9 +715,20 @@ Tool pins and retained-owner fences outlive selected read gates.
 
 The current reader requires one exact declared native reader configuration for
 the batch. There is no implicit multi-pool lookup, latest fallback, Git record
-registration, external upload or selection. Named input bytes are bounded to
-64 MiB, parent packet/result evidence to 32 MiB and read calls to 256. Binding
-controls remain within the existing 1 MiB control limit.
+registration, external upload or selection. Legacy v1/v2 named input bytes are
+bounded to 64 MiB, parent packet/result evidence to 32 MiB and read calls to 256.
+Binding controls remain within the existing 1 MiB control limit.
+
+Explicit `reel.workflow-upstream-inputs.v3` requires `streaming` with schema
+`reel.workflow-upstream-streaming.v1`, `input_bytes` (at most 64 GiB) and positive
+`input_object_bytes` (at most total and 16 GiB). Exact original parent/result and
+selector checks remain; the allowance enters the child input-control pin/key.
+`BorrowedInputs::with_stream` retains verified native gates and parent fences
+without capturing complete files. Stream aliases require reuse of a verified
+local copy; v3 buffered reads over 64 MiB refuse before allocation. V1/v2 reject
+streaming extensions and keep their serialized bytes. Snapshot/projection,
+producer and native SDK bounds still apply. See
+[retained dependency streams](../../docs/handoff/2026-11-19-streamed-upstream-inputs.md).
 
 This is live borrowed custody. It is **not durable child admission**, waiting
 protection, task completion or permission to release parent history. Git-only

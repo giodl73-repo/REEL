@@ -254,6 +254,7 @@ pub fn prepare(
         None
     };
     let upstream = (!upstream_inputs.is_empty()).then_some(upstream::Bindings {
+        streaming: None,
         schema: if plan.schema == SCOPED_PLAN_SCHEMA {
             "reel.workflow-upstream-inputs.v2"
         } else {

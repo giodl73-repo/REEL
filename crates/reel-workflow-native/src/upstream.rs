@@ -228,6 +228,8 @@ pub struct BorrowedInputs<'a> {
     parents: BTreeMap<String, Parent<'a>>,
     held: Vec<reader::VerifiedRead>,
     captured: BTreeMap<Object, Vec<u8>>,
+    streamed: BTreeSet<Object>,
+    streaming: bool,
     reads: usize,
     // Drop object gates before tool pins and finally retained-owner fences.
     _pins: Vec<retention::ReadPin>,
@@ -275,12 +277,38 @@ impl<'a> BorrowedInputs<'a> {
             _pins: pins,
             held: Vec::new(),
             captured: BTreeMap::new(),
+            streamed: BTreeSet::new(),
+            streaming: bindings.streaming.is_some(),
             reads: 0,
         })
     }
-}
-impl InputReader for BorrowedInputs<'_> {
-    fn read(&mut self, asset: &Artifact, maximum: u64) -> Result<Vec<u8>> {
+    /// Stream an exact retained dependency while preserving its native gate and
+    /// original parent fences. Reuse the verified local copy for object aliases.
+    /// The callback must enforce its own bounded materialization/consumption.
+    pub fn with_stream<T>(
+        &mut self,
+        asset: &Artifact,
+        maximum: u64,
+        consume: impl FnOnce(&mut dyn Read) -> Result<T>,
+    ) -> Result<T> {
+        let (object, parent_id) = self.read_binding(asset, maximum)?;
+        if let Some(raw) = self.captured.get(&object) {
+            return consume(&mut std::io::Cursor::new(raw));
+        }
+        if self.streamed.contains(&object) {
+            return Err(error(
+                ErrorKind::Conflict,
+                "upstream-stream-alias-requires-local-reuse",
+            ));
+        }
+        let parent = &self.parents[&parent_id];
+        let mut held = reader::open(&parent.source.source, &object).map_err(io_error)?;
+        self.streamed.insert(object);
+        let result = consume(&mut held);
+        self.held.push(held);
+        result
+    }
+    fn read_binding(&mut self, asset: &Artifact, maximum: u64) -> Result<(Object, String)> {
         let bound = self
             .bound
             .get(&asset.logical_id)
@@ -300,11 +328,29 @@ impl InputReader for BorrowedInputs<'_> {
                 .map_err(|_| error(ErrorKind::Invalid, "upstream-input-digest"))?,
             bytes: asset.bytes,
         };
+        Ok((object, bound.reference.task_id.clone()))
+    }
+}
+impl InputReader for BorrowedInputs<'_> {
+    fn read(&mut self, asset: &Artifact, maximum: u64) -> Result<Vec<u8>> {
+        if self.streaming && asset.bytes > 64 * 1024 * 1024 {
+            return Err(error(
+                ErrorKind::Budget,
+                "upstream-streaming-reader-required",
+            ));
+        }
+        let (object, parent_id) = self.read_binding(asset, maximum)?;
         // Logical task/result/selector identity was checked before physical reuse.
         if let Some(raw) = self.captured.get(&object) {
             return Ok(raw.clone());
         }
-        let parent = &self.parents[&bound.reference.task_id];
+        if self.streamed.contains(&object) {
+            return Err(error(
+                ErrorKind::Conflict,
+                "upstream-stream-alias-requires-local-reuse",
+            ));
+        }
+        let parent = &self.parents[&parent_id];
         let mut held = reader::open(&parent.source.source, &object).map_err(io_error)?;
         let mut raw = Vec::new();
         Read::by_ref(&mut held)
@@ -317,5 +363,102 @@ impl InputReader for BorrowedInputs<'_> {
         self.held.push(held);
         self.captured.insert(object, raw.clone());
         Ok(raw)
+    }
+}
+
+#[cfg(test)]
+mod stream_tests {
+    use super::*;
+    fn inputs(asset: &Artifact) -> BorrowedInputs<'static> {
+        BorrowedInputs {
+            bound: BTreeMap::from([(
+                asset.logical_id.clone(),
+                contract::BoundInput {
+                    reference: contract::Reference {
+                        task_id: "parent".into(),
+                        artifact: contract::Selector::Output {
+                            name: "master".into(),
+                        },
+                    },
+                    artifact: asset.clone(),
+                    result_sha256: "a".repeat(64),
+                },
+            )]),
+            parents: BTreeMap::new(),
+            held: Vec::new(),
+            captured: BTreeMap::new(),
+            streamed: BTreeSet::new(),
+            streaming: true,
+            reads: 0,
+            _pins: Vec::new(),
+            _fences: admission::RetainedFences::default(),
+        }
+    }
+    #[test]
+    fn large_borrowed_inputs_require_streams_before_any_provider_or_allocation() {
+        let asset = Artifact {
+            logical_id: "part/master".into(),
+            sha256: "b".repeat(64),
+            bytes: 3_600_000_001,
+            media_type: "video/mp4".into(),
+        };
+        let mut inputs = inputs(&asset);
+        assert_eq!(
+            inputs.read(&asset, u64::MAX).unwrap_err().code,
+            "upstream-streaming-reader-required"
+        );
+        assert_eq!(inputs.reads, 0);
+        assert_eq!(
+            inputs
+                .with_stream(&asset, asset.bytes - 1, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "upstream-read-allowance"
+        );
+        let object = Object {
+            sha256: Digest::parse(&asset.sha256).unwrap(),
+            bytes: asset.bytes,
+        };
+        inputs.streamed.insert(object);
+        assert_eq!(
+            inputs
+                .with_stream(&asset, asset.bytes, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "upstream-stream-alias-requires-local-reuse"
+        );
+        let mut changed = asset.clone();
+        changed.bytes -= 1;
+        assert_eq!(
+            inputs
+                .with_stream(&changed, asset.bytes, |_| Ok(()))
+                .unwrap_err()
+                .code,
+            "upstream-exact-artifact-required"
+        );
+    }
+    #[test]
+    fn buffered_controls_can_feed_stream_callbacks_without_another_native_open() {
+        let raw = b"already verified bounded control";
+        let asset = Artifact {
+            logical_id: "part/control".into(),
+            sha256: reel_workflow::digest(raw),
+            bytes: raw.len() as u64,
+            media_type: "application/json".into(),
+        };
+        let mut inputs = inputs(&asset);
+        inputs
+            .captured
+            .insert(Object::from_bytes(raw), raw.to_vec());
+        let observed = inputs
+            .with_stream(&asset, asset.bytes, |reader| {
+                let mut observed = Vec::new();
+                reader.read_to_end(&mut observed).map_err(io_error)?;
+                Ok(observed)
+            })
+            .unwrap();
+        assert_eq!(observed, raw);
+        assert!(inputs.held.is_empty());
+        assert!(inputs.streamed.is_empty());
     }
 }

@@ -70,6 +70,15 @@ feature modes pass. Source/tool/log pins are recorded in the linked handoff;
 there is no new native admission, publication, capacity reservation or adoption.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
+now also has an independent dependency prerequisite: explicit
+[upstream inputs v3](handoff/2026-11-19-streamed-upstream-inputs.md) bind larger
+retained intermediate allowances and expose guarded borrowed streams, while
+legacy v1/v2 remain at 64 MiB. Synthetic metadata covers seven parents totaling
+7.94 GB; this is not real E7 partitioning or native large-payload qualification.
+Automatic large composition/template generation, complete protected closure
+admission and full edition execution remain open.
+
+The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial
 parts and final completion checks. Its 60.62-second native fixture exports and

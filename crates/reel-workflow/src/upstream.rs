@@ -20,6 +20,15 @@ pub struct Bindings {
     pub schema: String,
     /// Child input logical identity -> exact parent task and output name.
     pub inputs: BTreeMap<String, Reference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<Streaming>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Streaming {
+    pub schema: String,
+    pub input_bytes: u64,
+    pub input_object_bytes: u64,
 }
 #[derive(Clone, Debug)]
 pub struct BoundInput {
@@ -32,6 +41,27 @@ pub struct Parent<'a> {
     pub result: &'a ReturnedResult,
 }
 impl Bindings {
+    pub fn allowance(&self) -> Result<(u64, u64)> {
+        match (self.schema.as_str(), &self.streaming) {
+            ("reel.workflow-upstream-inputs.v1" | "reel.workflow-upstream-inputs.v2", None) => {
+                Ok((64 * 1024 * 1024, 64 * 1024 * 1024))
+            }
+            ("reel.workflow-upstream-inputs.v3", Some(s)) => {
+                if s.schema != "reel.workflow-upstream-streaming.v1" {
+                    return fail(ErrorKind::Invalid, "upstream-streaming-version");
+                }
+                if s.input_object_bytes == 0
+                    || s.input_object_bytes > s.input_bytes
+                    || s.input_object_bytes > 16 * 1024 * 1024 * 1024
+                    || s.input_bytes > 64 * 1024 * 1024 * 1024
+                {
+                    return fail(ErrorKind::Budget, "upstream-streaming-bounds");
+                }
+                Ok((s.input_bytes, s.input_object_bytes))
+            }
+            _ => fail(ErrorKind::Invalid, "upstream-version-envelope"),
+        }
+    }
     pub fn canonical_bytes(&self) -> Result<Vec<u8>> {
         let raw = serde_json::to_vec(self).map_err(|_| Error {
             kind: ErrorKind::Invalid,
@@ -57,12 +87,8 @@ pub fn bind(
     if raw.len() as u64 != pin.bytes || digest(&raw) != pin.sha256 {
         return fail(ErrorKind::Integrity, "upstream-binding-content");
     }
-    if !matches!(
-        bindings.schema.as_str(),
-        "reel.workflow-upstream-inputs.v1" | "reel.workflow-upstream-inputs.v2"
-    ) || bindings.inputs.is_empty()
-        || bindings.inputs.len() > MAX_INPUTS
-    {
+    let (input_bytes, object_bytes) = bindings.allowance()?;
+    if bindings.inputs.is_empty() || bindings.inputs.len() > MAX_INPUTS {
         return fail(ErrorKind::Invalid, "upstream-binding-contract");
     }
     let used: BTreeSet<_> = bindings.inputs.values().map(|r| &r.task_id).collect();
@@ -125,7 +151,7 @@ pub fn bind(
             kind: ErrorKind::Budget,
             code: "upstream-input-bytes".into(),
         })?;
-        if total > 64 * 1024 * 1024 {
+        if total > input_bytes || artifact.bytes > object_bytes {
             return fail(ErrorKind::Budget, "upstream-input-bytes");
         }
         bound.insert(

@@ -428,6 +428,7 @@ fn review_control_fixture() -> (Packet, Packet, ReturnedResult, upstream::Bindin
         );
     }
     let bindings = upstream::Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: returned
             .artifacts

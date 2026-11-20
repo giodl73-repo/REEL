@@ -81,6 +81,7 @@ fn versioned_upstream_accepts_exact_cross_snapshot_parent_and_refuses_substituti
     )]);
     for version in ["v1", "v2"] {
         let bindings = Bindings {
+            streaming: None,
             schema: format!("reel.workflow-upstream-inputs.{version}"),
             inputs: BTreeMap::from([(
                 "part/a".into(),
@@ -183,6 +184,7 @@ fn two_parents_preserve_logical_origin_even_when_payload_bytes_match() {
         ),
     ]);
     let mut bindings = Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: BTreeMap::from([
             (
@@ -228,6 +230,7 @@ fn changed_attempt_or_project_cannot_reuse_an_identical_parent_artifact() {
     let original = packet(task("a"), BTreeMap::new());
     let result = returned(&original, "part/a");
     let bindings = Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: BTreeMap::from([(
             "part/a".into(),
@@ -325,6 +328,7 @@ fn worker_receipt_requires_its_own_explicit_selector_and_input_identity() {
         },
     )]);
     let bindings = Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: BTreeMap::from([(
             "part/a/receipt".into(),
@@ -339,4 +343,132 @@ fn worker_receipt_requires_its_own_explicit_selector_and_input_identity() {
         bind(&child, &bindings, &parents).unwrap()["part/a/receipt"].artifact,
         receipt
     );
+}
+
+#[test]
+fn explicit_streaming_binds_seven_large_intermediates_and_keeps_legacy_limits() {
+    let sizes = [
+        3_360_000_000u64,
+        2_900_000_000,
+        400_000_000,
+        400_000_000,
+        400_000_000,
+        400_000_000,
+        76_104_893,
+    ];
+    assert_eq!(sizes.iter().sum::<u64>(), 7_936_104_893);
+    let producers: Vec<_> = sizes
+        .iter()
+        .enumerate()
+        .map(|(i, bytes)| {
+            let mut producer = task(&format!("part-{i}"));
+            producer.outputs.get_mut("note").unwrap().max_bytes = *bytes;
+            let packet = packet_at(producer, BTreeMap::new(), format!("{i:040x}"));
+            let mut result = returned(&packet, &format!("part/{i}"));
+            result.artifacts.get_mut("note").unwrap().bytes = *bytes;
+            (packet, result)
+        })
+        .collect();
+    let parents: BTreeMap<_, _> = producers
+        .iter()
+        .map(|(p, r)| {
+            (
+                p.task.id.clone(),
+                Parent {
+                    packet: p,
+                    result: r,
+                },
+            )
+        })
+        .collect();
+    let mut bindings = Bindings {
+        schema: "reel.workflow-upstream-inputs.v2".into(),
+        streaming: None,
+        inputs: producers
+            .iter()
+            .map(|(p, r)| {
+                (
+                    r.artifacts["note"].logical_id.clone(),
+                    Reference {
+                        task_id: p.task.id.clone(),
+                        artifact: Selector::Output {
+                            name: "note".into(),
+                        },
+                    },
+                )
+            })
+            .collect(),
+    };
+    let inputs = producers
+        .iter()
+        .map(|(_, r)| r.artifacts["note"].clone())
+        .collect::<Vec<_>>();
+    let legacy = bindings.canonical_bytes().unwrap();
+    assert!(
+        !serde_json::from_slice::<serde_json::Value>(&legacy)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("streaming")
+    );
+    let old = child(&bindings, &parents, inputs.clone());
+    assert_eq!(
+        bind(&old, &bindings, &parents).unwrap_err().kind,
+        ErrorKind::Budget
+    );
+    bindings.schema = "reel.workflow-upstream-inputs.v3".into();
+    bindings.streaming = Some(Streaming {
+        schema: "reel.workflow-upstream-streaming.v1".into(),
+        input_bytes: 8 * 1024 * 1024 * 1024,
+        input_object_bytes: 4 * 1024 * 1024 * 1024,
+    });
+    let current = child(&bindings, &parents, inputs.clone());
+    assert_ne!(current.task_key, old.task_key);
+    assert_eq!(bind(&current, &bindings, &parents).unwrap().len(), 7);
+    bindings.streaming.as_mut().unwrap().input_bytes = 7_936_104_892;
+    assert_eq!(
+        bind(&current, &bindings, &parents).unwrap_err().kind,
+        ErrorKind::Integrity
+    );
+    let changed = child(&bindings, &parents, inputs.clone());
+    assert_eq!(
+        bind(&changed, &bindings, &parents).unwrap_err().kind,
+        ErrorKind::Budget
+    );
+    bindings.streaming.as_mut().unwrap().input_bytes = 8 * 1024 * 1024 * 1024;
+    bindings.streaming.as_mut().unwrap().input_object_bytes = 3_359_999_999;
+    let changed = child(&bindings, &parents, inputs);
+    assert_eq!(
+        bind(&changed, &bindings, &parents).unwrap_err().kind,
+        ErrorKind::Budget
+    );
+    bindings.streaming = None;
+    bindings.schema = "reel.workflow-upstream-inputs.v2".into();
+    assert_eq!(bindings.canonical_bytes().unwrap(), legacy);
+}
+
+#[test]
+fn streaming_schema_and_numeric_envelopes_cannot_expand_legacy_bindings() {
+    let mut bindings = Bindings {
+        schema: "reel.workflow-upstream-inputs.v3".into(),
+        inputs: BTreeMap::new(),
+        streaming: None,
+    };
+    assert!(bindings.allowance().is_err());
+    bindings.streaming = Some(Streaming {
+        schema: "reel.workflow-upstream-streaming.v1".into(),
+        input_bytes: 64 * 1024 * 1024 * 1024,
+        input_object_bytes: 16 * 1024 * 1024 * 1024,
+    });
+    bindings.allowance().unwrap();
+    for version in ["v1", "v2"] {
+        bindings.schema = format!("reel.workflow-upstream-inputs.{version}");
+        assert!(bindings.allowance().is_err());
+    }
+    bindings.schema = "reel.workflow-upstream-inputs.v3".into();
+    bindings.streaming.as_mut().unwrap().input_object_bytes += 1;
+    assert_eq!(bindings.allowance().unwrap_err().kind, ErrorKind::Budget);
+    bindings.streaming.as_mut().unwrap().input_object_bytes = 1;
+    bindings.streaming.as_mut().unwrap().input_bytes += 1;
+    assert_eq!(bindings.allowance().unwrap_err().kind, ErrorKind::Budget);
 }

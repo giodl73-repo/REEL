@@ -38,6 +38,7 @@ output size and lifecycle transaction changes distinct during admission.
 | 128 task inputs/source bindings; 128 plan tasks | `reel-workflow/src/lib.rs` | A flat 600-input task cannot be admitted. |
 | Comic input closure 64 MiB, output 128 MiB | `reel-workflow/src/publication.rs` | Comic-specific limits; do not describe 64 MiB as a universal film input limit. |
 | Legacy native snapshot inputs 64 MiB; managed logical projection/retention/close 1 GiB | `reel-workflow-native/src/lib.rs`, `admission` | These are independent adapter limits. Explicit v2 budgets now support larger declared byte envelopes; native consumer-scale qualification remains open. |
+| Legacy retained dependency bindings v1/v2: 64 MiB | `reel-workflow/src/upstream.rs` | Explicit v3 input/object budgets and native borrowed streams now support larger declared intermediates; actual large native composition and full closure qualification remain open. |
 | Film output 128 MiB and workspace 512 MiB | `reel-workflow/src/film_render.rs` | Multi-GB masters cannot use the present movie task contract. |
 | Film process timeout 3,600 seconds and aggregate raw RGB 16 GiB | `reel-workflow/src/film_render.rs` | Five-hour render windows and full-episode frame demand need an explicit bounded composition contract. Runtime budget and film duration remain distinct. |
 | Contained-process input hash bound 512 MiB per file | `reel-workflow-native/src/film_process.rs` | Streaming hash implementation still explicitly refuses the reported individual masters. |

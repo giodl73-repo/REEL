@@ -85,6 +85,9 @@ mod review_native;
 #[path = "support/runner_native.rs"]
 mod runner_native;
 #[cfg(windows)]
+#[path = "support/streamed_upstream.rs"]
+mod streamed_upstream_native;
+#[cfg(windows)]
 #[path = "support/task_snapshots.rs"]
 mod task_snapshots_native;
 #[cfg(windows)]
@@ -2771,6 +2774,7 @@ fn ready_batch_stages_two_jobs_sharing_one_retained_target_and_ack_directory() {
         upstream::{Bindings as InputBindings, Reference, Selector},
     };
     let input_bindings = InputBindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: retained
             .iter()
@@ -3259,6 +3263,7 @@ fn frozen_composite_metadata_cannot_grant_acceptance_recovery_or_byte_access() {
         response_fixture(&fixture.packet, &case.temp.path().join("unretained-result"));
     let asset = result.artifacts["note"].clone();
     let bindings = Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: BTreeMap::from([(
             asset.logical_id.clone(),
@@ -4027,6 +4032,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
         )
         .unwrap();
         let bindings = Bindings {
+            streaming: None,
             schema: "reel.workflow-upstream-inputs.v1".into(),
             inputs: BTreeMap::from([(
                 art.logical_id.clone(),
@@ -4573,6 +4579,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
             .find(|(name, _)| name.ends_with("reading.pdf"))
             .unwrap();
         let upstream = Bindings {
+            streaming: None,
             schema: "reel.workflow-upstream-inputs.v1".into(),
             inputs: BTreeMap::from([
                 (

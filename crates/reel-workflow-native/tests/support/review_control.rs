@@ -47,6 +47,7 @@ fn close(root: &Path, journal: &Path, profile_file: &Path, profile: &handoff::Pr
 }
 fn origin_map(id: &str, result: &ReturnedResult) -> reel_workflow::upstream::Bindings {
     reel_workflow::upstream::Bindings {
+        streaming: None,
         schema: "reel.workflow-upstream-inputs.v1".into(),
         inputs: result
             .artifacts
