@@ -21,6 +21,9 @@ mod capacity_recovery_native;
 #[path = "support/close_native.rs"]
 mod close_native;
 #[cfg(windows)]
+#[path = "support/corrected_context_control.rs"]
+mod corrected_context_control_native;
+#[cfg(windows)]
 #[path = "support/direct_review.rs"]
 mod direct_review_native;
 #[cfg(windows)]
