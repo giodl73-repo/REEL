@@ -602,27 +602,28 @@ The [derived repair-edge contract](handoff/2026-11-20-derived-repair-edges.md)
 adds revision v4 with exact before/after producer-result witnesses, unchanged
 producer/slot roles and transitive ancestry checks. It updates data inputs,
 producer request/source references and upstream declarations while preserving
-already frozen packets. Four additional workflow tests pass (143 total). Its
-actual repaired-part -> new assembly-control fixture still requires frozen native
-qualification. Complete corrected-issue retention/contextual review, native later
+already frozen packets. Four additional workflow tests pass (143 total). The
+actual repaired-part -> new assembly-control execution is now qualified through
+the original-operation recovery below. Complete corrected-issue retention/contextual review, native later
 consumer qualification and the rest of the objective remain open.
 
 The corrected native control fixture now passes exact source/byte preflight and
 admission (65 objects), with guarded same-slot handoff and actual worker output.
-Managed import stopped at `retention-resource-bound`; that original control is
-ImportPending and protected, with no retained acknowledgement or task completion
-claimed. Retention-owner aggregation counts need read-only qualification and a
-bounded original-operation recovery path. Neither widening a source budget,
+Managed import initially stopped at `retention-resource-bound`; that original
+control was ImportPending and protected until the qualified recovery below.
+Retention-owner aggregation counts received read-only qualification and a bounded
+original-operation recovery path. Neither widening a source budget,
 resetting the actor nor deleting retained history is an acceptable implicit retry.
 
 The [actual retained-capacity diagnosis](handoff/2026-11-20-retained-owner-capacity.md)
 now proves the exact obstruction: 525 unique source/history objects exceed 512;
-270,429,684 bytes and 52 changed paths stay within 1 GiB / 128. No original
-retention work is staged, and the original pending journal/activation/work and
+270,429,684 bytes and 52 changed paths stay within 1 GiB / 128. That inspection
+staged no original retention work, and the original pending journal/activation/work and
 actual Index remain unchanged during the 1.37-second Rust/CLI inspection. All
 143 workflow and 86 standard native tests, 247 SDK pins and strict Clippy pass.
-The bounded cumulative-owner policy/original-operation recovery and full corrected
-issue remain unfinished; metadata inspection is not retained payload proof.
+Metadata inspection alone did not establish retained payload proof; the separate
+qualified original-operation recovery below now completes the control. The full
+corrected issue remains unfinished.
 
 [Immutable retained-capacity plans](handoff/2026-11-20-retained-capacity-plan.md)
 now separate a finite owner-history proposal from frozen job limits. Five focused
@@ -631,8 +632,14 @@ the pending control's plan, refuses five invalid/conflicting requests and preser
 its original journal, controls, actual Index and other Waiting claims. Standard
 native tests pass (91 passed, 85 opt-in ignored), with all 247 SDK pins and strict
 default/film Clippy. The subsequent checked staging adapter preserves the original
-retention operation and immutable policy evidence; its effectful process-exit
-reconstruction/original-runtime completion qualification is still pending.
+retention operation and immutable policy evidence. Its
+[165.15-second effectful qualification](handoff/2026-11-20-retained-capacity-recovery.md)
+reconstructs the same staged WorkRef in a new process and completes the existing
+journal with its original frozen 264efd runtime. Actual output/producer and parent
+proofs reopen, the control matches exact preflight, other Waiting claims reopen
+and completed replay leaves actual Index unchanged. The control is now Retained;
+standard native tests pass (91 passed, 86 opt-in ignored), with 247 SDK pins and
+strict default/film Clippy. Native-execution crash injection remains open.
 Automatic owner-policy admission for future jobs, complete corrected-issue
 assembly/contextual review and broader project qualification remain open.
 

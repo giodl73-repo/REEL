@@ -1,10 +1,15 @@
-# Retained history capacity stops the corrected control
+# Retained history capacity diagnosis
+
+The specific stop below now has a qualified
+[original-operation recovery](2026-11-20-retained-capacity-recovery.md). The control
+is Retained and technically complete under its unchanged original runtime.
+The observations below preserve the earlier pending-state diagnosis.
 
 The [derived repair control](2026-11-20-derived-repair-edges.md) produced its
 assembly request under the original 264efd runtime, then stopped during managed
-retention. Its original journal remains ImportPending, with input/output claims,
+retention. At that stop its original journal was ImportPending, with input/output claims,
 worker files and response metadata preserved. No retained acknowledgement or
-technical completion is established. Do not retry the fixture or replace the
+technical completion was then established. Do not retry the fixture or replace the
 original operation, attempt, source profile, target or runtime.
 
 The read-only Rust/CLI diagnostic passed in 1.37 seconds at source
@@ -49,7 +54,7 @@ not authorize widening limits, repeat publication, finish the task, return the
 slot, retire scratch or release any history. Changing a frozen snapshot budget
 would change the task and cannot repair this operation.
 
-The next adapter work must distinguish an individual job's projection allowance
+The recovery boundary must distinguish an individual job's projection allowance
 from the retained owner's cumulative-history policy. An original-operation
 capacity recovery must be a concrete bounded plan: pin the original receipt,
 activation, WorkRef, response/candidate identity, unchanged target owner/revision,
@@ -63,8 +68,8 @@ its own explicit qualified transaction and rollback boundary.
 
 There is no justification to reset the owner, delete earlier references, initialize
 another cache, silently enroll an actor or issue another render to escape this
-bound. The native control and complete corrected issue remain unqualified until
-that bounded recovery and the subsequent issue assembly/contextual review pass.
+bound. The native control is now qualified through the linked bounded recovery;
+the complete corrected issue still requires assembly and contextual review.
 
 Evidence is in `F:/src/tig-dev-temp/reel-retained-capacity-20261120-v1`:
 

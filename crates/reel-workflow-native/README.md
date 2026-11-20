@@ -128,7 +128,9 @@ owner allowance applies only to this explicit staging call. Normal retention,
 job budgets and original runtime pins stay unchanged. Staging does not execute
 the work, acknowledge retained ownership or complete the journal. The original
 frozen runtime must reconcile/execute it through its normal resume protocol;
-effectful qualification and interrupted-execution coverage remain separate gates.
+[Staging/process-exit reconstruction and original-runtime completion](../../docs/handoff/2026-11-20-retained-capacity-recovery.md)
+are qualified for one synthetic control. Crash injection during native execution,
+automatic owner-policy admission for new jobs and production scale remain open.
 
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and

@@ -48,7 +48,7 @@ deterministic preflight, then guards the original part's close and same-slot
 handoff. Actual parent proof and child admission precede owned production and
 retention of the new assembly control. It must verify both parent histories,
 the other Waiting generation and completed replay with unchanged actual Index.
-This fixture still requires frozen-source qualification. It cannot stand in for
+Its initial run required the bounded original-operation recovery below. It cannot stand in for
 retention of the full corrected issue, contextual review or native later repairs.
 
 The first frozen native fixture at source
@@ -77,7 +77,7 @@ Activation is `25e841600e8aa93861877f357eae98b84443b29769501862e646790bb5f119e6`
 source WorkRef is
 `work-63343abc3b3600ed91e97a312fa2d5b25076516372e74000b735f902c9370d25`,
 and source commit is `c184b3db9b94e6001b91c3b69c2546a82750b7c1` in the owned
-`F:/src/tig-dev-temp/.tmpr8GNVM/source-history` repository. The journal remains
+`F:/src/tig-dev-temp/.tmpr8GNVM/source-history` repository. At that stop the journal was
 ImportPending with no retained acknowledgement/task completion established.
 Source protection, published/uncertain objects, owned scratch, exact runtime and
 all original handles must be preserved. Do not restart the fixture or retry effects
@@ -93,9 +93,17 @@ It neither reads native output payloads nor changes budgets, creates retention
 work, returns a job slot or acknowledges completion. Its opt-in pending-operation
 diagnostic is now [qualified](2026-11-20-retained-owner-capacity.md): 525 combined
 objects exceed 512; 270,429,684 logical bytes and 52 new paths remain within their
-respective 1 GiB / 128 limits. No original retention work is staged. Actual Index
-state and original controls remain unchanged. Bounded original-operation capacity
-recovery and complete corrected-issue retention still remain open.
+respective 1 GiB / 128 limits. That diagnostic staged no original retention work
+and left actual Index state and original controls unchanged.
+
+The subsequent [bounded original-operation recovery](2026-11-20-retained-capacity-recovery.md)
+now passes in 165.15 seconds. It stages the exact original retention operation
+with immutable finite owner-policy evidence, reconstructs the same WorkRef after
+process exit, then completes the existing journal with the unchanged original
+264efd runtime. Actual output matches the exact preflight, both parent histories
+and the other Waiting claim reopen, and completed replay leaves actual Index
+unchanged. The corrected control is Retained and technically complete; the full
+corrected issue, contextual review and automatic owner-policy admission remain open.
 
 Producer-applied comics-editor and rights/provenance checklists preserve source
 wording, stable targets, exact lineage and private technical derivatives. They do

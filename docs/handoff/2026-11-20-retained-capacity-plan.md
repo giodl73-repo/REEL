@@ -75,7 +75,8 @@ The original operation key is unchanged. An already-staged work is accepted only
 with that exact policy record; no stale-plan regeneration or new work identity is
 allowed. Its descriptor alone does not establish execution, retained ownership or
 task completion. Effectful staging/process-exit recovery and original-runtime
-completion require their own frozen qualification. Interrupted native execution
+completion now have a [165.15-second frozen qualification](2026-11-20-retained-capacity-recovery.md).
+Interrupted native execution
 retains the existing original-WorkRef recovery protocol; broader crash coverage
 remains open. Full corrected-issue assembly, contextual report and the wider
 film/comic qualifications remain open.
