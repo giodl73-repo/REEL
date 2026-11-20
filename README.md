@@ -17,7 +17,7 @@ identify the work that needs rebuilding and keep the earlier edition recoverable
 The same approach connects a song to its video, an episode to its language
 editions and a finished programme to its source and review evidence.
 
-**Explore:** [Capabilities](docs/capabilities.md) ·
+**Explore:** [Illustrated guides](docs/README.md#illustrated-guides) · [Capabilities](docs/capabilities.md) ·
 [Getting started](docs/getting-started.md) · [Use cases](docs/use-cases.md) ·
 [Architecture](docs/architecture.md) · [Documentation](docs/README.md)
 
@@ -25,12 +25,13 @@ editions and a finished programme to its source and review evidence.
 
 | Production area | What REEL provides |
 | --- | --- |
-| Story and series | Briefs, formats, scene/cue contracts, continuity, pacing, openings, credits and ordered episode/programme assembly |
-| Animation and picture | Cels, semantic triggers for picture changes, exposure sheets, sprite choreography, camera tracks, VFX and frame-clock SVG/browser compositions |
-| Voice and sound | Dialogue/narration cues, selected performances and phrase alignment; Sonic effects, dialogue/score mixing, dynamic EQ and audio stems |
-| Music | Local generation adapters, auditions and repair, editable note/lyric models, arrangement and score workflows, album mastering and companion videos |
-| Languages and publishing | Shared pictures with language-local performances, captions, chapters, print collections, source and delivery histories |
-| Production engineering | Exact input/runtime pins, dependency-aware change planning, bounded managed jobs, retained recovery, independent frame/sample checks and git-asset integration |
+| [Story and series](docs/guides/episodes-and-languages.md) | Briefs, formats, scene/cue contracts, continuity, pacing, openings, credits and ordered episode/programme assembly |
+| [Animation and picture](docs/guides/animation-and-effects.md) | Cels, semantic triggers for picture changes, exposure sheets, sprite choreography, camera tracks, VFX and frame-clock SVG/browser compositions |
+| [Voice and sound](docs/guides/voice-and-sound.md) | Dialogue/narration cues, selected performances and phrase alignment; Sonic effects, dialogue/score mixing, dynamic EQ and audio stems |
+| [Music](docs/guides/music-and-albums.md) | Local generation adapters, auditions and repair, editable note/lyric models, arrangement and score workflows, album mastering and companion videos |
+| [Comic layers](docs/guides/comic-layers.md) | Editable artwork and lettering, panel/reading order and issue editions; publication adapters are in active workflow development |
+| [Languages and publishing](docs/guides/editions-and-delivery.md) | Shared pictures with language-local performances, captions, chapters, print collections, source and delivery histories |
+| [Production engineering](docs/guides/assets-and-revisions.md) | Exact input/runtime pins, dependency-aware change planning, bounded managed jobs, retained recovery, independent frame/sample checks and git-asset integration |
 
 The [capability guide](docs/capabilities.md) connects each area to its contracts
 and tools, including optional runtime requirements. The separate
@@ -99,7 +100,9 @@ in their own performances. SVG/CSS/JS compositions can supply separately rendere
 timed visual layers, preserving the clean cel underneath. Music videos can use
 the recording clock directly for events without speech.
 
-See [scene authoring](docs/scene-authoring-v1.md),
+Continue with the [episode and language walkthrough](docs/guides/episodes-and-languages.md)
+or [animation and effects](docs/guides/animation-and-effects.md). Exact contracts:
+[scene authoring](docs/scene-authoring-v1.md),
 [semantic word triggers](docs/authored-native-triggers-v1.md),
 [Sonic assets](docs/sonic-asset-library-v0.3.18.md) and
 [SVG/browser rendering](docs/deterministic-browser-compositions-v0.3.22.md).
@@ -124,7 +127,9 @@ A balloon or translation can be edited while preserving the underlying art.
 Clean art and reading editions remain distinct outputs, and source layers stay
 available for later edits and recovery. Comic publication/production adapters
 are part of the active [workflow development](docs/development-status.md);
-their qualification scope is tracked in that lane.
+their qualification scope is tracked in that lane. The
+[comic layers walkthrough](docs/guides/comic-layers.md) explains a lettering
+correction and its source/output relationships.
 
 Across both examples, **[git-asset](https://github.com/giodl73-repo/git-asset)**
 provides the asset-management layer for relationships, versions and retained
@@ -159,12 +164,13 @@ for runtime requirements and [capabilities](docs/capabilities.md) for detailed s
 | I want to… | Start with |
 | --- | --- |
 | Try REEL with a small checked-in example | [Validate and plan without rendering](docs/getting-started.md) |
-| Make an episode, music video or longer programme | [Production use cases](docs/use-cases.md#assemble-an-illustrated-episode) and [scene authoring](docs/scene-authoring-v1.md) |
-| Author animation, camera movement or visual effects | [Picture and animation guide](docs/capabilities.md#picture-and-animation) |
-| Direct voices, align dialogue or mix sound | [Voice and sound guide](docs/capabilities.md#voice-and-sound) |
-| Generate, edit, arrange or publish music | [Music production guide](docs/capabilities.md#music-production) |
-| Make multilingual, captioned or print editions | [Editions and delivery guide](docs/capabilities.md#editions-and-delivery) |
-| Reproduce, revise or recover a production | [Production engineering guide](docs/capabilities.md#production-engineering) and [git-asset/native integration](docs/tig-public-integration.md) |
+| Make an episode, music video or longer programme | [Episodes and languages](docs/guides/episodes-and-languages.md), [music and albums](docs/guides/music-and-albums.md) |
+| Author animation, camera movement or visual effects | [Animation and effects](docs/guides/animation-and-effects.md) |
+| Direct voices, align dialogue or mix sound | [Voice and sound](docs/guides/voice-and-sound.md) |
+| Generate, edit, arrange or publish music | [Songs, scores, albums and journeys](docs/guides/music-and-albums.md) |
+| Understand comic pages and editable layers | [Comic source model and development scope](docs/guides/comic-layers.md) |
+| Make multilingual, captioned or print editions | [Editions and delivery](docs/guides/editions-and-delivery.md) |
+| Reproduce, revise or recover a production | [git-asset, revisions and reproducibility](docs/guides/assets-and-revisions.md) |
 | Find an exact command, schema or specialist operation | [Complete reference index](docs/reference-index.md) |
 | Inspect a semantic dependency graph in a browser | [WASM workbench](https://giodl73-repo.github.io/REEL/assembly/) |
 

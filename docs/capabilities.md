@@ -4,6 +4,9 @@ REEL connects creative authoring to reproducible media production. Its scope
 includes story and series structure, picture and animation, voice and sound,
 music, editing, editions and the engineering that makes revisions recoverable.
 This guide groups the available contracts and tools by production purpose.
+For diagrams and concrete examples, start with the
+[illustrated walkthroughs](README.md#illustrated-guides); this page is the broader
+capability/reference map.
 
 Start with [getting started](getting-started.md) for a synthetic planning example,
 or [use cases](use-cases.md) for a complete workflow choice. Each linked guide
@@ -13,6 +16,8 @@ workflow development. A contract or successful technical check does not select a
 creative master or authorize release.
 
 ## Story and series
+
+**Walkthrough:** [Episodes, cues and language editions](guides/episodes-and-languages.md).
 
 REEL preserves authored intent from brief and format through scene, performance
 and programme assembly. Ordered scenes, openings, poems, credits and reusable
@@ -31,6 +36,8 @@ programme parts have explicit controls rather than being inferred from folders.
   [episode jobs](tig-episode-jobs.md) compose reusable material into longer works.
 
 ## Picture and animation
+
+**Walkthrough:** [Cels, animation and semantic effects](guides/animation-and-effects.md).
 
 The visual toolset covers still-cel storytelling and more articulated animation:
 picture selection and holds, exposure timing, layered performers, choreography,
@@ -57,6 +64,8 @@ camera motion, effects and mixed-media composition.
 
 ## Voice and sound
 
+**Walkthrough:** [Voice, alignment and sound layers](guides/voice-and-sound.md).
+
 REEL treats sound as part of scene structure. Spoken cues, alignment, music,
 silence and effects feed the production clock and mix, with explicit provider
 and performance boundaries.
@@ -77,6 +86,8 @@ and performance boundaries.
   recovery. Provider access and voice consent remain project responsibilities.
 
 ## Music production
+
+**Walkthrough:** [Songs, scores, albums and journeys](guides/music-and-albums.md).
 
 The music workflows span generation and auditions, inspection and repair,
 editable notation and lyric models, arrangement, score export and mastering.
@@ -108,7 +119,18 @@ Optional generation, recognition and engraving adapters use external tools;
 some existing adapters use Python. REEL does not bundle model weights or turn
 an inferred score into an approved transcription.
 
+## Comic publication
+
+**Walkthrough:** [Issues, pages and editable layers](guides/comic-layers.md).
+
+The separate active workflow lane develops publication contracts and bounded
+comic production. Its model keeps page/panel order, art, lettering and edition
+outputs explicit. See [development status](development-status.md) for ownership
+and qualification boundaries; these additions are not declared merged on main.
+
 ## Editions and delivery
+
+**Walkthrough:** [Editions, captions, print and delivery history](guides/editions-and-delivery.md).
 
 One authored work can have deliberate language, presentation and output
 variants, with exact relationships to its source and delivery history.
@@ -133,6 +155,8 @@ variants, with exact relationships to its source and delivery history.
 
 ## Production engineering
 
+**Walkthrough:** [git-asset, revisions and reproducible production](guides/assets-and-revisions.md).
+
 The engineering layer makes it possible to change one part of a production,
 understand what it affects and retain the source and evidence for earlier work.
 
@@ -148,10 +172,12 @@ understand what it affects and retain the source and evidence for earlier work.
   [delivery inspection](tig-delivery-inspection.md) and
   [episode control inspection](tig-episode-control-inspection.md) connect outputs
   to their source and inspectable frame/sample evidence.
-- [Tig integration](tig-public-integration.md) supplies exact asset resolution
+- [Native asset integration](tig-public-integration.md) supplies exact asset resolution
   and retention/history adapters. [Accounting](asset-manager-workflow-v1.md)
   and [version comparison](asset-version-diff-v1.md) support explicit storage
-  review; generic asset identity and lifecycle services belong to Tig.
+  review; the asset-management product is
+  [git-asset](https://github.com/giodl73-repo/git-asset). Existing native SDK and
+  command identifiers retain their Tig names.
 - The [WASM workbench](https://giodl73-repo.github.io/REEL/assembly/) inspects
   semantic graphs and locks in a browser. It is distinct from media rendering
   and the [cel/note/underlay editor host](editor-host-v1.md).

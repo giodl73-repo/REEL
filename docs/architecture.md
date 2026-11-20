@@ -35,6 +35,23 @@ language's consumed recipe unchanged. The exact behavior depends on the
 guessing. Existing frozen contexts keep their admitted compiler/runtime;
 recompiling current source creates a new context rather than rewriting history.
 
+## Example: one cel changes
+
+The [two-version fixture](tig-public-integration.md#try-the-two-version-example)
+illustrates the boundary with one replaced picture and an unchanged shared cue:
+
+```mermaid
+flowchart LR
+    selected["Project selects cel B v2"] --> bytes["Asset layer<br/>Resolve exact B v2 bytes"]
+    bytes --> scene["REEL scene compiler<br/>Changed picture, same cue"]
+    scene --> checked["New checked candidate"]
+    frozen["Earlier frozen request"] --> prior["B v1 + earlier runtime pins"]
+```
+
+The project owns the selection, the asset layer resolves its exact source and
+REEL interprets the effect on pictures and audio. See
+[assets and revisions](guides/assets-and-revisions.md) for the full walkthrough.
+
 ## Contracts and compilers
 
 The original [production manifest](production-manifest-v0.2.md) is YAML with
@@ -49,17 +66,21 @@ These interfaces coexist. They are not interchangeable serializations of one
 universal `scene.json`. An adapter must account for meaning, input identities and
 current proof requirements before claiming equivalent output.
 
-## REEL and Tig
+<a name="reel-and-tig"></a>
 
-[Tig](https://github.com/giodl73-repo/tig) is the generic asset layer. Its asset
-definitions, instances, byte identities, Git snapshots, storage providers and
-lifecycle services also serve projects that never render media.
+## REEL and git-asset
 
-REEL's [optional Tig adapters](tig-public-integration.md) capture a specified Git
+[git-asset](https://github.com/giodl73-repo/git-asset) is the asset-management
+product, with asset relationships, history and explicit storage/protection policy.
+REEL's separately pinned native SDK integration retains its `tig-*` command,
+Cargo feature and source-path identifiers. Generic asset services also serve
+projects that never render media.
+
+REEL's [optional native adapters](tig-public-integration.md) capture a specified Git
 view, admit exact definitions, resolve logical asset IDs and hold verified bytes
 through native rendering/checking. Publication/history adapters connect checked
-results to explicitly configured Tig stores and record proposals. Tig source is
-[pinned and vendored](../vendor/README.md); REEL does not fork its generic engine.
+results to explicitly configured stores and record proposals. Upstream SDK source
+is [pinned and vendored](../vendor/README.md); REEL does not fork its generic engine.
 
 REEL owns media semantics: how cues, cels, scores, languages, frames and samples
 become a delivery. The project owns which definitions, variants, runtimes,
@@ -69,9 +90,13 @@ letter are project choices, not built-in asset identities.
 The existing `reel-assets` crate also supplies project-profile-based accounting,
 editors and custody adapters used by earlier workflows and current hosts. Its
 [version registry/tier contracts](asset-manager-workflow-v1.md) are distinct from
-a Tig project view. Use the documented adapter and explicit coverage boundaries
+a native project view. Use the documented adapter and explicit coverage boundaries
 when connecting them. Verified input availability, a rendered candidate and
 authority to evict bytes are different claims.
+
+For a concrete change across those boundaries, follow
+[the two-version cel example](guides/assets-and-revisions.md). For the media
+hierarchy inside a scene, follow [episodes and languages](guides/episodes-and-languages.md).
 
 ## Engines and adapters
 
