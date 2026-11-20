@@ -7,7 +7,7 @@ use reel_publication::{
     comic_source::{PageSource, Pin, Request},
 };
 use reel_workflow_native::{admission, handoff, retention, upstream};
-use std::io::Write;
+use std::io::{Read, Write};
 
 fn load<T: serde::de::DeserializeOwned>(root: &Path, name: &str) -> T {
     decode(&fs::read(root.join(name)).unwrap()).unwrap()
@@ -39,6 +39,25 @@ fn path_pin(path: String, raw: &[u8]) -> Pin {
         sha256: digest(raw),
         bytes: raw.len() as u64,
     }
+}
+fn native_control(source: &reel_workflow_native::NativeProfile, pin: &Artifact) -> Vec<u8> {
+    assert!(pin.bytes <= MAX_CONTROL_BYTES as u64);
+    let mut stream = tig_git::annex::workflow::reader::open(
+        &source.source,
+        &Object {
+            sha256: tig_core::Digest::parse(&pin.sha256).unwrap(),
+            bytes: pin.bytes,
+        },
+    )
+    .unwrap();
+    let mut raw = Vec::new();
+    Read::by_ref(&mut stream)
+        .take(pin.bytes + 1)
+        .read_to_end(&mut raw)
+        .unwrap();
+    assert_eq!(raw.len() as u64, pin.bytes);
+    assert_eq!(digest(&raw), pin.sha256);
+    raw
 }
 fn invoke(exe: &Path, report: &Path, command: &str, args: &[&Path]) -> std::process::Output {
     let mut child = Command::new(exe);
@@ -117,6 +136,11 @@ fn retained_whole_issue_report_scopes_a_part_repair_and_preserves_the_other_part
     };
     check_waiting();
     let before_checkpoint = checkpoint();
+    json_save(
+        &root,
+        "original-checkpoint.json",
+        &json!({"sha256":before_checkpoint}),
+    );
     let originals: BTreeMap<_, _> = [
         report_root.join("packet.json"),
         report_root.join("profile.json"),
@@ -166,7 +190,16 @@ fn retained_whole_issue_report_scopes_a_part_repair_and_preserves_the_other_part
         )
         .unwrap(),
     );
-    let original_request = fs::read(original.join("source-assembly.json")).unwrap();
+    let original_request = native_control(
+        &issue.profile.source,
+        &issue.packet.task.tool.as_ref().unwrap().request,
+    );
+    let original_receipt = native_control(
+        &issue.profile.source,
+        issue.result.worker_receipt.as_ref().unwrap(),
+    );
+    save(&root, "original-assembly.json", &original_request);
+    save(&root, "original-assembly-receipt.json", &original_receipt);
     assert_eq!(
         repin(
             &issue.packet.task.tool.as_ref().unwrap().request,
@@ -187,10 +220,9 @@ fn retained_whole_issue_report_scopes_a_part_repair_and_preserves_the_other_part
     .unwrap();
     assert_eq!(
         serde_json::to_value(&old_receipt).unwrap(),
-        serde_json::to_value(load::<reel_publication::comic_issue::AssemblyReceipt>(
-            &original,
-            "receipt.json"
-        ))
+        serde_json::to_value(
+            decode::<reel_publication::comic_issue::AssemblyReceipt>(&original_receipt).unwrap()
+        )
         .unwrap()
     );
     for (name, pin) in &issue.result.artifacts {
