@@ -15,6 +15,13 @@ have not been delivered. The [completion ledger](../../docs/workflow-completion.
 records the detailed boundaries. Start here instead of following its historical
 qualification reports as operating instructions.
 
+The current Windows bundle is
+`F:/src/REEL-releases/workflow-preview-20261120-v2/START-HERE.md`. Its main
+`reel-workflow.exe` is an optimized build with `comic` enabled. It has passed
+actual BBJ preparation, exact page SVG composition and existing-output refusal;
+the underlying publication adapter has completed the selected 28-sheet local
+book. The bundle manifest records the separate native bridge and publisher pins.
+
 ## Run the planning CLI
 
 From the REEL checkout:
@@ -40,7 +47,7 @@ Returned bytes need a matching result descriptor and, for durable completion,
 native ingestion and retained-owner acknowledgement. A prompt response alone
 does not complete a production task.
 
-## Run protected work
+## Compose a BBJ book
 
 For an existing BBJ book, the [comic publication guide](../reel-publication/README.md)
 provides `bbj-prepare` and `layered-compose-book`: actual selected SVG sources are
@@ -59,6 +66,8 @@ Open the resulting `index.html`. Use a new directory; partial outputs are retain
 on failure. `bbj-compose-page REQUEST INPUT_BINDINGS NEW_DIRECTORY` composes one
 candidate SVG separately. These commands are local publication operations;
 the native workflow lifecycle below governs protected production jobs.
+
+## Run protected work
 
 Build the separate native workspace explicitly:
 
@@ -97,9 +106,9 @@ The next release work is bounded by producer-visible outcomes:
 
 1. Ship a reproducible CLI bundle, this entry guide and examples that run from a
    fresh output directory, with useful status/resume instructions.
-2. Add an owned BBJ adapter and demonstrate one actual issue through planning,
-   candidate production, review IDs, one correction, affected-consumer rebuild
-   and retained editable/reading outputs.
+2. Connect the existing local BBJ adapter to owned native jobs and demonstrate
+   one actual issue through candidate production, review IDs, one correction,
+   affected-consumer rebuild and retained editable/reading outputs.
 3. Add an owned S5 adapter using existing media and corrected recordings;
    demonstrate its full bilingual episode plan and then execute within the
    actual resource, byte and time envelopes, including interruption/recovery.

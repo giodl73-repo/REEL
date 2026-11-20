@@ -22,6 +22,17 @@ schema, exact asset-reference association and edited-lettering restore contract
 need explicit consumer qualification. The two-page synthetic fixture and current
 comic byte limits do not establish larger actual issue production or adoption.
 
+A subsequent [actual BBJ publication adapter](../crates/reel-publication/README.md)
+now prepares and composes the complete selected Counterphase 2 book locally:
+28 exact SVG reproductions, 28 unchanged selected reading PNGs, stable page/panel
+review IDs and preserved layer/provenance sources. Its sequential 249.99-second
+run writes a 1.40 GB private reader/source bundle. Main workflow commands
+`bbj-prepare`, `bbj-compose` and `bbj-compose-page` expose the adapter with the
+`comic` feature. This advances actual project use beyond the historical
+Sightshift metadata observation above. Managed native scheduling/retention,
+automatic book recovery, fresh raster/edit restoration and the project issue/fix
+loop remain open; the local composition does not adopt an existing BBJ profile.
+
 The [v2 streaming film intent](handoff/2026-11-19-streaming-film-intent.md) now
 declares larger input/output/workspace/time envelopes and checks declared input
 and output ceilings without changing v1 behavior. `check-film-intent` inspects

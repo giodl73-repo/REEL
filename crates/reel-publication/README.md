@@ -15,6 +15,7 @@ following adapter for BBJ's existing ordered SVG layer sources.
 Set `$selection` to the exact selected `refraction.book-preview.v1` JSON. Use a
 new output directory for each command. `my-issue` is your stable publication ID;
 the language is an explicit edition declaration, not a translation operation.
+The output parent directory must already exist.
 
 ```powershell
 reel-publication bbj-prepare $selection F:/src/bbj my-issue en F:/work/my-issue-prepared
@@ -39,6 +40,20 @@ bytes, listed provenance, per-page source receipts, completion checkpoints and a
 book receipt. Page composition is sequential. Declared input allowance is bound
 per page (maximum 256 MiB); the local book output estimate must fit 8 GiB. These
 are this adapter's bounds and do not alter legacy comic or film limits.
+
+The actual selected Counterphase 2 book has now passed this path: 28 sheets,
+28 exact SVG reproductions and 28 unchanged reading PNGs, with a complete local
+reader and 529 output/source files (1,400,769,540 bytes). The frozen local producer
+at source `0a419a5d565758f2f9dc833f4a764dc16a5328e2` completed in 249.99 seconds.
+The private result is
+`F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html`; its parent evidence
+directory records the frozen tool, actual run, reader checks and validation.
+`tool.json` is the compiled-source authority; `source-provenance.json` clarifies
+that the run wrapper observed checkout HEAD again at completion. The book
+receipt SHA256 is
+`825c66dd828277f8b90bdf4aa8789f57e56c97ac01cae52a2645502506c51022`.
+This is actual selected-source compatibility and local publication evidence,
+not a creative viewing, new raster rendering or native custody qualification.
 
 To compose one request independently:
 
