@@ -84,8 +84,13 @@ retained verification. This is not guarded slot close/reuse or scratch retiremen
 Readback uses a bare repository locator; the original checkout remains on disk,
 so a checkout-unavailable scenario is not claimed. The owned locator switch does
 not establish runtime profile adoption/rollback. Larger/multilingual project
-issues, guarded close/reuse, runtime adoption/rollback and full S5 film production
+issues, final-issue actor close/reuse, runtime adoption/rollback and full S5 film production
 remain open. No S4/S5 production or real project selection was changed.
+The follow-on [control close/reuse qualification](2026-11-19-native-intent-close.md)
+closes the retained v2 control actor, recovers an interrupted close, admits an
+explicit new attempt on the same slot and verifies old-close fencing plus native
+control/whole-issue history after reuse. The new control attempt remains Waiting;
+that proof does not close the final issue's separate actor.
 
 Original evidence root:
 `F:/src/tig-dev-temp/reel-native-intent-issue-20261119-v1`.

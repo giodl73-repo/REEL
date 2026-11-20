@@ -78,8 +78,10 @@ qualified native distribution.
 The [managed v2 issue recovery](2026-11-19-native-intent-issue.md) separately
 qualifies bounded native admission/retention and bare-history editable replay for
 two Spanish synthetic pages. It recovers the original interrupted final task,
-without a new admission/attempt or runtime adoption. Guarded close/reuse,
-post-close history, larger/multilingual project comics, film/conform order binding
+without a new admission/attempt or runtime adoption. The subsequent
+[control close/reuse proof](2026-11-19-native-intent-close.md) also verifies old
+control/whole-issue history after a new protected control generation. Final-issue
+actor close/reuse, larger/multilingual project comics, film/conform order binding
 and full bilingual S5 production/adoption remain open.
 The preserved large-native ImportPending job and all existing profiles/claims
 remain outside this change.

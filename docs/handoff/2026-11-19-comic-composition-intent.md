@@ -90,6 +90,8 @@ large-native ImportPending job is not retried. The Tig SDK remains unchanged.
 
 The [managed v2 issue recovery](2026-11-19-native-intent-issue.md) now qualifies
 the bounded two-page Spanish admission/retention, interrupted-task recovery and
-bare-history editable replay path. Remaining qualification: guarded close/reuse
-and post-close history, project-scale comics, film/conform order binding, full
+bare-history editable replay path. The [control close/reuse proof](2026-11-19-native-intent-close.md)
+also verifies old control/issue history across a new control generation.
+Remaining qualification: final-issue actor close/reuse and its post-close
+history, project-scale comics, film/conform order binding, full
 bilingual S5 composition/delivery and owned profile adoption/rollback.

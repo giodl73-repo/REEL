@@ -26,8 +26,11 @@ now binds explicit v2 issue assembly requests to actual ordered parts and checks
 native frozen producer origins. The derived control producer also generates v2
 requests, and [managed v2 recovery](handoff/2026-11-19-native-intent-issue.md)
 qualifies the bounded two-page Spanish path through original-job recovery,
-retained completion and bare-history editable replay. Guarded close/reuse,
-larger/multilingual project qualification and full film production remain open.
+retained completion and bare-history editable replay. The follow-on
+[control close/reuse](handoff/2026-11-19-native-intent-close.md) verifies original
+close recovery, same-slot attempt fencing and whole-issue history after control
+reuse. Final-issue actor close/reuse, larger/multilingual project qualification
+and full film production remain open.
 
 ## Current implementation and boundary
 

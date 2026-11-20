@@ -134,6 +134,16 @@ bounded two-page Spanish path, including actual interruption recovery. Source
 coverage loss is simulated; guarded close/reuse, runtime adoption/rollback,
 larger/multilingual project issues, film integration and real S5 production remain
 open. The separate large-native ImportPending job is preserved without retry.
+The [v2 control close/reuse qualification](handoff/2026-11-19-native-intent-close.md)
+now applies and recovers the original guarded control close, then explicitly
+admits a new attempt on the same slot. A corrected 218.14-second continuation
+uses the same task key with a distinct attempt/activation, verifies old-close
+replay leaves the actual Index checkpoint unchanged, fences the old admission
+and reopens native control/whole-issue history. The first fixture's rejected tool
+prompt is preserved as a planning failure after completed close and before any
+reuse admission. All 85 standard native tests and strict checks pass. The new
+generation stays protected and Waiting; final-issue actor close/reuse, larger/
+multilingual projects and runtime profile adoption/rollback remain open.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 has an unresolved large-native prerequisite documented by the
