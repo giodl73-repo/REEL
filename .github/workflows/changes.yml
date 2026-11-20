@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Check documentation change detection
-        run: node --test .github/scripts/docs-only.test.cjs
+        run: node --test .github/scripts/*.test.cjs
       - name: Classify the complete Git diff
         id: paths
         run: node .github/scripts/docs-only.cjs
