@@ -1031,6 +1031,16 @@ fn whole_issue_derived_controls_require_original_parent_and_explicit_capture() {
             result: &result,
         },
     )]);
+    let derived_bindings = review_control::bindings(&parent, &result, None).unwrap();
+    assert_eq!(derived_bindings.inputs, bindings.inputs);
+    assert_eq!(derived_bindings.schema, "reel.workflow-upstream-inputs.v2");
+    assert_eq!(
+        review_control::bindings(&parent, &result, Some(&bindings))
+            .err()
+            .unwrap()
+            .code,
+        "review-control-original-bindings-required"
+    );
     assert_eq!(
         review_control::generate(&child, &bindings, &parents, &mut memory)
             .err()

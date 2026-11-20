@@ -42,6 +42,9 @@ mod image_handoff_native;
 #[cfg(windows)]
 #[path = "support/intent_close_native.rs"]
 mod intent_close_native;
+#[cfg(windows)]
+#[path = "support/issue_review_control.rs"]
+mod issue_review_control_native;
 #[cfg(all(windows, feature = "film"))]
 #[path = "support/large_native_return.rs"]
 mod large_native_return;

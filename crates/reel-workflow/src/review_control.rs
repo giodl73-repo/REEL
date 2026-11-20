@@ -56,6 +56,83 @@ pub fn source_bindings(
         )
         .collect())
 }
+/// Carry the producer's exact upstream selectors into a derived review task,
+/// then add its own outputs/receipt. This is a planning declaration: native
+/// admission must still verify every named original retained parent.
+pub fn bindings(
+    parent: &Packet,
+    result: &ReturnedResult,
+    inherited: Option<&upstream::Bindings>,
+) -> Result<upstream::Bindings> {
+    inputs(parent, result)?;
+    let mut bindings = match (&parent.task.upstream_inputs, inherited) {
+        (None, None) => upstream::Bindings {
+            schema: "reel.workflow-upstream-inputs.v2".into(),
+            streaming: None,
+            inputs: BTreeMap::new(),
+        },
+        (Some(pin), Some(original)) => {
+            original.allowance()?;
+            let raw = original.canonical_bytes()?;
+            if pin.bytes != raw.len() as u64 || pin.sha256 != digest(&raw) {
+                return fail(
+                    ErrorKind::Integrity,
+                    "review-control-inherited-bindings-pin",
+                );
+            }
+            if original.inputs.is_empty()
+                || original
+                    .inputs
+                    .keys()
+                    .any(|id| !parent.task.inputs.iter().any(|a| &a.logical_id == id))
+                || original
+                    .inputs
+                    .values()
+                    .map(|r| &r.task_id)
+                    .collect::<BTreeSet<_>>()
+                    != parent.dependencies.keys().collect()
+            {
+                return fail(ErrorKind::Conflict, "review-control-inherited-bindings-set");
+            }
+            original.clone()
+        }
+        _ => {
+            return fail(
+                ErrorKind::Missing,
+                "review-control-original-bindings-required",
+            );
+        }
+    };
+    for (id, selector) in result
+        .artifacts
+        .iter()
+        .map(|(name, pin)| {
+            (
+                &pin.logical_id,
+                upstream::Selector::Output { name: name.clone() },
+            )
+        })
+        .chain(
+            result
+                .worker_receipt
+                .iter()
+                .map(|pin| (&pin.logical_id, upstream::Selector::WorkerReceipt)),
+        )
+    {
+        let reference = upstream::Reference {
+            task_id: parent.task.id.clone(),
+            artifact: selector,
+        };
+        if bindings.inputs.insert(id.clone(), reference).is_some() {
+            return fail(ErrorKind::Conflict, "review-control-inherited-origin-alias");
+        }
+    }
+    if bindings.inputs.len() > MAX_INPUTS {
+        return fail(ErrorKind::Budget, "review-control-inherited-input-count");
+    }
+    bindings.canonical_bytes()?;
+    Ok(bindings)
+}
 fn read(reader: &mut impl InputReader, pin: &Artifact, max: u64) -> Result<Vec<u8>> {
     if pin.bytes > max {
         return fail(ErrorKind::Budget, "review-control-input-bytes");
