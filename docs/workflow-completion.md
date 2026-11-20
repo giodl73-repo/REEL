@@ -722,6 +722,24 @@ admitted or retained. Actual native v2 origin enforcement through an admitted
 report, contextual review and evidenced finding closure remain open alongside
 the broader consumer/provider/adoption requirements.
 
+[Retained corrected-context controls](handoff/2026-11-20-corrected-context-control.md)
+now advance that exact producer-bound preflight through actual native custody.
+The first run completes checked issue close and new admission, then stops before
+worker execution on an owned staging alias bug. The native exporter now records
+the actual verified first copy rather than a not-yet-created canonical alias.
+An 812.89-second frozen original-ticket recovery passes: fixed coordinator 5c237
+completes the same owned input export with unchanged Index, reservation and old
+bytes; original runtime 3fa resumes its first worker and retains the controls
+under its declared finite owner policy. All three native control artifacts equal
+preflight; replay preserves Index and worker result, historical parents and the
+Waiting claim reopen. The pinned report preflight now binds that actual retained
+control and both original image producers (70 resources / 162,730,947 bytes).
+All 98 native tests, 247 SDK pins and strict default/film Clippy pass (95 opt-in
+fixtures ignored). The control still owns slot2; actual report admission/native
+v2 guard, return/import/history and evidenced contextual finding closure remain
+open. No runtime replacement, readmission, scratch retirement, viewing, creative
+approval, real BBJ/S5 adoption or release follows from this qualification.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

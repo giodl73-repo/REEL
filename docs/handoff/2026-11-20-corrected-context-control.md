@@ -53,7 +53,84 @@ on the same ticket and capacity reservation. The Index must stay unchanged; both
 aliases and the completion marker must verify, with all prior bytes preserved.
 It then resumes the same dispatch via the original 3fa runtime for the first
 worker execution. It never readmits, replaces a ticket/runtime/lease, deletes
-scratch or reruns the original issue close. This recovery has not yet run.
+scratch or reruns the original issue close.
+
+## Qualified original-ticket alias recovery
+
+The frozen recovery at source `fc1ef45e562fbb94f107970fbbd1f7ccee3cc6cf`
+passes in **812.89 seconds**. Fixed coordinator 5c237 completes the original
+input export (16 staged files / 4,411,778 logical workspace bytes) with no Index
+advance. Both receipt aliases and the completion marker verify. Every pinned
+old control, staged file and part remains byte-identical, including the original
+capacity ticket/reservation. The original 3fa runtime then completes the same
+dispatch, first worker invocation, automatic finite-policy retention and journal.
+There is no new admission or worker/runtime/lease replacement in this recovery.
+
+All three native control outputs equal the complete preflight exactly. The v2
+request preserves the original corrected-issue producer packet/result. Completed
+replay preserves actual Index and owned worker-result bytes. All original parent
+proofs and the unrelated Waiting claim reopen; all 29 preflight certificate pins
+remain unchanged. The control's binding-v2 owner policy remains 1,024 objects /
+1 GiB; per-job 512-object, lifecycle 128-path and 16-actor limits are unchanged.
+
+The retained control is task
+`ffed8eb7773a4dcf1e914fa3659ba4a9341c2846e3cd8efc60e78894e3a8760c`,
+attempt `corrected-review-attempt-1`, operation
+`corrected-issue-review-control-original`. Activation is
+`384955544371b2db1a8839f93704f09979a28c815f3f870d938383c46cc32c09`;
+source WorkRef
+`work-d1e1c5ee19e0d535592f64f1017cdf2e28f86511c1ce5cb8db38b5a21a58b2b9`,
+retention WorkRef
+`work-1068e5c8d0b9870a7639214fd4aa62bbd70c7e26caeeedbf8eda4d9215a5f2af`.
+Actual completed Index digest:
+`cd85666d41c325f334f763463b2f0f2b97e7d10088bb22c8f382a40f07435f87`.
+The original issue has closed into retained coverage. Slot2 is now assigned to
+this retained control, not idle. Returning it for report admission requires its
+own checked close using the already-bound owner policy. Do not rerun either
+execution/recovery fixture or readmit the control.
+
+The actual original issue close is
+`workflow-close-5f0e33de9b922e20ea369f187fe20a1fc9fdc4e5cf29f930e8e8ef2bd1e10dc9`,
+handoff `work-9865f7817fda05cbb23574e68d02ee90007750248b10e2774ff7d56a904eaba6`,
+clear `work-351b3141f0df6d766373b81ef1104af5f7fb28b943b78620c68017e8d3a3a3e6`.
+Its original 264efd lifecycle runtime still replays historical retained state.
+
+The future report preflight is saved under
+`F:/src/tig-dev-temp/reel-corrected-context-control-20261120-v1/job/report-preflight`.
+Its task key is
+`230314b16bc5b4fdbce6df59a133112226d7416266e40412ae9252dfa3c207a5`,
+task `corrected-issue-context-report`, desired attempt
+`corrected-context-attempt-1`, operation `corrected-issue-context-report-original`.
+Its exact control request/copy/manifest and both image selectors bind the actual
+retained control, historical closing and corrected opening. The metadata origin
+guard passes and the declaration contains **70 resources / 162,730,947 logical
+bytes**. The report is not admitted or retained. Actual native v2 report guard
+execution under its own new claims, report return/import/history, contextual
+evaluation and evidenced finding closure remain open. Empty findings alone must
+never stand in for viewing or resolution.
+
+Recovery evidence is
+`F:/src/tig-dev-temp/reel-context-alias-recovery-20261120-v1`; the original job,
+failed dispatch, old source/tools and scratch remain in place. Both frozen source
+packets verify 1,994 files. Failed source manifest:
+`bfcd1061b47750dbf2a3efb784387487166bacba7839dc0be4993f697f9c83c1`;
+recovery manifest:
+`b8bf0ba260016a828ad61501de8e17d24c68b95caf79e3fe5d7d77b1d00aa642`.
+Fixed input-export coordinator is
+`5c237208ccf8bc9fe13e2cc2ccdc154430c4d4f8ef07c51a613f5ab41a40abe1`,
+25,370,112 bytes. Recovery fixture is
+`b8835b76fb28efcfcd73c3d117efc05cb5aff8f96171b6bd5b500747e21a75bc`,
+31,393,280 bytes. Original worker runtime 3fa remains 25,300,992 bytes.
+All 98 standard native tests, 247 SDK pins and strict default/film Clippy pass
+(95 opt-in fixtures ignored). The 75-pin `qualified-report.json` SHA256 is
+`8e564493498681a8cacca304a4259c89252920199b212ed71a1b9ec77bcf47ce`;
+`qualified-validation.json` is
+`cca7bc782b6a70cc408c04f47221554286ac700a81851acfb2b5f80f19f38e27`.
+
+This qualifies the real synthetic original-ticket staging interruption and
+retained control transition, not a production profile/tool adoption, full v2
+report, real project/provider review, finding closure, selection or release.
+Real BBJ/S5 scale and owned production adoption/rollback remain open.
 
 Producer-applied comics-editor and rights/provenance checklists require
 whole-issue context and immutable lineage; they are not independent or human
