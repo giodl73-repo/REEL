@@ -132,6 +132,32 @@ frozen runtime must reconcile/execute it through its normal resume protocol;
 are qualified for one synthetic control. Crash injection during native execution,
 automatic owner-policy admission for new jobs and production scale remain open.
 
+New jobs may declare `reel.workflow-native-handoff-binding.v2` with a
+`retained_owner_policy` (the finite policy schema above). V1 requires the field to
+be absent; v2 requires it. Its exact bytes enter the immutable handoff binding
+artifact and journal ticket before work starts. `reel.workflow-advance-config.v2`
+adds the same required field to recipe adoption; its immutable config/intent
+prevents changing the policy for an already adopted job. The outer handoff profile
+schema remains v1 because this is an independently versioned nested binding.
+
+The waiting/adoption path checks a known-input/history lower bound before provider
+execution. It reserves no future capacity. After response registration, the
+lifecycle checks the actual complete union against the declared owner policy and
+automatically stages `reel.workflow-retained-owner-plan.v1`, including its evidence
+object and an operation-specific `retained-policies/` link. It always enforces the
+owner policy, including when the job's projection limit would allow more.
+Two changed paths / one object / 64 KiB are conservatively reserved for this
+evidence; the actual SDK 128 changed-path limit still applies. Normal original-work
+execution follows, with no automatic increase or operator recovery command.
+
+Resuming an already staged job reopens the named original policy record and
+refuses changed request/policy evidence. Completed/historical handoff verification
+checks that same policy under retained coverage without requiring an active source
+actor. Existing v1 jobs keep their original path; adding this policy to an existing
+ticket is not an adoption operation. The new mode's effectful qualification is
+pending; real source/owner scale, native-execution crash injection and production
+profile adoption/rollback remain separate gates.
+
 V2 snapshot budgets may additionally pin `returns` with schema
 `reel.workflow-return-budget.v1`, positive `total_bytes`/`object_bytes` and
 `verify_millis`. Total is at most 16 GiB and no greater than projection allowance;

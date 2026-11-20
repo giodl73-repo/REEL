@@ -187,6 +187,7 @@ fn advance_config() -> reel_workflow_native::advancement::Config {
     let bytes = fs::read(&path).unwrap();
     reel_workflow_native::advancement::Config {
         schema: "reel.workflow-advance-config.v1".into(),
+        retained_owner_policy: None,
         runtime: Tool {
             path,
             sha256: digest(&bytes),
@@ -194,6 +195,69 @@ fn advance_config() -> reel_workflow_native::advancement::Config {
         },
         target: retained_target(),
     }
+}
+
+#[test]
+fn owner_policy_adoption_pins_config_and_refuses_reinterpretation_of_existing_job() {
+    use reel_workflow_native::advancement;
+    use tig_store::source_claims::protection::Index;
+    let (_fixture, case, base, frozen) = prepare();
+    let mut config = advance_config();
+    let legacy = serde_json::to_vec(&config).unwrap();
+    assert!(!String::from_utf8_lossy(&legacy).contains("retained_owner_policy"));
+    config.retained_owner_policy = Some(reel_workflow_native::retention::capacity::Policy {
+        schema: "reel.workflow-retained-owner-policy.v1".into(),
+        objects: 1024,
+        logical_bytes: 1024 * 1024 * 1024,
+    });
+    let directory = case.temp.path().join("owner-policy-adopted");
+    assert_eq!(
+        advancement::advance(&base, &frozen, &config, &directory)
+            .unwrap_err()
+            .code,
+        "advance-config"
+    );
+    assert!(!directory.exists());
+    config.schema = "reel.workflow-advance-config.v2".into();
+    advancement::advance(&base, &frozen, &config, &directory).unwrap();
+    let profile: reel_workflow_native::handoff::Profile =
+        serde_json::from_slice(&fs::read(directory.join("profile.json")).unwrap()).unwrap();
+    assert_eq!(
+        profile.binding.schema,
+        "reel.workflow-native-handoff-binding.v2"
+    );
+    assert_eq!(
+        profile.binding.retained_owner_policy,
+        config.retained_owner_policy
+    );
+    let ticket = reel_workflow::handoff::Journal::open(&directory.join("journal")).unwrap();
+    assert_eq!(
+        ticket.ticket().native_binding,
+        profile.binding.artifact().unwrap()
+    );
+    let before = Index::open(&case.profile.index_root, &case.profile.index_minimum)
+        .unwrap()
+        .checkpoint();
+    config.retained_owner_policy.as_mut().unwrap().objects = 2048;
+    assert_eq!(
+        advancement::advance(&base, &frozen, &config, &directory)
+            .unwrap_err()
+            .code,
+        "advance-immutable-control"
+    );
+    assert_eq!(
+        Index::open(&case.profile.index_root, &before)
+            .unwrap()
+            .checkpoint(),
+        before
+    );
+    config.retained_owner_policy = None;
+    assert_eq!(
+        advancement::advance(&base, &frozen, &config, &directory)
+            .unwrap_err()
+            .code,
+        "advance-config"
+    );
 }
 
 fn dispatch_config(root: &Path) -> reel_workflow_native::dispatch::Config {
@@ -662,6 +726,7 @@ fn native_expansion_advances_through_cli_and_exports_protected_prompt_batch() {
     let exe_bytes = fs::read(&executable).unwrap();
     let config = reel_workflow_native::advancement::Config {
         schema: "reel.workflow-advance-config.v1".into(),
+        retained_owner_policy: None,
         runtime: Tool {
             path: executable.clone(),
             sha256: digest(&exe_bytes),

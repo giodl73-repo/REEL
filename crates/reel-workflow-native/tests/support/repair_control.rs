@@ -825,6 +825,7 @@ fn retained_repaired_part_and_historical_sibling_drive_fresh_native_assembly_con
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt.clone(),
             target: part.profile.binding.target.clone(),
         },

@@ -66,6 +66,7 @@ fn runner_case(automatic: bool) {
     let bytes = fs::read(&executable).unwrap();
     let handoff = advancement::Config {
         schema: "reel.workflow-advance-config.v1".into(),
+        retained_owner_policy: None,
         runtime: Tool {
             path: executable.clone(),
             sha256: digest(&bytes),

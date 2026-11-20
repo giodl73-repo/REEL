@@ -67,6 +67,9 @@ mod movie_owned_files;
 #[path = "support/movie_verify.rs"]
 mod movie_verify;
 #[cfg(windows)]
+#[path = "support/owner_policy.rs"]
+mod owner_policy_native;
+#[cfg(windows)]
 #[path = "support/provider_native.rs"]
 mod provider_native;
 #[cfg(windows)]
@@ -1990,6 +1993,7 @@ fn handoff_profile(
         admission: case.profile.clone(),
         binding: reel_workflow_native::handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt,
             target: retained_target(),
         },
@@ -4073,6 +4077,7 @@ fn comic_native_case_mode(partitioned: bool, dispatch: bool, composite: bool, au
             admission: parent_profile.clone(),
             binding: reel_workflow_native::handoff::Binding {
                 schema: "reel.workflow-native-handoff-binding.v1".into(),
+                retained_owner_policy: None,
                 admission: admission.clone(),
                 target: retained_target(),
             },

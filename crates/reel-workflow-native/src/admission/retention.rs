@@ -31,7 +31,164 @@ fn plan(
     Ok((operation, raw))
 }
 
+fn owner_policy_path(operation: &Key) -> Result<LogicalPath> {
+    LogicalPath::parse(&format!("retained-policies/{}", operation.as_str()))
+        .map_err(|_| error(ErrorKind::Invalid, "retained-owner-policy-path"))
+}
+
 impl Prepared {
+    /// Known-input/history lower bound only. Final response admission rechecks
+    /// the complete union; no output capacity or future owner revision is held.
+    pub(crate) fn check_retained_owner_policy(
+        &self,
+        target: &Target,
+        policy: &crate::retention::capacity::Policy,
+    ) -> Result<()> {
+        policy.validate()?;
+        let (index, _) = self.stores(None)?;
+        self.retained_scope(&index, target)?;
+        let _fence = qualified::prepublication::actor_fence(
+            index.identity(),
+            &self.profile.scope.coordination_root,
+            &target.actor,
+        )
+        .map_err(native_error)?;
+        drop(index);
+        let (mut index, mut nodes) = self.stores(None)?;
+        let retained = index
+            .actor(&mut nodes, &target.actor)
+            .map_err(|e| native_error(e.into()))?;
+        if !retained.ready {
+            return Err(error(
+                ErrorKind::Busy,
+                "retained-owner-policy-target-unready",
+            ));
+        }
+        let objects: BTreeSet<_> = entries(&retained.selection, &mut nodes)?
+            .into_values()
+            .chain(self.resources.objects().iter().cloned())
+            .chain([retained.selection.root, self.input.root.clone()])
+            .collect();
+        let bytes = objects
+            .iter()
+            .try_fold(0u64, |sum, object| sum.checked_add(object.bytes));
+        if objects.len() > policy.objects || bytes.is_none_or(|bytes| bytes > policy.logical_bytes)
+        {
+            return Err(error(
+                ErrorKind::Budget,
+                "retained-owner-policy-known-input-bound",
+            ));
+        }
+        Ok(())
+    }
+    pub(crate) fn verify_owner_policy(
+        &self,
+        receipt: &Receipt,
+        ack: &Acknowledgement,
+        request: &Object,
+        policy: &crate::retention::capacity::Policy,
+    ) -> Result<()> {
+        let (mut index, mut nodes) = self.stores(Some(receipt))?;
+        self.read_owner_policy(
+            receipt,
+            &ack.candidate,
+            &ack.target,
+            &ack.work,
+            request,
+            policy,
+            &mut index,
+            &mut nodes,
+        )?;
+        Ok(())
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn read_owner_policy(
+        &self,
+        receipt: &Receipt,
+        candidate: &Candidate,
+        target: &Target,
+        reference: &WorkRef,
+        request: &Object,
+        policy: &crate::retention::capacity::Policy,
+        index: &mut Index,
+        nodes: &mut MetadataStore,
+    ) -> Result<crate::retention::capacity::Plan> {
+        let record = self.retained_record(receipt, candidate, target, reference, nodes, index)?;
+        let present = entries(&record.update.selection, nodes)?;
+        let object = present
+            .get(&owner_policy_path(&record.update.operation)?)
+            .ok_or_else(|| {
+                error(
+                    ErrorKind::Missing,
+                    "retained-owner-original-policy-evidence",
+                )
+            })?;
+        if object.bytes > crate::retention::capacity::MAX_PLAN_BYTES {
+            return Err(error(
+                ErrorKind::Budget,
+                "retained-owner-policy-evidence-bytes",
+            ));
+        }
+        let raw = nodes
+            .get(object)
+            .map_err(|_| error(ErrorKind::Integrity, "retained-owner-policy-evidence-read"))?
+            .ok_or_else(|| error(ErrorKind::Missing, "retained-owner-policy-evidence-missing"))?;
+        let plan: crate::retention::capacity::Plan = reel_workflow::decode(&raw)?;
+        plan.check_owner_request(request, policy)?;
+        if plan.canonical_bytes()? != raw {
+            return Err(error(
+                ErrorKind::Integrity,
+                "retained-owner-policy-evidence-canonical",
+            ));
+        }
+        let objects: BTreeSet<_> = present.into_values().collect();
+        let bytes = objects
+            .iter()
+            .try_fold(0u64, |sum, object| sum.checked_add(object.bytes));
+        if objects.len() > policy.objects || bytes.is_none_or(|bytes| bytes > policy.logical_bytes)
+        {
+            return Err(error(
+                ErrorKind::Budget,
+                "retained-owner-original-work-bound",
+            ));
+        }
+        Ok(plan)
+    }
+    pub(crate) fn owner_policy_guard(
+        self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+        request: &Object,
+        policy: &crate::retention::capacity::Policy,
+    ) -> Result<ClaimsGuard> {
+        self.check_receipt(receipt)?;
+        let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
+        self.retained_scope(&index, target)?;
+        let fences = self.actor_fences(&index, Some(&target.actor))?;
+        let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
+        let (operation, _) = plan(&self.profile, receipt, &candidate, target)?;
+        if let Some(reference) =
+            work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?
+        {
+            // Verify the immutable owner policy BEFORE resuming native effects.
+            self.read_owner_policy(
+                receipt, &candidate, target, &reference, request, policy, &mut index, &mut nodes,
+            )?;
+            if !work::complete(&mut index, &reference).map_err(|e| native_error(e.into()))?
+                && Index::observe(&self.profile.index_root, &index.checkpoint(), &nodes)
+                    .map_err(|e| native_error(e.into()))?
+                    .pending
+            {
+                work::resume_admitted(&mut index, &reference, &mut nodes)
+                    .map_err(|e| native_error(e.into()))?;
+            }
+        }
+        drop(nodes);
+        drop(index);
+        drop(fences);
+        self.reopen_checked(receipt, Some(&target.actor))
+    }
     pub(crate) fn retained_capacity(
         &self,
         receipt: &Receipt,
@@ -521,6 +678,40 @@ impl Prepared {
 }
 
 impl ClaimsGuard {
+    pub(crate) fn stage_owner_policy(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+        request: Object,
+        policy: &crate::retention::capacity::Policy,
+    ) -> Result<Acknowledgement> {
+        let p = &self._prepared;
+        let (mut index, mut nodes) = p.stores(Some(receipt))?;
+        let candidate = p.response_candidate(receipt, result, &mut index, &mut nodes)?;
+        let (operation, _) = plan(&p.profile, receipt, &candidate, target)?;
+        let original = work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?;
+        let recovered = original
+            .as_ref()
+            .map(|reference| {
+                p.read_owner_policy(
+                    receipt, &candidate, target, reference, &request, policy, &mut index,
+                    &mut nodes,
+                )
+            })
+            .transpose()?;
+        drop(nodes);
+        drop(index);
+        let owner_plan = match recovered {
+            Some(original) => original,
+            None => crate::retention::capacity::Plan::build_owner(
+                request,
+                p.retained_capacity_observation_fenced(receipt, result, target)?,
+                policy.clone(),
+            )?,
+        };
+        self.retain_response_with_capacity(receipt, &candidate, target, false, Some(&owner_plan))
+    }
     pub(crate) fn stage_capacity_recovery(
         &self,
         receipt: &Receipt,
@@ -592,9 +783,11 @@ impl ClaimsGuard {
             if let Some(recovery) = recovery {
                 let raw = recovery.canonical_bytes()?;
                 let evidence = Object::from_bytes(&raw);
-                if !entries(&record.update.selection, &mut nodes)?
-                    .values()
-                    .any(|o| o == &evidence)
+                let selection = entries(&record.update.selection, &mut nodes)?;
+                if !selection.values().any(|o| o == &evidence)
+                    || (recovery.is_owner_admission()
+                        && selection.get(&owner_policy_path(&record.update.operation)?)
+                            != Some(&evidence))
                     || nodes
                         .get(&evidence)
                         .map_err(|_| {
@@ -657,6 +850,23 @@ impl ClaimsGuard {
                 } else {
                     changes.insert(path.clone(), Some(object.clone()));
                     next.insert(path, object);
+                }
+            }
+            if let Some(recovery) = recovery.filter(|plan| plan.is_owner_admission()) {
+                let path = owner_policy_path(&operation)?;
+                let object = Object::from_bytes(&recovery.canonical_bytes()?);
+                match next.get(&path) {
+                    Some(old) if old != &object => {
+                        return Err(error(
+                            ErrorKind::Conflict,
+                            "retained-owner-policy-path-conflict",
+                        ));
+                    }
+                    Some(_) => (),
+                    None => {
+                        changes.insert(path.clone(), Some(object.clone()));
+                        next.insert(path, object);
+                    }
                 }
             }
             if changes.len() > protection::MAX_CHANGES {

@@ -392,6 +392,7 @@ fn retained_comic_drives_owned_review_controls_and_a_protected_structured_review
         admission: review_profile,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt,
             target: retained_target(),
         },

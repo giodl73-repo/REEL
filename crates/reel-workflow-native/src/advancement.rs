@@ -14,6 +14,8 @@ pub struct Config {
     pub schema: String,
     pub runtime: Tool,
     pub target: retention::Target,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_owner_policy: Option<retention::capacity::Policy>,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -67,14 +69,19 @@ pub(crate) fn persist(path: &Path, bytes: &[u8]) -> Result<()> {
 
 pub fn advance(base: &Plan, frozen: &Frozen, config: &Config, directory: &Path) -> Result<Summary> {
     frozen.check(base)?;
-    if config.schema != "reel.workflow-advance-config.v1"
-        || config.target.schema != "reel.workflow-retained-target.v1"
+    if !matches!(
+        (config.schema.as_str(), &config.retained_owner_policy),
+        ("reel.workflow-advance-config.v1", None) | ("reel.workflow-advance-config.v2", Some(_))
+    ) || config.target.schema != "reel.workflow-retained-target.v1"
         || frozen
             .bindings
             .tasks
             .contains_key(&frozen.expansion.packet.task.id)
     {
         return Err(error(ErrorKind::Invalid, "advance-config"));
+    }
+    if let Some(policy) = &config.retained_owner_policy {
+        policy.validate()?;
     }
     let _runtime = handoff::runtime(&config.runtime)?;
     // Hold the approved parent while creating/opening the capsule; reject native
@@ -124,6 +131,9 @@ pub fn advance(base: &Plan, frozen: &Frozen, config: &Config, directory: &Path) 
         &frozen.attempt_id,
     )?;
     prepared.check_retained_target(&config.target)?;
+    if let Some(policy) = &config.retained_owner_policy {
+        prepared.check_retained_owner_policy(&config.target, policy)?;
+    }
     let receipt_path = directory.join("admission.json");
     let receipt = if receipt_path.exists() {
         let (bytes, _held) =
@@ -179,7 +189,13 @@ pub fn advance(base: &Plan, frozen: &Frozen, config: &Config, directory: &Path) 
         source: reel_workflow::decode(&raw(&frozen.source)?)?,
         admission: frozen.admission.clone(),
         binding: handoff::Binding {
-            schema: "reel.workflow-native-handoff-binding.v1".into(),
+            schema: if config.retained_owner_policy.is_some() {
+                "reel.workflow-native-handoff-binding.v2"
+            } else {
+                "reel.workflow-native-handoff-binding.v1"
+            }
+            .into(),
+            retained_owner_policy: config.retained_owner_policy.clone(),
             admission: receipt,
             target: config.target.clone(),
         },

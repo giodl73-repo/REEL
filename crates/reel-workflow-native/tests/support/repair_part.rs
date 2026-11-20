@@ -425,6 +425,7 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt.clone(),
             target: report_profile.binding.target.clone(),
         },

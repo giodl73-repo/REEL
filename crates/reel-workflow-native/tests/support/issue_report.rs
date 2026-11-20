@@ -369,6 +369,7 @@ fn retained_whole_issue_controls_and_reading_images_drive_protected_reports() {
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt.clone(),
             target: producer_profile.binding.target.clone(),
         },

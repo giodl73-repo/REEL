@@ -325,6 +325,7 @@ fn retained_issue_and_original_ancestors_drive_owned_review_controls() {
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt,
             target: producer_profile.binding.target.clone(),
         },

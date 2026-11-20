@@ -261,6 +261,7 @@ fn existing_large_return_publishes_and_retains_under_one_managed_operation() {
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt,
             target: old_profile.binding.target,
         },

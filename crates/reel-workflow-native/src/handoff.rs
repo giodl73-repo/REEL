@@ -23,11 +23,20 @@ pub struct Binding {
     pub schema: String,
     pub admission: Receipt,
     pub target: retention::Target,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retained_owner_policy: Option<retention::capacity::Policy>,
 }
 impl Binding {
     pub fn artifact(&self) -> Result<Artifact> {
-        if self.schema != "reel.workflow-native-handoff-binding.v1" {
+        if !matches!(
+            (self.schema.as_str(), &self.retained_owner_policy),
+            ("reel.workflow-native-handoff-binding.v1", None)
+                | ("reel.workflow-native-handoff-binding.v2", Some(_))
+        ) {
             return Err(error(ErrorKind::Invalid, "handoff-binding-schema"));
+        }
+        if let Some(policy) = &self.retained_owner_policy {
+            policy.validate()?;
         }
         let raw = admission::encode(self)?;
         Ok(Artifact {
@@ -92,6 +101,35 @@ fn ack_read(profile: &Profile) -> Result<(retention::Acknowledgement, File)> {
     Ok((ack, held))
 }
 
+fn retained_proof(
+    packet: &Packet,
+    profile: &Profile,
+    result: &ReturnedResult,
+    ack: &retention::Acknowledgement,
+) -> Result<retention::RetainedGuard> {
+    let proof = retention::verify(
+        packet,
+        &profile.source,
+        &profile.admission,
+        &profile.binding.admission,
+        result,
+        ack,
+    )?;
+    if let Some(policy) = &profile.binding.retained_owner_policy {
+        retention::capacity::verify_owner_policy(
+            &proof,
+            packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission,
+            result,
+            ack,
+            policy,
+        )?;
+    }
+    Ok(proof)
+}
+
 struct Adapter<'a> {
     profile: &'a Profile,
     result: Option<ReturnedResult>,
@@ -137,6 +175,18 @@ impl Guard<'_, '_> {
             response::ingest(&ticket.packet, &p.source, &p.admission, r, result, returns)
                 .map_err(|e| phase(e, "handoff-ingest"))?;
         }
+        if let Some(policy) = &p.binding.retained_owner_policy {
+            retention::capacity::stage_for_owner_policy(
+                &ticket.packet,
+                &p.source,
+                &p.admission,
+                r,
+                result,
+                &p.binding.target,
+                policy,
+            )
+            .map_err(|e| phase(e, "handoff-owner-policy"))?;
+        }
         let fresh = retention::retain(
             &ticket.packet,
             &p.source,
@@ -167,14 +217,7 @@ impl Guard<'_, '_> {
                 "handoff-original-acknowledgement",
             ));
         }
-        self._retained = Some(retention::verify(
-            &ticket.packet,
-            &p.source,
-            &p.admission,
-            r,
-            result,
-            &ack,
-        )?);
+        self._retained = Some(retained_proof(&ticket.packet, p, result, &ack)?);
         self._ack = Some(held);
         ack.artifact()
     }
@@ -199,14 +242,7 @@ impl ProtectedJob for Guard<'_, '_> {
             return Err(error(ErrorKind::Conflict, "handoff-pinned-acknowledgement"));
         }
         self.clear();
-        self._retained = Some(retention::verify(
-            &ticket.packet,
-            &p.source,
-            &p.admission,
-            &p.binding.admission,
-            result,
-            &ack,
-        )?);
+        self._retained = Some(retained_proof(&ticket.packet, p, result, &ack)?);
         self._ack = Some(held);
         Ok(())
     }
@@ -246,27 +282,13 @@ impl<'p> Lifecycle for Adapter<'p> {
                 if ack.artifact()? != *expected || ack.target != p.binding.target {
                     return Err(error(ErrorKind::Conflict, "handoff-pinned-acknowledgement"));
                 }
-                retained = Some(retention::verify(
-                    &ticket.packet,
-                    &p.source,
-                    &p.admission,
-                    &p.binding.admission,
-                    result,
-                    &ack,
-                )?);
+                retained = Some(retained_proof(&ticket.packet, p, result, &ack)?);
                 held_ack = Some(held);
             } else if let Some(ack) = prepared
                 .completed_retention(&p.binding.admission, result, &p.binding.target)
                 .map_err(|e| phase(e, "handoff-reopen-retained"))?
             {
-                retained = Some(retention::verify(
-                    &ticket.packet,
-                    &p.source,
-                    &p.admission,
-                    &p.binding.admission,
-                    result,
-                    &ack,
-                )?);
+                retained = Some(retained_proof(&ticket.packet, p, result, &ack)?);
             } else {
                 recovery = Some(
                     prepared
@@ -275,6 +297,9 @@ impl<'p> Lifecycle for Adapter<'p> {
                 );
             }
         } else {
+            if let Some(policy) = &p.binding.retained_owner_policy {
+                prepared.check_retained_owner_policy(&p.binding.target, policy)?;
+            }
             claims = Some(prepared.reopen(&p.binding.admission)?);
         }
         Ok(Guard {
@@ -475,14 +500,7 @@ pub(crate) fn verify_observation(
                 .result
                 .as_ref()
                 .ok_or_else(|| error(ErrorKind::Missing, "handoff-observed-result"))?;
-            let _proof = retention::verify(
-                &expected.ticket.packet,
-                &profile.source,
-                &profile.admission,
-                &profile.binding.admission,
-                result,
-                &ack,
-            )?;
+            let _proof = retained_proof(&expected.ticket.packet, profile, result, &ack)?;
         }
         _ => {
             return Err(error(

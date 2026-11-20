@@ -148,6 +148,7 @@ fn retained_resolution_slot_reuses_for_automatic_worker_and_preserves_history() 
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt.clone(),
             target: old_profile.binding.target.clone(),
         },

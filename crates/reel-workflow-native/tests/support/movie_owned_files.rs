@@ -133,6 +133,7 @@ fn file_backed_movie_adopts_completed_render_and_retains_without_rerender() {
         admission,
         binding: handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: receipt.clone(),
             target: old_profile.binding.target.clone(),
         },

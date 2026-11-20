@@ -652,6 +652,7 @@ fn complete_issue(derived_control: bool, intent_bound: bool) {
             admission: profile.clone(),
             binding: reel_workflow_native::handoff::Binding {
                 schema: "reel.workflow-native-handoff-binding.v1".into(),
+                retained_owner_policy: None,
                 admission: admitted.clone(),
                 target: retained_target(),
             },
@@ -832,6 +833,7 @@ fn complete_issue(derived_control: bool, intent_bound: bool) {
             admission: profile.clone(),
             binding: reel_workflow_native::handoff::Binding {
                 schema: "reel.workflow-native-handoff-binding.v1".into(),
+                retained_owner_policy: None,
                 admission: admitted.clone(),
                 target: retained_target(),
             },
@@ -1125,6 +1127,7 @@ fn complete_issue(derived_control: bool, intent_bound: bool) {
         admission: case.profile.clone(),
         binding: reel_workflow_native::handoff::Binding {
             schema: "reel.workflow-native-handoff-binding.v1".into(),
+            retained_owner_policy: None,
             admission: admitted.clone(),
             target: retained_target(),
         },

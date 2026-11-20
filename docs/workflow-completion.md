@@ -643,6 +643,19 @@ strict default/film Clippy. Native-execution crash injection remains open.
 Automatic owner-policy admission for future jobs, complete corrected-issue
 assembly/contextual review and broader project qualification remain open.
 
+[Automatic owner-policy admission](handoff/2026-11-20-automatic-owner-policy.md)
+now has a versioned new-job binding and recipe adoption config. The exact finite
+policy enters the original ticket/immutable intent. Waiting/adoption checks known
+history and inputs before provider work; retention stages its own policy evidence
+and named original-work link and checks the full union. Historical handoff proof
+also verifies that policy after source-slot return. Legacy bindings omit the new
+field and keep their bytes. Standard tests cover binding/config immutability,
+lower-bound refusal and independent object/byte/path reservations. Normal native
+completion and interrupted-retention Prepare reconciliation are pending their
+frozen effectful fixtures. This does not change the 512-object job projection
+limit or qualify actual S5/BBJ scale, complete corrected-issue review or owned
+production-profile adoption/rollback.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
