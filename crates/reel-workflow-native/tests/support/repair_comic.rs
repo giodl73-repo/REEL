@@ -441,6 +441,7 @@ fn retained_finding_drives_corrected_comic_render_retention_and_contextual_revie
         edits,
     };
     let revision = repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v1".into(),
         source_commit: fixture.profile.commit.clone(),
         native_inputs: BTreeMap::from([(

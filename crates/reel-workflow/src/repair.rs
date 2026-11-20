@@ -7,9 +7,14 @@ use crate::*;
 pub struct Revision {
     pub schema: String,
     pub source_commit: String,
-    /// V1 rebinds every native task. V2 rebinds exactly affected/rebuilt native
-    /// tasks and preserves unaffected exact snapshots. Pointers are not custody.
+    /// V1 rebinds every native task. V2/V3 rebind exactly affected/rebuilt native
+    /// tasks and preserve unaffected exact snapshots. Pointers are not custody.
     pub native_inputs: BTreeMap<String, review::Edit>,
+    /// V3 names every affected task's exact commit, allowing later-authored
+    /// consumers without retargeting a root that has already completed. V1/V2
+    /// omit this map and retain their original serialized bytes.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub task_snapshots: BTreeMap<String, String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -39,7 +44,8 @@ pub fn materialize(
 ) -> Result<Candidate> {
     let impact = review::repair_impact(baseline, report, repair)?;
     let revision_sha256 = canonical_digest(revision)?;
-    let scoped = revision.schema == "reel.workflow-repair-revision.v2";
+    let explicit = revision.schema == "reel.workflow-repair-revision.v3";
+    let scoped = explicit || revision.schema == "reel.workflow-repair-revision.v2";
     if repair.roots.is_some() && !scoped {
         return fail(ErrorKind::Unsupported, "repair-rooted-revision-required");
     }
@@ -50,6 +56,23 @@ pub fn materialize(
         || revision.source_commit == baseline.source_commit
     {
         return fail(ErrorKind::Invalid, "repair-revision-commit");
+    }
+    if !explicit && !revision.task_snapshots.is_empty() {
+        return fail(ErrorKind::Invalid, "repair-revision-snapshot-mode");
+    }
+    if explicit {
+        if revision.task_snapshots.keys().collect::<BTreeSet<_>>()
+            != impact.rebuild.iter().collect::<BTreeSet<_>>()
+        {
+            return fail(ErrorKind::Conflict, "repair-revision-snapshot-task-set");
+        }
+        if revision
+            .task_snapshots
+            .values()
+            .any(|commit| !hex(commit, &[40, 64]) || commit.bytes().all(|b| b == b'0'))
+        {
+            return fail(ErrorKind::Invalid, "repair-revision-task-snapshot");
+        }
     }
     let required: BTreeSet<_> = baseline
         .tasks
@@ -71,7 +94,11 @@ pub fn materialize(
                 Ok((
                     t.id.clone(),
                     if impact.rebuild.contains(&t.id) {
-                        revision.source_commit.clone()
+                        if explicit {
+                            revision.task_snapshots[&t.id].clone()
+                        } else {
+                            revision.source_commit.clone()
+                        }
                     } else {
                         baseline.source_commit_for(&t.id)?.to_owned()
                     },

@@ -293,6 +293,7 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
     let impact = review::repair_impact(&baseline, &checked, &repair).unwrap();
     assert_eq!(impact.unaffected, ["closing"]);
     let mut revision = repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: fixture.profile.commit.clone(),
         native_inputs: BTreeMap::new(),
@@ -612,5 +613,101 @@ fn rooted_candidate_executes_one_corrected_part_without_rebuilding_the_other_par
     phase(
         &root,
         "retained-corrected-part-awaiting-fresh-derived-controls-and-complete-issue",
+    );
+}
+
+#[test]
+#[ignore = "Read-only follow-up to the retained corrected-part operation; export revision v3 under the exact original root packet, no new native admission/runtime/selection or effects"]
+fn retained_part_packet_survives_native_v3_revision_export() {
+    let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let original = env("REEL_NATIVE_PART_REPAIR_COMPLETED_ROOT");
+    let evidence = env("REEL_NATIVE_REPAIR_V3_EXPORT_EVIDENCE");
+    let executable = env("REEL_NATIVE_HANDOFF_TOOL");
+    let marker: serde_json::Value = load(&original, "original-operation.json");
+    let report = PathBuf::from(marker["report"].as_str().unwrap());
+    let packet: Packet = load(&original, "packet.json");
+    let plan: Plan = load(&original, "plan.json");
+    let profile: handoff::Profile = load(&original, "profile.json");
+    let result: ReturnedResult = load(&original, "result.json");
+    let ack: retention::Acknowledgement = load(&original, "retained.json");
+    assert_eq!(
+        reel_workflow::handoff::Journal::open(&original.join("journal"))
+            .unwrap()
+            .state(),
+        reel_workflow::handoff::State::Retained
+    );
+    drop(
+        retention::verify(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission,
+            &result,
+            &ack,
+        )
+        .unwrap(),
+    );
+    let checkpoint = || {
+        let index = tig_store::source_claims::protection::Index::open(
+            &profile.admission.index_root,
+            &profile.binding.admission.index_checkpoint,
+        )
+        .unwrap();
+        canonical_digest(&index.checkpoint()).unwrap()
+    };
+    let before = checkpoint();
+    let candidate: serde_json::Value = load(&original, "candidate.json");
+    let mut revision: repair::Revision = load(&original, "revision.json");
+    assert_eq!(revision.schema, "reel.workflow-repair-revision.v2");
+    revision.schema = "reel.workflow-repair-revision.v3".into();
+    revision.task_snapshots = candidate["impact"]["rebuild"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| {
+            let id = id.as_str().unwrap().to_owned();
+            let commit = plan.source_commit_for(&id).unwrap().to_owned();
+            (id, commit)
+        })
+        .collect();
+    save(&evidence, "revision-v3.json", &revision);
+    let destination = evidence.join("plan-v3.json");
+    let mut child = Command::new(&executable);
+    child.arg("export-repair-plan");
+    for name in [
+        "packet.json",
+        "source.json",
+        "admission.json",
+        "receipt.json",
+        "result.json",
+        "retained.json",
+    ] {
+        child.arg(report.join(name));
+    }
+    let output = child
+        .arg(original.join("baseline.json"))
+        .arg(original.join("repair.json"))
+        .arg(evidence.join("revision-v3.json"))
+        .arg(&destination)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    success(&evidence, "export-result.json", &output);
+    let exported: Plan = load(&evidence, "plan-v3.json");
+    assert_eq!(exported, plan);
+    assert_eq!(
+        make_packet(&exported, "opening", BTreeMap::new()).unwrap(),
+        packet
+    );
+    assert_eq!(result.task_key, packet.task_key);
+    assert_eq!(before, checkpoint());
+    let pins: BTreeMap<PathBuf, String> = load(&original, "original-pins.json");
+    for (path, pin) in &pins {
+        assert_eq!(&digest(&fs::read(path).unwrap()), pin);
+    }
+    save(
+        &evidence,
+        "qualification-result.json",
+        &json!({"schema":"reel.native-repair-v3-export-qualification.v1","original_job":original,"retained_part_task_key":packet.task_key,"retained_part_proof_reopened":true,"native_v3_export":true,"plan_byte_semantics_unchanged":true,"original_root_packet_and_result_key_unchanged":true,"actual_index_unchanged":true,"checkpoint_sha256":before,"new_native_admission":false,"runtime_adopted":false,"later_consumer_commit_executed":false,"whole_corrected_issue_retained":false,"selected":false,"approved":false}),
     );
 }

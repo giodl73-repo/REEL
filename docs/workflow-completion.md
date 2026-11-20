@@ -582,6 +582,13 @@ slot handoff and protected retained execution of only the corrected opening.
 It still requires frozen-source qualification. Complete corrected-issue controls,
 assembly, contextual review and the remaining project requirements stay open.
 
+[Repair-revision v3](handoff/2026-11-20-repair-task-snapshots.md) now names exact
+snapshots for every rebuilt task, allowing later consumer commits without changing
+an already frozen repair-root packet. Two additional workflow tests pass (139
+total), with legacy revision JSON preserved. This is planning qualification; native
+v3 export, actual corrected whole-issue execution and explicit reviewed-producer
+binding for repeated mixed-snapshot repair loops remain open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

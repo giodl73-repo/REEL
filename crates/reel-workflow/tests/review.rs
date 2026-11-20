@@ -502,6 +502,7 @@ impl ResolutionCase {
         let plan = plan();
         let repair = repair(&before, pin("input/art", b"shared art"));
         let revision = reel_workflow::repair::Revision {
+            task_snapshots: BTreeMap::new(),
             schema: "reel.workflow-repair-revision.v1".into(),
             source_commit: "b".repeat(40),
             native_inputs: BTreeMap::new(),
@@ -1228,6 +1229,7 @@ fn repair_revision_materializes_exact_inputs_and_preserves_other_languages() {
         let baseline = plan();
         let repair = repair(&checked, pin("input/es-text", b"Spanish text"));
         let revision = reel_workflow::repair::Revision {
+            task_snapshots: BTreeMap::new(),
             schema: "reel.workflow-repair-revision.v1".into(),
             source_commit: "b".repeat(40),
             native_inputs: BTreeMap::new(),
@@ -1269,6 +1271,7 @@ fn scoped_repair_preserves_unaffected_native_packets_and_requires_only_rebuilt_b
     let repair = repair(&checked, pin("input/es-text", b"Spanish text"));
     let impact = repair_impact(&baseline, &checked, &repair).unwrap();
     let mut revision = reel_workflow::repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: "b".repeat(40),
         native_inputs: baseline
@@ -1406,6 +1409,7 @@ fn repair_revision_requires_every_native_declaration_and_updates_tool_references
     });
     let repair = repair(&checked, publication);
     let mut revision = reel_workflow::repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v1".into(),
         source_commit: "b".repeat(40),
         native_inputs: BTreeMap::new(),

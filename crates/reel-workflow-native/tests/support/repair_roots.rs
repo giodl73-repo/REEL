@@ -383,6 +383,7 @@ fn retained_whole_issue_report_scopes_a_part_repair_and_preserves_the_other_part
     );
     let source_commit = git(source.temp.path(), &["rev-parse", "HEAD"]);
     let mut revision = repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit,
         native_inputs: BTreeMap::new(),

@@ -14,12 +14,17 @@ This is an authored version choice, not automatic inference that a shared edit
 has no effect elsewhere. Include every branch intended to receive shared art or
 language changes. Omitted branches remain historical editions/parts.
 
-Rooted repairs require existing repair-revision v2, which produces plan v3 with
+Rooted repairs require a scoped repair revision (v2 or v3), producing plan v3 with
 complete per-task snapshots. Exactly the rebuilt native tasks require replacement
 declarations. Other task definitions, snapshots and packets remain unchanged.
 No result is carried into a changed packet. Embedded control JSON and future
 parent outputs are never guessed or rewritten: authors must supply changed
 controls and freeze actual parent results before native execution.
+
+[Repair-revision v3](2026-11-20-repair-task-snapshots.md) extends that contract
+with explicit affected-task snapshots for later consumer commits. V2 keeps its
+original one-commit behavior. A completed root can keep its exact packet while
+new consumers bind a later authored source revision.
 
 Legacy repair v1 omits `roots` and retains its serialized bytes and global impact
 behavior. A v1 envelope with roots or a v2 envelope without roots refuses. Rooted

@@ -126,6 +126,7 @@ fn explicit_part_repair_preserves_other_part_and_language_at_old_snapshots() {
     assert_eq!(impact.contextual_languages, vec!["es"]);
     assert_eq!(impact.contextual_review, report.copy().clone());
     let revision = repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: "b".repeat(40),
         native_inputs: plan
@@ -222,6 +223,7 @@ fn rooted_repairs_refuse_ambiguous_versions_invalid_roots_and_outside_edits() {
         "review-repair-edit-outside-scope"
     );
     let revision = repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v1".into(),
         source_commit: "b".repeat(40),
         native_inputs: BTreeMap::new(),
@@ -248,6 +250,7 @@ fn rooted_resolution_still_requires_whole_corrected_issue_and_explicit_evaluatio
     let (plan, before, repair) = fixture();
     let impact = repair_impact(&plan, &before, &repair).unwrap();
     let revision = repair::Revision {
+        task_snapshots: BTreeMap::new(),
         schema: "reel.workflow-repair-revision.v2".into(),
         source_commit: "b".repeat(40),
         native_inputs: plan
@@ -331,4 +334,197 @@ fn rooted_resolution_still_requires_whole_corrected_issue_and_explicit_evaluatio
             .code,
         "resolution-full-context-required"
     );
+}
+
+#[test]
+fn later_consumer_source_commits_preserve_an_already_frozen_repair_root_packet() {
+    let (baseline, report, repair) = fixture();
+    let impact = repair_impact(&baseline, &report, &repair).unwrap();
+    let mut revision = repair::Revision {
+        schema: "reel.workflow-repair-revision.v2".into(),
+        source_commit: "b".repeat(40),
+        task_snapshots: BTreeMap::new(),
+        native_inputs: baseline
+            .tasks
+            .iter()
+            .filter(|t| impact.rebuild.contains(&t.id))
+            .map(|task| {
+                (
+                    task.id.clone(),
+                    Edit {
+                        before: task.native_inputs.clone().unwrap(),
+                        after: pin(
+                            &format!("native/{}", task.id),
+                            b"first exact native declaration",
+                        ),
+                    },
+                )
+            })
+            .collect(),
+    };
+    let first = repair::materialize(&baseline, &report, &repair, &revision).unwrap();
+    let frozen = make_packet(&first.plan, "opening", BTreeMap::new()).unwrap();
+    revision.schema = "reel.workflow-repair-revision.v3".into();
+    revision.source_commit = "c".repeat(40);
+    revision.task_snapshots = impact
+        .rebuild
+        .iter()
+        .map(|id| {
+            (
+                id.clone(),
+                if id == "opening" {
+                    "b".repeat(40)
+                } else {
+                    revision.source_commit.clone()
+                },
+            )
+        })
+        .collect();
+    for (id, edit) in &mut revision.native_inputs {
+        if id != "opening" {
+            edit.after = pin(
+                &edit.before.logical_id,
+                b"later consumer native declaration",
+            );
+        }
+    }
+    let later = repair::materialize(&baseline, &report, &repair, &revision).unwrap();
+    assert_eq!(later.plan.source_commit, revision.source_commit);
+    assert_eq!(
+        make_packet(&later.plan, "opening", BTreeMap::new()).unwrap(),
+        frozen
+    );
+    for id in ["closing", "english"] {
+        assert_eq!(
+            make_packet(&later.plan, id, BTreeMap::new()).unwrap(),
+            make_packet(&baseline, id, BTreeMap::new()).unwrap()
+        );
+    }
+    for id in ["controls", "issue", "review"] {
+        assert_eq!(
+            later.plan.source_commit_for(id).unwrap(),
+            revision.source_commit
+        );
+        assert_eq!(
+            later
+                .plan
+                .tasks
+                .iter()
+                .find(|t| t.id == id)
+                .unwrap()
+                .native_inputs
+                .as_ref()
+                .unwrap(),
+            &revision.native_inputs[id].after
+        );
+    }
+    assert_eq!(later.impact.rebuild, first.impact.rebuild);
+    assert_eq!(
+        later.impact.contextual_review,
+        first.impact.contextual_review
+    );
+    assert_ne!(later.plan_sha256, first.plan_sha256);
+    // V2's one-commit rule would retarget the exact root even if its input
+    // descriptors had not otherwise changed. V3 requires the explicit choice.
+    revision.schema = "reel.workflow-repair-revision.v2".into();
+    revision.task_snapshots.clear();
+    let retargeted = repair::materialize(&baseline, &report, &repair, &revision).unwrap();
+    assert_ne!(
+        make_packet(&retargeted.plan, "opening", BTreeMap::new())
+            .unwrap()
+            .task_key,
+        frozen.task_key
+    );
+}
+
+#[test]
+fn explicit_repair_snapshots_refuse_missing_extra_invalid_and_legacy_maps() {
+    let (baseline, report, repair) = fixture();
+    let impact = repair_impact(&baseline, &report, &repair).unwrap();
+    let valid = repair::Revision {
+        schema: "reel.workflow-repair-revision.v3".into(),
+        source_commit: "c".repeat(40),
+        task_snapshots: impact
+            .rebuild
+            .iter()
+            .map(|id| (id.clone(), "b".repeat(40)))
+            .collect(),
+        native_inputs: baseline
+            .tasks
+            .iter()
+            .filter(|t| impact.rebuild.contains(&t.id))
+            .map(|task| {
+                (
+                    task.id.clone(),
+                    Edit {
+                        before: task.native_inputs.clone().unwrap(),
+                        after: pin(&format!("native/{}", task.id), b"new declaration"),
+                    },
+                )
+            })
+            .collect(),
+    };
+    repair::materialize(&baseline, &report, &repair, &valid).unwrap();
+    for id in ["opening", "review"] {
+        let mut bad = valid.clone();
+        bad.task_snapshots.remove(id);
+        assert_eq!(
+            repair::materialize(&baseline, &report, &repair, &bad)
+                .unwrap_err()
+                .code,
+            "repair-revision-snapshot-task-set"
+        );
+    }
+    let mut bad = valid.clone();
+    bad.task_snapshots.clear();
+    assert_eq!(
+        repair::materialize(&baseline, &report, &repair, &bad)
+            .unwrap_err()
+            .code,
+        "repair-revision-snapshot-task-set"
+    );
+    for id in ["closing", "unknown"] {
+        let mut bad = valid.clone();
+        bad.task_snapshots.insert(id.into(), "b".repeat(40));
+        assert_eq!(
+            repair::materialize(&baseline, &report, &repair, &bad)
+                .unwrap_err()
+                .code,
+            "repair-revision-snapshot-task-set"
+        );
+    }
+    for commit in ["".into(), "0".repeat(40), "B".repeat(40), "b".repeat(39)] {
+        let mut bad = valid.clone();
+        bad.task_snapshots.insert("opening".into(), commit);
+        assert_eq!(
+            repair::materialize(&baseline, &report, &repair, &bad)
+                .unwrap_err()
+                .code,
+            "repair-revision-task-snapshot"
+        );
+    }
+    let mut global = repair.clone();
+    global.schema = "reel.workflow-repair.v1".into();
+    global.roots = None;
+    for schema in [
+        "reel.workflow-repair-revision.v1",
+        "reel.workflow-repair-revision.v2",
+    ] {
+        let mut bad = valid.clone();
+        bad.schema = schema.into();
+        assert_eq!(
+            repair::materialize(&baseline, &report, &global, &bad)
+                .unwrap_err()
+                .code,
+            "repair-revision-snapshot-mode"
+        );
+        bad.task_snapshots.clear();
+        let raw = serde_json::to_vec(&bad).unwrap();
+        let value: serde_json::Value = decode(&raw).unwrap();
+        assert!(value.get("task_snapshots").is_none());
+        assert_eq!(
+            serde_json::to_vec(&decode::<repair::Revision>(&raw).unwrap()).unwrap(),
+            raw
+        );
+    }
 }
