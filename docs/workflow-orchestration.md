@@ -30,7 +30,11 @@ retained completion and bare-history editable replay. The follow-on
 [control close/reuse](handoff/2026-11-19-native-intent-close.md) verifies original
 close recovery, same-slot attempt fencing and whole-issue history after control
 reuse. Final-issue actor close/reuse, larger/multilingual project qualification
-and full film production remain open.
+and full film production remain open. The [whole-issue review export](handoff/2026-11-19-whole-issue-review.md)
+now verifies complete retained issue replay and exports exact page/panel/balloon
+targets and ordered reading pins. Its two-page native qualification leaves the
+actual Index checkpoint unchanged; owned whole-issue review-task controls and
+the subsequent complete issue review/fix lifecycle remain open.
 
 ## Current implementation and boundary
 
