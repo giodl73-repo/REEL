@@ -72,6 +72,23 @@ pub fn generate(
     parents: &BTreeMap<String, upstream::Parent<'_>>,
     reader: &mut impl InputReader,
 ) -> Result<Generated> {
+    generate_with_issue(packet, bindings, parents, reader, |_, _, _| {
+        fail(
+            ErrorKind::Unsupported,
+            "review-control-issue-replay-required",
+        )
+    })
+}
+/// Whole-issue controls additionally require the caller's complete bounded
+/// producer replay. The callback supplies captured sources, not custody or
+/// creative authority; native callers must keep original parent guards live.
+pub fn generate_with_issue<R: InputReader>(
+    packet: &Packet,
+    bindings: &upstream::Bindings,
+    parents: &BTreeMap<String, upstream::Parent<'_>>,
+    reader: &mut R,
+    capture: impl FnOnce(&Packet, &ReturnedResult, &mut R) -> Result<BTreeMap<String, Vec<u8>>>,
+) -> Result<Generated> {
     check_packet(packet)?;
     let tool = packet.task.tool.as_ref().ok_or(Error {
         kind: ErrorKind::Missing,
@@ -96,8 +113,10 @@ pub fn generate(
         kind: ErrorKind::Missing,
         code: "review-control-producer-tool".into(),
     })?;
-    if producer.capability != ToolCapability::ComicRender
-        || tool.publication != producer.publication
+    if !matches!(
+        producer.capability,
+        ToolCapability::ComicRender | ToolCapability::ComicIssueAssembly
+    ) || tool.publication != producer.publication
         || tool.edition_id != producer.edition_id
         || packet.task.language != parent.packet.task.language
         || parent.result.worker_receipt.as_ref() != Some(&tool.request)
@@ -141,10 +160,16 @@ pub fn generate(
             })?;
         read(reader, pin, 64 * 1024 * 1024)?;
     }
-    let bound = publication::bind_comic(parent.packet, reader)?;
     let receipt = read(reader, &tool.request, MAX_CONTROL_BYTES as u64)?;
-    let mut exported =
-        publication::comic_review_copy(&bound, parent.packet, parent.result, &receipt)?;
+    let mut exported = if producer.capability == ToolCapability::ComicIssueAssembly {
+        let bound = crate::issue::bind(parent.packet, reader)?;
+        crate::issue::check_receipt(&bound, parent.result, &receipt)?;
+        let files = capture(parent.packet, parent.result, reader)?;
+        crate::issue::review_copy(&bound, parent.packet, parent.result, &receipt, &files)?
+    } else {
+        let bound = publication::bind_comic(parent.packet, reader)?;
+        publication::comic_review_copy(&bound, parent.packet, parent.result, &receipt)?
+    };
     let sources = exported.manifest.take().ok_or(Error {
         kind: ErrorKind::Integrity,
         code: "review-control-comic-manifest".into(),

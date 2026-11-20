@@ -9,6 +9,9 @@ use std::{
     io::Read,
 };
 use tig_git::annex::workflow::reader;
+#[cfg(test)]
+#[path = "issue_review_test.rs"]
+mod review_control_test;
 
 struct Inputs {
     native: NativeInputs,
@@ -96,11 +99,12 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
                 )
             })
             .collect();
-        let generated = reel_workflow::review_control::generate(
+        let generated = reel_workflow::review_control::generate_with_issue(
             packet,
             &origins.bindings,
             &parents,
             &mut inputs,
+            capture_review_issue,
         )?;
         return Ok(Generated {
             _inputs: inputs.native,
@@ -168,6 +172,50 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         files,
         resolution: None,
     })
+}
+/// Reconstruct the complete parent issue from its declared exact source bytes.
+/// The child's native admission already froze and verified this parent's full
+/// retained producer lineage; this callback adds deterministic byte replay.
+fn capture_review_issue(
+    parent: &Packet,
+    result: &ReturnedResult,
+    reader: &mut impl InputReader,
+) -> Result<BTreeMap<String, Vec<u8>>> {
+    let tool = parent
+        .task
+        .tool
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Missing, "review-issue-tool"))?;
+    let request = reader.read(&tool.request, reel_workflow::MAX_CONTROL_BYTES as u64)?;
+    let (replayed, files) = reel_publication::comic_issue::capture_with(&request, |path, max| {
+        let id = tool
+            .source_bindings
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("declared review issue source required"))?;
+        let asset = parent
+            .task
+            .inputs
+            .iter()
+            .find(|a| &a.logical_id == id)
+            .ok_or_else(|| anyhow::anyhow!("review issue source input required"))?;
+        let raw = reader.read(asset, max)?;
+        anyhow::ensure!(
+            raw.len() as u64 == asset.bytes && reel_workflow::digest(&raw) == asset.sha256,
+            "review issue source pin differs"
+        );
+        Ok(raw)
+    })
+    .map_err(|_| error(ErrorKind::Integrity, "review-issue-producer-replay"))?;
+    let receipt = result
+        .worker_receipt
+        .as_ref()
+        .ok_or_else(|| error(ErrorKind::Missing, "review-issue-worker-receipt"))?;
+    let expected: reel_publication::comic_issue_source::AssemblyReceipt =
+        reel_workflow::decode(&reader.read(receipt, reel_workflow::MAX_CONTROL_BYTES as u64)?)?;
+    if reel_workflow::canonical_digest(&replayed)? != reel_workflow::canonical_digest(&expected)? {
+        return Err(error(ErrorKind::Integrity, "review-issue-receipt-replay"));
+    }
+    Ok(files)
 }
 fn check_composition_origins(
     expected: &reel_workflow::issue::CompositionOrigins,

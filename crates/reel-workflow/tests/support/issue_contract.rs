@@ -924,3 +924,172 @@ fn whole_issue_review_uses_captured_page_panel_balloon_and_reading_pins() {
         "issue-review-original-task"
     );
 }
+
+#[test]
+fn whole_issue_derived_controls_require_original_parent_and_explicit_capture() {
+    let (mut workflow, mut memory, receipt) = fixture();
+    let parent = packet(&workflow);
+    let receipt_raw = serde_json::to_vec(&receipt).unwrap();
+    let receipt_pin = memory.put("issue/worker-receipt", "application/json", receipt_raw);
+    for (name, asset) in &receipt.outputs {
+        memory.bytes.insert(
+            asset.logical_id.clone(),
+            format!("synthetic output {name}").into_bytes(),
+        );
+    }
+    let result = ReturnedResult {
+        schema: RESULT_SCHEMA.into(),
+        task_id: parent.task.id.clone(),
+        task_key: parent.task_key.clone(),
+        attempt_id: "issue-review-control".into(),
+        artifacts: receipt.outputs.clone(),
+        provenance: Provenance {
+            mode: Mode::Tool,
+            provider: None,
+            model: None,
+            executable: Some(parent.task.tool.as_ref().unwrap().executable.clone()),
+        },
+        worker_receipt: Some(receipt_pin.clone()),
+    };
+    let bindings = upstream::Bindings {
+        schema: "reel.workflow-upstream-inputs.v1".into(),
+        streaming: None,
+        inputs: result
+            .artifacts
+            .iter()
+            .map(|(name, a)| {
+                (
+                    a.logical_id.clone(),
+                    upstream::Reference {
+                        task_id: parent.task.id.clone(),
+                        artifact: upstream::Selector::Output { name: name.clone() },
+                    },
+                )
+            })
+            .chain(std::iter::once((
+                receipt_pin.logical_id.clone(),
+                upstream::Reference {
+                    task_id: parent.task.id.clone(),
+                    artifact: upstream::Selector::WorkerReceipt,
+                },
+            )))
+            .collect(),
+    };
+    let files: BTreeMap<String, Vec<u8>> = parent
+        .task
+        .tool
+        .as_ref()
+        .unwrap()
+        .source_bindings
+        .iter()
+        .map(|(path, id)| (path.clone(), memory.bytes[id].clone()))
+        .collect();
+    let mut task = parent.task.clone();
+    task.id = "whole-issue-review-controls".into();
+    task.inputs = review_control::inputs(&parent, &result).unwrap();
+    task.depends_on = vec![parent.task.id.clone()];
+    task.upstream_inputs = Some(Artifact {
+        logical_id: "control/whole-issue-review-origins".into(),
+        sha256: digest(&bindings.canonical_bytes().unwrap()),
+        bytes: bindings.canonical_bytes().unwrap().len() as u64,
+        media_type: "application/json".into(),
+    });
+    task.outputs = review_control::OUTPUTS
+        .iter()
+        .map(|name| {
+            (
+                (*name).into(),
+                OutputContract {
+                    media_type: "application/json".into(),
+                    max_bytes: MAX_CONTROL_BYTES as u64,
+                    required: true,
+                },
+            )
+        })
+        .collect();
+    let tool = task.tool.as_mut().unwrap();
+    tool.capability = ToolCapability::ComicReviewControl;
+    tool.request = receipt_pin;
+    tool.source_bindings = review_control::source_bindings(&parent, &result).unwrap();
+    workflow.tasks.push(task);
+    let child = make_packet(
+        &workflow,
+        "whole-issue-review-controls",
+        BTreeMap::from([(
+            parent.task.id.clone(),
+            DependencyResult {
+                result_sha256: canonical_digest(&result).unwrap(),
+                artifacts: result.artifacts.clone(),
+            },
+        )]),
+    )
+    .unwrap();
+    let parents = BTreeMap::from([(
+        parent.task.id.clone(),
+        upstream::Parent {
+            packet: &parent,
+            result: &result,
+        },
+    )]);
+    assert_eq!(
+        review_control::generate(&child, &bindings, &parents, &mut memory)
+            .err()
+            .unwrap()
+            .code,
+        "review-control-issue-replay-required"
+    );
+    let generated =
+        review_control::generate_with_issue(&child, &bindings, &parents, &mut memory, |p, r, _| {
+            assert_eq!(p, &parent);
+            assert_eq!(r, &result);
+            Ok(files.clone())
+        })
+        .unwrap();
+    let copy: review::Copy = decode(&generated.files["review-copy.json"]).unwrap();
+    let request: review::Request = decode(&generated.files["review-request.json"]).unwrap();
+    assert_eq!(copy.units.len(), 3);
+    assert_eq!(copy.review, generated.outputs["review-sources.json"]);
+    assert_eq!(request.production_commit, parent.source_commit);
+    assert_eq!(
+        request.copy_input,
+        generated.outputs["review-copy.json"].logical_id
+    );
+    let mut wrong = child.clone();
+    wrong.task.tool.as_mut().unwrap().edition_id = "en".into();
+    // Rebuild a valid packet so the refusal tests semantic parent correspondence.
+    workflow.tasks[1] = wrong.task;
+    let wrong = make_packet(
+        &workflow,
+        "whole-issue-review-controls",
+        child.dependencies.clone(),
+    )
+    .unwrap();
+    assert_eq!(
+        review_control::generate_with_issue(
+            &wrong,
+            &bindings,
+            &parents,
+            &mut memory,
+            |_, _, _| panic!("capture before parent binding")
+        )
+        .err()
+        .unwrap()
+        .code,
+        "review-control-producer-binding"
+    );
+    let mut missing = files;
+    missing.remove("parts/opening/sources/pages/page01.json");
+    assert_eq!(
+        review_control::generate_with_issue(
+            &child,
+            &bindings,
+            &parents,
+            &mut memory,
+            |_, _, _| Ok(missing)
+        )
+        .err()
+        .unwrap()
+        .code,
+        "issue-review-source"
+    );
+}
