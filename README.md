@@ -38,6 +38,25 @@ and tools, including optional runtime requirements. The separate
 task, review and handoff lifecycle; its active branch is not part of this main
 checkout's support claim.
 
+## How it works
+
+```mermaid
+flowchart LR
+    project["Project inputs<br/>Story, pictures, recordings"]
+    providers["Optional generation<br/>ACE-Step / ElevenLabs"]
+    production["REEL production<br/>Author, compile, render"]
+    check["Independent checks<br/>Frames, sound, timing"]
+    review["Project review and delivery<br/>Episodes, videos, albums, print"]
+    tig["Optional Tig<br/>Exact assets and history"]
+
+    project --> production
+    providers --> production
+    production --> check --> review
+    review -. "Requested revisions" .-> production
+    tig -. "Versioned inputs" .-> production
+    check -. "Checked results and evidence" .-> tig
+```
+
 ## Dependencies and integrations
 
 REEL combines its own media contracts, authoring tools, compilers and independent
@@ -94,25 +113,6 @@ before attempting delivery. See [installation](docs/setup/install.md) for binary
 selection, optional features and platform-specific media dependencies.
 
 ## How the pieces fit
-
-```text
-Project: source text + pictures + recordings + definitions + policies
-                              |
-                  YAML/JSON controls and asset IDs
-                              |
-                  REEL validates and compiles
-                              |
-               explicit render job + input identities
-                              |
-                FFmpeg / native browser worker
-                              |
-               independent media checks + candidate
-                              |
-                  project review and delivery
-
-Optional Tig: Git snapshot -> exact asset/byte resolution -> guarded inputs
-              checked outputs -> retention and reviewed record proposals
-```
 
 A project can use explicit local files or the optional
 [public Tig integration](docs/tig-public-integration.md). Tig owns generic asset
@@ -178,6 +178,9 @@ producing project's asset system. Keep the reusable source repository small.
 See [contributor checks](docs/contributing.md) before changing a contract or
 adapter. Use generated fixture media and keep private operational evidence out of
 public issues, commits and CI logs.
+
+README and `docs/` prose/image-only changes use lightweight required CI checks.
+Code, configuration, executable examples and CI changes run full qualification.
 
 Software, scripts, tests, configuration and ordinary software documentation are
 MIT-licensed. Original non-software content is CC BY-NC 4.0; commercial use of
