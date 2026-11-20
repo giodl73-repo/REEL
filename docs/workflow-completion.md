@@ -18,8 +18,12 @@ produces the local PDF and source/review manifests. See the
 [actual reading issue evidence](handoff/2026-11-20-bbj-reading-issue.md).
 This completes a local reading derivative. Native full-issue retention,
 review/fix/rebuild and editable source restoration remain open.
-The exact full-issue source intake is now admitted and its original import is
-running; see the [native continuation handles](handoff/2026-11-20-bbj-reading-native.md).
+The exact full-issue reading intake is now Retained, with matching durable journal
+and acknowledgement pins. Its original guarded close completed with an idle
+actor. Assembly advancement stopped before child admission because the adapter
+treated independent reader ceilings as different store identities; the bounded
+fix and same-operation coordinator path are being qualified. See the
+[native continuation handles](handoff/2026-11-20-bbj-reading-native.md).
 The new `plan-comic-review` command replaces manual preparation of the next
 producer-bound review-control recipe. Neither admission nor that planner is a
 claim that the complete native issue has finished.
@@ -27,9 +31,13 @@ claim that the complete native issue has finished.
 The usable local BBJ reader is at
 `F:/src/tig-dev-temp/reel-bbj-book-20261120-v1/book/index.html` (28 sheets).
 The packaged development preview starts at
-`F:/src/REEL-releases/workflow-preview-20261120-v4/START-HERE.md`.
+`F:/src/REEL-releases/workflow-preview-20261120-v5/START-HERE.md`.
 It packages the actual layered page and complete reading-issue planners and native bridge, with
-per-binary pins and a passing installed planning smoke check. This remains a
+per-binary pins, producer-bound review planning, read-only metadata headroom,
+and passing installed planning/capacity/foreign-identity checks. Both binaries
+pin source `2bca0b3`; 155 core and 103 native tests pass, with all 247 SDK pins
+unchanged. The subsequent reader-ceiling admission fix is not in this package.
+This remains a
 development preview, not a completed full-issue comic or S5 production system.
 
 The actual 19-file BBJ story-page intake (65,306,700 bytes) reached retained

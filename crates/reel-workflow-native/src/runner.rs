@@ -62,6 +62,46 @@ fn same(a: &impl Serialize, b: &impl Serialize) -> Result<bool> {
     Ok(reel_workflow::canonical_digest(a)? == reel_workflow::canonical_digest(b)?)
 }
 
+/// Prepare a ready step through a separately qualified coordinator without
+/// replacing the recipe's producer/lifecycle runtime. No child is admitted.
+/// The original runner can consume this exact frozen control and recover an
+/// independently accepted original admission through its existing protocol.
+pub fn prepare_step(
+    recipe: &Recipe,
+    base: &Plan,
+    bindings: &graph::Bindings,
+    config: &Config,
+    task_id: &str,
+) -> Result<expansion::Frozen> {
+    reel_workflow::recipe::check(recipe)?;
+    if config.schema != "reel.workflow-recipe-runner.v1"
+        || !recipe.steps.iter().any(|s| s.id == task_id)
+    {
+        return Err(error(ErrorKind::Invalid, "runner-preparation-step"));
+    }
+    let step = config
+        .steps
+        .get(task_id)
+        .ok_or_else(|| error(ErrorKind::Missing, "runner-preparation-config"))?;
+    // Preparation holds the named ORIGINAL runtime, but never impersonates or
+    // invokes it. Effectful adoption/dispatch retain their current-exe checks.
+    let _original_runtime = crate::hold_tool(&step.handoff.runtime)?;
+    let schedule = graph::schedule_recipe(base, bindings, recipe, 16)?;
+    let proposal = schedule
+        .proposals
+        .into_iter()
+        .find(|p| p.packet.task.id == task_id)
+        .ok_or_else(|| error(ErrorKind::Conflict, "runner-preparation-not-ready"))?;
+    expansion::prepare(
+        base,
+        bindings,
+        &proposal.template,
+        reel_workflow::decode(&raw(&step.source)?)?,
+        step.admission.clone(),
+        &step.attempt_id,
+    )
+}
+
 /// One call admits at most `limit` tasks. Re-running observes the current native
 /// frontier; a Waiting/Cancelled/uncertain task is never a fresh attempt.
 pub fn advance(

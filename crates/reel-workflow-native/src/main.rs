@@ -827,6 +827,27 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "atomic_custody_snapshot":false,"provider_invoked":false,"task_completed":false,"selected":false}),
             )
         }
+        [command, recipe, plan, bindings, config, task, output, apply]
+            if command == "prepare-recipe-step" && apply == "--apply" =>
+        {
+            let frozen = reel_workflow_native::runner::prepare_step(
+                &read_control(Path::new(recipe))?,
+                &read_control(Path::new(plan))?,
+                &read_control(Path::new(bindings))?,
+                &read_control(Path::new(config))?,
+                task,
+            )?;
+            frozen.export(Path::new(output))?;
+            let file_pin = reel_workflow::digest(&serde_json::to_vec(&frozen).map_err(|_| {
+                reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::Invalid,
+                    code: "recipe-step-frozen-encoding".into(),
+                }
+            })?);
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-original-recipe-step-preparation","frozen_sha256":file_pin,"preview":frozen.preview,"production_admitted":false,"producer_invoked":false,"runtime_adopted":false}),
+            )
+        }
         [
             command,
             plan,
@@ -1547,6 +1568,7 @@ fn main() -> ExitCode {
             "reel-workflow-native dispatch-task PLAN BINDINGS TASK CONFIG PRIVATE_DIRECTORY --apply\n",
             "reel-workflow-native expand-plan PLAN RUN_BINDINGS TEMPLATE NEW_PRIVATE_EXPANSION --apply\n",
             "reel-workflow-native prepare-expanded PLAN RUN_BINDINGS TEMPLATE SOURCE ADMISSION ATTEMPT NEW_FROZEN --apply\n",
+            "reel-workflow-native prepare-recipe-step RECIPE BASE_PLAN RUN_BINDINGS CONFIG TASK NEW_FROZEN --apply\n",
             "reel-workflow-native accept-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native recover-expanded PLAN FROZEN FROZEN_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native prepare-worker PLAN RUN_BINDINGS BATCH BATCH_SHA256 TASK_ID STAGING_PROFILE NEW_TICKET --apply\n",

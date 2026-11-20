@@ -16,12 +16,16 @@ records the detailed boundaries. Start here instead of following its historical
 qualification reports as operating instructions.
 
 The current Windows bundle is
-`F:/src/REEL-releases/workflow-preview-20261120-v4/START-HERE.md`. Its main
+`F:/src/REEL-releases/workflow-preview-20261120-v5/START-HERE.md`. Its main
 `reel-workflow.exe` is an optimized build with `comic` enabled. It has passed
 actual BBJ preparation, exact page SVG composition and existing-output refusal;
 the underlying publication adapter has completed the selected 28-sheet local
 book. The complete selected reading PDF has also passed an exact pixel check
 against all 28 selected PNGs. The bundle manifest pins both workflow binaries.
+The complete reading input capture has also reached native retained ownership
+and guarded actor close. Full-issue assembly/review remains acceptance work;
+the subsequent reader-ceiling admission fix is documented separately and is
+not included in the v5 package.
 
 ## Run the planning CLI
 

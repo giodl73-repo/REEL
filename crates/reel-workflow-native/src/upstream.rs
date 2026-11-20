@@ -169,6 +169,18 @@ pub struct Admission<'a> {
     prepared: admission::Prepared,
     borrowed: BorrowedInputs<'a>,
 }
+// The enrolled pool/store identifies byte custody. maximum_bytes is the
+// caller's independent per-object read ceiling, not another store identity.
+fn same_reader_store(left: &reader::Profile, right: &reader::Profile) -> Result<bool> {
+    Ok(reel_workflow::canonical_digest(&(&left.pool, &left.store))?
+        == reel_workflow::canonical_digest(&(&right.pool, &right.store))?)
+}
+fn check_reader_inputs(source: &reader::Profile, inputs: &[Artifact]) -> Result<()> {
+    if source.maximum_bytes == 0 || inputs.iter().any(|a| a.bytes > source.maximum_bytes) {
+        return Err(error(ErrorKind::Budget, "composite-child-reader-bound"));
+    }
+    Ok(())
+}
 impl<'a> Admission<'a> {
     pub fn prepare(
         child: &Packet,
@@ -187,8 +199,7 @@ impl<'a> Admission<'a> {
             return Err(error(ErrorKind::Conflict, "composite-live-origin-mismatch"));
         }
         for parent in parents.values() {
-            if reel_workflow::canonical_digest(&parent.source.source)?
-                != reel_workflow::canonical_digest(&source.source)?
+            if !same_reader_store(&parent.source.source, &source.source)?
                 || parent.admission.index_identity != profile.index_identity
                 || parent
                     .admission
@@ -212,6 +223,7 @@ impl<'a> Admission<'a> {
                 return Err(error(ErrorKind::Conflict, "composite-child-store-actor"));
             }
         }
+        check_reader_inputs(&source.source, &child.task.inputs)?;
         let prepared = admission::Prepared::open(child, source, profile, attempt)?;
         prepared.preview()?;
         let borrowed = BorrowedInputs::open(child, &frozen.bindings, parents)?;
@@ -226,6 +238,67 @@ impl<'a> Admission<'a> {
         self.borrowed.held.clear();
         self.borrowed.captured.clear();
         self.prepared.accept_verified_upstream()
+    }
+}
+
+#[cfg(test)]
+mod store_binding_tests {
+    use super::*;
+    fn profile() -> reader::Profile {
+        let path = std::env::temp_dir().join("reel-reader-profile-contract");
+        reader::Profile {
+            pool: tig_git::annex::process::Enrollment {
+                git: path.join("git.exe"),
+                executable: path.join("git-annex.exe"),
+                repository: path.join("pool"),
+                tools: vec![path.join("tools")],
+                empty_config: path.join("empty.config"),
+                empty_hooks: path.join("hooks"),
+                temporary: path.join("scratch"),
+                legacy_profile: None,
+                command_millis: 60000,
+                output_bytes: 1048576,
+                control: None,
+            },
+            store: Digest::parse(&"a".repeat(64)).unwrap(),
+            maximum_bytes: 128 * 1024 * 1024,
+        }
+    }
+    #[test]
+    fn distinct_reader_limits_preserve_store_binding_but_changed_enrollment_does_not() {
+        let parent = profile();
+        let mut child = parent.clone();
+        child.maximum_bytes *= 2;
+        assert!(same_reader_store(&parent, &child).unwrap());
+        assert!(same_reader_store(&child, &parent).unwrap());
+        child.store = Digest::parse(&"b".repeat(64)).unwrap();
+        assert!(!same_reader_store(&parent, &child).unwrap());
+        child = parent.clone();
+        child.pool.repository = child.pool.repository.join("another-pool");
+        assert!(!same_reader_store(&parent, &child).unwrap());
+        child = parent.clone();
+        child.pool.executable = child.pool.executable.with_file_name("other-annex.exe");
+        assert!(!same_reader_store(&parent, &child).unwrap());
+    }
+    #[test]
+    fn child_reader_must_cover_its_own_actual_inputs_before_admission() {
+        let mut source = profile();
+        let input = Artifact {
+            logical_id: "captured/input".into(),
+            sha256: "a".repeat(64),
+            bytes: 256 * 1024 * 1024,
+            media_type: "application/octet-stream".into(),
+        };
+        assert_eq!(
+            check_reader_inputs(&source, std::slice::from_ref(&input))
+                .unwrap_err()
+                .code,
+            "composite-child-reader-bound"
+        );
+        source.maximum_bytes = input.bytes;
+        check_reader_inputs(&source, &[input]).unwrap();
+        source.maximum_bytes = 0;
+        assert!(check_reader_inputs(&source, &[]).is_err());
     }
 }
 pub struct BorrowedInputs<'a> {
