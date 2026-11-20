@@ -757,6 +757,21 @@ addresses the derived manifest namespace while preserving exact media/context;
 its read-only native qualification remains pending. Explicit resolution/issue
 closure and the wider project/provider/consumer/adoption requirements remain open.
 
+The [resolution producer projection](handoff/2026-11-20-resolution-producer-projection.md)
+now passes a 62.30-second frozen read-only qualification against the actual
+retained v2 report and corrected issue. Only a derived manifest logical ID may
+differ under an exact observed packet/result witness; all media and complete
+context metadata remain equal. Nine changed-media/context/producer cases and the
+legacy unbound namespace change refuse. Both native histories, both copy
+fingerprints, actual unchanged Index and all 62 report pins verify. All 98 native
+tests, 247 SDK pins and strict default/film Clippy pass (97 opt-in fixtures ignored).
+This supplies correspondence, not a resolution proposal or review/closure claim.
+The original repair still requires rebuilt `owned-issue-review-controls` and
+`whole-issue-structured-report` consumers under their own original IDs; the new
+supplemental context tasks do not silently satisfy that frontier. Full affected
+consumer rebuilding, explicit contextual evaluation, evidenced resolution/issue
+closure and the wider project/provider/consumer/adoption scope remain open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
