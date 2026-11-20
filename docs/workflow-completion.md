@@ -53,6 +53,16 @@ Finish the product through these concrete deliveries:
 These deliveries remain acceptance work. Additional synthetic checks alone do
 not close them, and the existing S4 approvals and S5 recordings remain intact.
 
+The Rust `bbj-plan-page` command now replaces the hand-built source intake and
+composition-template preparation. Actual sheet 3 evidence lives at
+`F:/src/tig-dev-temp/reel-bbj-page-planner-20261120-v1`: 19 captured files,
+65,306,204 bytes, valid intake/proposed-return controls, an explicit late-bound
+native recipe and successful exact SVG/PNG replay. Existing-output refusal is
+also recorded. The declared native preview reports 19 resources/162,638,243
+bytes with 16 actors and 128 changed paths; it explicitly has not checked
+admission or native payload availability. No new job was accepted in this run.
+The earlier failed composer remains Waiting under its original identity.
+
 Producer checklist lenses: comics editor (stable order/targets retained;
 fresh lettering-edit restoration and full-issue viewing still open) and
 rights/provenance (unselected candidate namespace; no upload, creative approval

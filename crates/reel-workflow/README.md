@@ -76,6 +76,42 @@ on failure. `bbj-compose-page REQUEST INPUT_BINDINGS NEW_DIRECTORY` composes one
 candidate SVG separately. These commands are local publication operations;
 the native workflow lifecycle below governs protected production jobs.
 
+## Prepare a managed BBJ page
+
+```powershell
+reel-workflow bbj-plan-page PREPARED 3 CONFIG.json NEW_CAPSULE_DIRECTORY
+```
+
+`CONFIG.json` has schema `reel.workflow-bbj-page-plan.v1` and declares `project`,
+`source_commit`, an authored `task_prefix`, `attempt_id`, the qualified native
+`executable` pin (`path`, `sha256`, `bytes`) and the intake's `native_inputs`
+artifact. Obtain that last descriptor from the exact declaration exported by
+`reel-workflow-native export-native-bindings` for the owned empty-input source
+profile. Native admission will recheck that profile; the planner grants no
+custody or runtime qualification.
+
+The command checks the selected page's publication, source/provenance bindings,
+file pins, runtime and bounded reading PNG before writing a new capsule:
+
+| File | Use |
+| --- | --- |
+| `intake-plan.json`, `intake-packet.json` | Exact external-source intake task. |
+| `upstream-empty.json`, `parents-empty.json` | Explicit empty root admission controls. |
+| `incoming/`, `returns.json`, `proposed-return.json` | Captured private sources and proposed manual return; no retained completion. |
+| `recipe.json` | Late-bound composition step for the native recipe runner. |
+| `local-preview-packet.json`, `local-inputs.json` | Read-only page replay before admission. |
+
+Run `replay-layered-task NEW_CAPSULE_DIRECTORY/local-preview-packet.json
+NEW_CAPSULE_DIRECTORY/local-inputs.json` to verify the composed SVG and reused
+reading pixels. After explicit intake admission/import/retention, the existing
+recipe runner resolves exact retained parent outputs and computes dependency
+digests in Rust. Supply the project's owned native runner profiles and enrolled
+actors. No dependency hashes or source maps need to be reconstructed in a shell.
+
+Capsule creation refuses an existing destination and preserves partial writes.
+It does not recover an earlier admitted task under a fresh identity. A page
+capsule is not a full issue, a new raster render, profile adoption or approval.
+
 ## Run protected work
 
 Build the separate native workspace explicitly:

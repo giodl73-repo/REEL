@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod composition;
+#[cfg(feature = "comic")]
+pub mod bbj;
 pub mod direction;
 pub mod expansion;
 pub mod film;

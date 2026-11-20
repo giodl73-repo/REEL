@@ -41,6 +41,7 @@ pub struct Bound {
     pub request: Request,
     inputs: BTreeMap<String, Artifact>,
     units: BTreeMap<String, review::Unit>,
+    #[cfg(feature = "comic")]
     canvas: [u32; 2],
 }
 fn verified(reader: &mut impl InputReader, a: &Artifact, max: u64) -> Result<Vec<u8>> {
@@ -423,6 +424,7 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<Bound> {
         request,
         inputs,
         units,
+        #[cfg(feature = "comic")]
         canvas: source.canvas,
     })
 }

@@ -188,6 +188,216 @@ fn returned(packet: &Packet, generated: &layered::Generated) -> ReturnedResult {
         )),
     }
 }
+
+fn planning_fixture() -> (
+    tempfile::TempDir,
+    bbj::Config,
+    BTreeMap<std::path::PathBuf, Vec<u8>>,
+) {
+    let directory = tempfile::tempdir().unwrap();
+    let prepared = directory.path().join("prepared");
+    let (packet, inputs) = fixture(false, false, false);
+    let tool = packet.task.tool.as_ref().unwrap();
+    let request: layered::Request = decode(&inputs.0[&tool.request.logical_id]).unwrap();
+    let mut data = BTreeMap::new();
+    let mut bindings = BTreeMap::new();
+    for (i, (path, id)) in tool
+        .source_bindings
+        .iter()
+        .filter(|(p, _)| **p != request.selection.path && **p != request.reading_png.path)
+        .enumerate()
+    {
+        let absolute = directory.path().join(format!("input-{i}"));
+        bindings.insert(path.clone(), absolute.clone());
+        data.insert(absolute, inputs.0[id].clone());
+    }
+    let reading = directory.path().join("reading.png");
+    data.insert(
+        reading.clone(),
+        inputs.0[&tool.source_bindings[&request.reading_png.path]].clone(),
+    );
+    data.insert(
+        prepared.join("reading-bindings.json"),
+        serde_json::to_vec(&BTreeMap::from([(
+            request.reading_png.path.clone(),
+            reading,
+        )]))
+        .unwrap(),
+    );
+    data.insert(
+        prepared.join("sheet-001/bindings.json"),
+        serde_json::to_vec(&bindings).unwrap(),
+    );
+    data.insert(
+        prepared.join("sheet-001/request.json"),
+        serde_json::to_vec(&request.page).unwrap(),
+    );
+    data.insert(
+        prepared.join("publication.json"),
+        inputs.0[&tool.publication.logical_id].clone(),
+    );
+    data.insert(
+        prepared.join("selected-book.json"),
+        inputs.0[&tool.source_bindings[&request.selection.path]].clone(),
+    );
+    let selection = &inputs.0[&tool.source_bindings[&request.selection.path]];
+    data.insert(prepared.join("book.json"),serde_json::to_vec(&serde_json::json!({"schema":"reel.bbj-book-import.v1","publication_id":"book","selection":{"sha256":digest(selection),"bytes":selection.len()},"pages":[{"sheet":1,"request":"sheet-001/request.json","bindings":"sheet-001/bindings.json"}]})).unwrap());
+    let exe = directory.path().join("engine.exe");
+    data.insert(exe.clone(), b"runtime".to_vec());
+    let config = bbj::Config {
+        schema: "reel.workflow-bbj-page-plan.v1".into(),
+        project: "planner-fixture".into(),
+        source_commit: "a".repeat(40),
+        task_prefix: "page-v2".into(),
+        attempt_id: "attempt-1".into(),
+        executable: pin(exe.to_str().unwrap(), b"runtime"),
+        native_inputs: asset("control/native", b"{}", "application/json"),
+    };
+    (directory, config, data)
+}
+
+#[test]
+fn bbj_planning_captures_replayable_sources_and_defers_parent_resolution() {
+    let (dir, config, data) = planning_fixture();
+    let files = bbj::prepare(
+        &config,
+        &dir.path().join("prepared"),
+        1,
+        &dir.path().join("capsule"),
+        |p, max| {
+            let raw = data.get(p).unwrap();
+            assert!(raw.len() as u64 <= max);
+            Ok(raw.clone())
+        },
+    )
+    .unwrap();
+    let preview: Packet = decode(&files["local-preview-packet.json"]).unwrap();
+    let mut inputs = Inputs(
+        preview
+            .task
+            .inputs
+            .iter()
+            .map(|a| {
+                (
+                    a.logical_id.clone(),
+                    files[&format!("incoming/{}", a.logical_id.rsplit('/').next().unwrap())]
+                        .clone(),
+                )
+            })
+            .collect(),
+    );
+    let generated = layered::generate(&preview, &mut inputs).unwrap();
+    assert_eq!(
+        generated.outputs["page.png"].sha256,
+        digest(&files["incoming/reading.png"])
+    );
+    let recipe: recipe::Recipe = decode(&files["recipe.json"]).unwrap();
+    recipe::check(&recipe).unwrap();
+    assert_eq!(recipe.steps[0].depends_on, vec!["page-v2-intake"]);
+    assert!(
+        recipe.steps[0]
+            .inputs
+            .iter()
+            .all(|i| matches!(i, expansion::Input::Parent { .. }))
+    );
+    let proposed: ReturnedResult = decode(&files["proposed-return.json"]).unwrap();
+    let intake: Packet = decode(&files["intake-packet.json"]).unwrap();
+    check_result(&intake, &proposed).unwrap();
+    // A contract observer only: this unit test grants no actual native custody.
+    struct Observed(graph::Job);
+    impl graph::Observer for Observed {
+        fn observe(&mut self, id: &str) -> Result<Option<graph::Job>> {
+            Ok((id == self.0.ticket.packet.task.id).then(|| self.0.clone()))
+        }
+        fn verify(&mut self, _: &graph::Job) -> Result<()> {
+            Ok(())
+        }
+    }
+    let mut observed = Observed(graph::Job {
+        ticket: handoff::Ticket {
+            packet: intake,
+            attempt_id: proposed.attempt_id.clone(),
+            native_binding: asset("control/fixture-binding", b"binding", "application/json"),
+            lifecycle_tool: preview.task.tool.as_ref().unwrap().executable.clone(),
+        },
+        state: handoff::State::Retained,
+        result: Some(proposed.clone()),
+        acknowledgement: Some(asset("control/fixture-ack", b"ack", "application/json")),
+    });
+    let expanded = expansion::prepare(
+        &recipe.base,
+        &expansion::Template {
+            schema: recipe.steps[0].expansion_schema().into(),
+            base_plan_sha256: canonical_digest(&recipe.base).unwrap(),
+            task: recipe.steps[0].clone(),
+        },
+        &mut observed,
+    )
+    .unwrap();
+    assert_eq!(
+        expanded.packet.dependencies["page-v2-intake"].result_sha256,
+        canonical_digest(&proposed).unwrap()
+    );
+    assert_eq!(expanded.packet.task.inputs, preview.task.inputs);
+    let intent: serde_json::Value = decode(&files["intent.json"]).unwrap();
+    assert_eq!(intent["native_admitted"], false);
+    assert_eq!(intent["retained_owner_acknowledged"], false);
+    assert!(!dir.path().join("capsule").exists());
+}
+
+#[test]
+fn bbj_planning_refuses_changed_runtime_and_incomplete_source_closure() {
+    let (dir, mut config, mut data) = planning_fixture();
+    config.executable.sha256 = "0".repeat(64);
+    let error = bbj::prepare(
+        &config,
+        &dir.path().join("prepared"),
+        1,
+        &dir.path().join("capsule"),
+        |p, _| Ok(data[p].clone()),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "bbj-planning-runtime-pin");
+    config.executable.sha256 = digest(b"runtime");
+    let key = dir.path().join("prepared/sheet-001/bindings.json");
+    let mut bindings: BTreeMap<String, std::path::PathBuf> = decode(&data[&key]).unwrap();
+    bindings.insert("unused/source.json".into(), dir.path().join("extra"));
+    data.insert(key, serde_json::to_vec(&bindings).unwrap());
+    let error = bbj::prepare(
+        &config,
+        &dir.path().join("prepared"),
+        1,
+        &dir.path().join("capsule"),
+        |p, _| Ok(data[p].clone()),
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "bbj-planning-binding-closure");
+    assert!(!dir.path().join("capsule").exists());
+}
+
+#[test]
+fn bbj_planning_refuses_null_item_lists_before_capturing_media() {
+    let (dir, config, mut data) = planning_fixture();
+    let path = dir.path().join("prepared/publication.json");
+    let mut publication: serde_json::Value = decode(&data[&path]).unwrap();
+    publication["editions"][0]["content"]["pages"][0]["panel_order"] = serde_json::Value::Null;
+    data.insert(path.clone(), serde_json::to_vec(&publication).unwrap());
+    let mut opened = Vec::new();
+    let error = bbj::prepare(
+        &config,
+        &dir.path().join("prepared"),
+        1,
+        &dir.path().join("capsule"),
+        |p, _| {
+            opened.push(p.to_owned());
+            Ok(data[p].clone())
+        },
+    )
+    .unwrap_err();
+    assert_eq!(error.code, "bbj-planning-publication-control");
+    assert_eq!(opened, vec![path]);
+    assert!(!dir.path().join("capsule").exists());
+}
 #[test]
 fn managed_layered_replay_preserves_selected_pixels_editability_and_review_units() {
     let (packet, mut inputs) = fixture(false, false, false);
