@@ -687,6 +687,23 @@ declared totals. Standard native tests pass (98 passed, 90 opt-in ignored), all
 are pinned and slot2 is idle, but actual issue admission/retained execution and
 contextual review remain pending.
 
+[Corrected whole-issue managed execution](handoff/2026-11-20-corrected-issue-execution.md)
+now qualifies the pinned child beyond preflight. The first frozen run admits and
+stages its inputs, then safely refuses the undersized worker reservation before
+execution. A separate 510.44-second original-operation recovery preserves the
+failed config/empty ticket and prepares the first owned worker with an explicit
+512 MiB profile, using the same original 264efd runtime, task, attempt and
+admission. The complete issue is now Retained after checked original-result
+owner-policy recovery (573 objects / 270,489,244 bytes, 46 additional paths).
+Actual native PDF/transcript bytes match complete preflight; both pages and all
+six review targets reopen, their logical IDs survive the source revision, parent
+and Waiting proofs reopen, and completed replay preserves actual Index and worker
+result bytes. Standard native tests pass (98 passed, 92 opt-in ignored), all 247
+SDK pins and strict default/film Clippy pass. No readmission, runtime replacement,
+selection, approval or scratch retirement occurs. Contextual corrected-issue
+reporting, evidenced finding closure, checked source-slot return and the larger
+film/comic/project/provider/adoption requirements remain open.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
