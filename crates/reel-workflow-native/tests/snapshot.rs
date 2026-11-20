@@ -297,6 +297,90 @@ impl Fixture {
 }
 
 #[test]
+fn fixed_consumer_scope_uses_exact_committed_record_files_without_payload_reads() {
+    use std::collections::BTreeSet;
+    let mut fixture = Fixture::new();
+    let mut other: serde_json::Value =
+        decode(&fs::read(fixture.temp.path().join("records/input.tig")).unwrap()).unwrap();
+    other["id"] = "input/other".into();
+    other["streams"] = json!([]);
+    write(fixture.temp.path(), "records/other.tig", other);
+    fs::write(
+        fixture.temp.path().join("payloads/other.bin"),
+        Key::from_object(&Object::from_bytes(b"synthetic input")).unlocked_pointer(),
+    )
+    .unwrap();
+    git(fixture.temp.path(), &["add", "."]);
+    git(
+        fixture.temp.path(),
+        &["commit", "-m", "second fixed record"],
+    );
+    fixture.profile.commit = git(fixture.temp.path(), &["rev-parse", "HEAD"]);
+    fixture.profile.records.push("records/other.tig".into());
+    fixture.profile.bindings.insert(
+        "input/other".into(),
+        Binding {
+            selected: LogicalPath::parse("payloads/other.bin").unwrap(),
+            streams: BTreeMap::new(),
+        },
+    );
+    fixture
+        .profile
+        .input_streams
+        .insert("input/other".into(), None);
+    let full = fixture.profile.clone();
+    let fixed = full
+        .fixed_subset(&BTreeSet::from(["input/source".into()]))
+        .unwrap();
+    assert_eq!(fixed.records, vec!["records/input.tig"]);
+    assert_eq!(fixed.bindings.len(), 1);
+    assert_eq!(fixed.input_streams.len(), 1);
+    assert_eq!(full.records.len(), 2);
+    fixture.profile = fixed;
+    fixture.repin();
+    assert_eq!(
+        SnapshotInputs::open(&fixture.packet, &fixture.profile)
+            .unwrap()
+            .input_count(),
+        1
+    );
+    assert_eq!(
+        full.fixed_subset(&BTreeSet::from(["undeclared/input".into()]))
+            .err()
+            .unwrap()
+            .code,
+        "fixed-scope-input"
+    );
+    let mut broad = full.clone();
+    broad.records = vec!["records".into()];
+    assert_eq!(
+        broad
+            .fixed_subset(&BTreeSet::from(["input/source".into()]))
+            .err()
+            .unwrap()
+            .kind,
+        ErrorKind::Unsupported
+    );
+    let empty = full.fixed_subset(&BTreeSet::new()).unwrap();
+    assert!(
+        empty.records.is_empty()
+            && empty.definitions.is_empty()
+            && empty.bindings.is_empty()
+            && empty.input_streams.is_empty()
+    );
+    let mut aliased = full;
+    aliased.records.push("records/input.tig".into());
+    assert_eq!(
+        aliased
+            .fixed_subset(&BTreeSet::from(["input/source".into()]))
+            .err()
+            .unwrap()
+            .code,
+        "fixed-scope-record-alias"
+    );
+}
+
+#[test]
 fn versioned_snapshot_budget_resolves_large_declared_bytes_and_preserves_legacy_declaration() {
     let mut fixture = Fixture::with_object(Object {
         sha256: tig_core::Digest::blob(b"synthetic declared large input"),

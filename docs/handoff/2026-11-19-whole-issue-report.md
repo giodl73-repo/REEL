@@ -31,6 +31,30 @@ acknowledgement and durable completion, replays without return-file arguments,
 and reopens a native checked report. Original small controls must retain their
 byte pins and the other Waiting job must reopen. Qualification is pending.
 
+The first frozen run (source `438562ca5d66d41b1efd1d641898b65410c1cf44`)
+refused native projection with `Missing/native-snapshot-resolution` in 30.00
+seconds, before original close or new admission. It copied the control producer's
+complete record scope while narrowing the fixed binding set. Tig's qualified
+native-annex adapter requires those two declarations to correspond exactly.
+Evidence is preserved at
+`F:/src/tig-dev-temp/reel-whole-issue-report-20261119-v1`; the only job file is
+`original-pins.json`. Do not treat this refusal as publication uncertainty or
+reuse that evidence directory for a new execution.
+
+`SnapshotProfile::fixed_subset` now plans the fixed record portion through the
+qualified Tig Rust metadata resolver at the exact commit. It accepts explicit
+`.tig` file scopes, requires existing logical bindings, and selects unique record
+files for the requested inputs. It preserves their original annex-leaf/stream
+bindings and definition metadata. Metadata work is limited to 256 record paths,
+256 definition paths, 16 MiB cumulative interpretation bytes and 30 seconds;
+zero fixed inputs clear record/definition/binding declarations. It reads no media,
+installs no profile and grants no admission/custody. Callers still bind the new
+upstream context and run complete snapshot/native admission checks. A metadata
+test covers two-record narrowing, exact snapshot reopening, undeclared inputs,
+broad-scope refusal, empty fixed scopes and record-alias refusal without native
+payload access. A separate read-only refusal audit checks the original active
+generation and actual Index checkpoint before explicit replanning.
+
 This is a scripted technical protocol exercise with no actual model call or
 creative defect assertion. Declared/staged images and a valid report are not
 verified viewing. Native report retention, actual image inspection, creative

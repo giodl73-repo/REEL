@@ -21,6 +21,7 @@ pub mod expansion;
 pub mod film_inputs;
 #[cfg(all(windows, feature = "film"))]
 pub mod film_process;
+mod fixed_scope;
 pub mod graph;
 pub mod handoff;
 pub mod image;

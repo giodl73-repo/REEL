@@ -34,6 +34,62 @@ fn success(out: &std::process::Output) {
 }
 
 #[test]
+#[ignore = "Read-only audit of the original pre-admission projection refusal; proves no close/new admission and an unchanged actual Index checkpoint before explicit replan"]
+fn refused_projection_preserves_original_control_activation_before_replanning() {
+    let failed = PathBuf::from(
+        std::env::var_os("REEL_ISSUE_REPORT_REFUSED_PROJECTION").expect("original failed evidence"),
+    );
+    let original = PathBuf::from(
+        std::env::var_os("REEL_ISSUE_REPORT_CONTROL_ROOT").expect("original retained control"),
+    );
+    let process: serde_json::Value = load(&failed, "process-result.json");
+    assert_eq!(process["exit_code"], 101);
+    assert_eq!(
+        fs::read_dir(failed.join("job"))
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect::<Vec<_>>(),
+        vec![std::ffi::OsString::from("original-pins.json")]
+    );
+    let pins: BTreeMap<PathBuf, String> = load(&failed.join("job"), "original-pins.json");
+    for (path, pin) in &pins {
+        assert_eq!(&digest(&fs::read(path).unwrap()), pin);
+    }
+    let packet: Packet = load(&original, "packet.json");
+    let profile: handoff::Profile = load(&original, "profile.json");
+    assert_eq!(
+        reel_workflow::handoff::Journal::open(&original.join("journal"))
+            .unwrap()
+            .state(),
+        reel_workflow::handoff::State::Retained
+    );
+    drop(
+        admission::Prepared::open(
+            &packet,
+            &profile.source,
+            &profile.admission,
+            &profile.binding.admission.attempt_id,
+        )
+        .unwrap()
+        .reopen(&profile.binding.admission)
+        .unwrap(),
+    );
+    let index = tig_store::source_claims::protection::Index::open(
+        &profile.admission.index_root,
+        &profile.binding.admission.index_checkpoint,
+    )
+    .unwrap();
+    let checkpoint = canonical_digest(&index.checkpoint()).unwrap();
+    let previous: serde_json::Value = load(original.parent().unwrap(), "qualification-result.json");
+    assert_eq!(previous["checkpoint_sha256"], checkpoint);
+    save(
+        &failed,
+        "original-state-after-refusal.json",
+        &json!({"schema":"reel.whole-issue-report-refusal-audit.v1","original_task_key":packet.task_key,"actual_checkpoint_sha256":checkpoint,"original_control_activation_reopened":true,"original_controls_unchanged":true,"new_admission":false,"original_close_started":false,"runtime_adopted":false}),
+    );
+}
+
+#[test]
 #[ignore = "Existing retained synthetic whole-issue controls only; guarded same-slot reuse, exact PNG material, protected manual report refusal/retention/replay; no model/tracker/selection or deletion"]
 fn retained_whole_issue_controls_and_reading_images_drive_protected_reports() {
     let original = PathBuf::from(
@@ -199,14 +255,13 @@ fn retained_whole_issue_controls_and_reading_images_drive_protected_reports() {
     );
     let mut source: NativeProfile =
         decode(&serde_json::to_vec(&producer_profile.source).unwrap()).unwrap();
-    source
+    source.snapshot = source
         .snapshot
-        .bindings
-        .retain(|id, _| id == &copy.publication.logical_id);
-    source
-        .snapshot
-        .input_streams
-        .retain(|id, _| id == &copy.publication.logical_id);
+        .fixed_subset(&std::collections::BTreeSet::from([copy
+            .publication
+            .logical_id
+            .clone()]))
+        .unwrap();
     source.snapshot.upstream = Some(upstream::Frozen::capture(
         &bindings,
         &parents.borrowed().unwrap(),
