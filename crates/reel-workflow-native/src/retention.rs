@@ -24,6 +24,38 @@ pub struct Target {
     pub owner: Key,
 }
 
+/// Read-only aggregation/admission observations. Does not verify native payloads,
+/// acknowledge retained ownership, change limits or authorize retrying effects.
+#[derive(Debug, Serialize)]
+pub struct CapacityPreview {
+    pub schema: &'static str,
+    pub source_objects: usize,
+    pub retained_objects: usize,
+    pub combined_objects: usize,
+    pub combined_logical_bytes: u64,
+    pub object_limit: usize,
+    pub logical_byte_limit: u64,
+    pub additional_paths: usize,
+    pub changed_path_limit: usize,
+    pub resource_bound_ok: bool,
+    pub changed_path_bound_ok: bool,
+    pub original_retention_work_exists: bool,
+    pub original_retention_work_complete: Option<bool>,
+}
+
+pub fn capacity_preview(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    target: &Target,
+) -> Result<CapacityPreview> {
+    check(packet, source, receipt, result)?;
+    Prepared::open(packet, source, profile, &receipt.attempt_id)?
+        .retained_capacity(receipt, result, target)
+}
+
 /// May also describe staged, incomplete work. Only `verify` supplies live proof.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

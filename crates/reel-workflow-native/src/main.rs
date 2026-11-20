@@ -265,6 +265,21 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"private-retained-resolution-proposal","findings":proposal.proposal.finding_keys.len(),"issues_closed":false,"selected":false,"approved":false}),
             )
         }
+        [command, packet, source, profile, receipt, result, target]
+            if command == "inspect-retention-capacity" =>
+        {
+            let preview = reel_workflow_native::retention::capacity_preview(
+                &read_control(Path::new(packet))?,
+                &read_control(Path::new(source))?,
+                &read_control(Path::new(profile))?,
+                &read_control(Path::new(receipt))?,
+                &read_control(Path::new(result))?,
+                &read_control(Path::new(target))?,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"retained-owner-capacity-metadata","capacity":preview,"native_payloads_verified":false,"effects_applied":false}),
+            )
+        }
         [
             command,
             packet,
@@ -1283,6 +1298,7 @@ fn main() -> ExitCode {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
+            "reel-workflow-native inspect-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
             "reel-workflow-native prepare-close JOURNAL PROFILE TARGET NEW_TICKET --apply\n",
             "reel-workflow-native close-job TICKET TICKET_SHA256 NEW_RECEIPT --apply\n",
             "reel-workflow-native stage-close TICKET TICKET_SHA256 NEW_STAGE_RECEIPT --apply\n",

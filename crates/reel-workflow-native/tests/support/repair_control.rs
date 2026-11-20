@@ -122,6 +122,98 @@ fn preflight_refusal_preserves_the_original_repaired_part_before_control_replann
 }
 
 #[test]
+#[ignore = "Read-only original ImportPending control after retention-resource-bound; compute actual owner aggregation and exact native work status, no retry/publication/admission or runtime adoption"]
+fn pending_control_reports_exact_retained_capacity_without_changing_original_state() {
+    let env = |key| PathBuf::from(std::env::var_os(key).expect(key));
+    let original = env("REEL_REPAIR_CONTROL_PENDING");
+    let evidence = env("REEL_REPAIR_CONTROL_CAPACITY_EVIDENCE");
+    let executable = env("REEL_NATIVE_HANDOFF_TOOL");
+    let packet: Packet = load(&original, "packet.json");
+    let profile: handoff::Profile = load(&original, "profile.json");
+    let receipt: admission::Receipt = load(&original, "receipt.json");
+    let journal = reel_workflow::handoff::Journal::open(&original.join("journal")).unwrap();
+    assert_eq!(
+        journal.state(),
+        reel_workflow::handoff::State::ImportPending
+    );
+    assert_eq!(journal.ticket().packet, packet);
+    assert_eq!(
+        journal.ticket().native_binding,
+        profile.binding.artifact().unwrap()
+    );
+    let result = journal.result().unwrap().clone();
+    assert!(journal.acknowledgement().is_none());
+    let checkpoint = || {
+        let index = tig_store::source_claims::protection::Index::open(
+            &profile.admission.index_root,
+            &receipt.index_checkpoint,
+        )
+        .unwrap();
+        canonical_digest(&index.checkpoint()).unwrap()
+    };
+    let before = checkpoint();
+    let mut originals: BTreeMap<PathBuf, String> = [
+        "packet.json",
+        "profile.json",
+        "source.json",
+        "receipt.json",
+        "original-operation.json",
+    ]
+    .into_iter()
+    .map(|name| {
+        let path = original.join(name);
+        let hash = digest(&fs::read(&path).unwrap());
+        (path, hash)
+    })
+    .collect();
+    for entry in fs::read_dir(original.join("journal")).unwrap() {
+        let path = entry.unwrap().path();
+        originals.insert(path.clone(), digest(&fs::read(path).unwrap()));
+    }
+    save(&evidence, "original-pins.json", &originals);
+    save(&evidence, "result.json", &result);
+    save(&evidence, "target.json", &profile.binding.target);
+    let preview = retention::capacity_preview(
+        &packet,
+        &profile.source,
+        &profile.admission,
+        &receipt,
+        &result,
+        &profile.binding.target,
+    )
+    .unwrap();
+    assert!(!preview.resource_bound_ok);
+    assert!(!preview.original_retention_work_exists);
+    assert_eq!(preview.original_retention_work_complete, None);
+    let out = Command::new(&executable)
+        .arg("inspect-retention-capacity")
+        .arg(original.join("packet.json"))
+        .arg(original.join("source.json"))
+        .arg(original.join("admission.json"))
+        .arg(original.join("receipt.json"))
+        .arg(evidence.join("result.json"))
+        .arg(evidence.join("target.json"))
+        .output()
+        .unwrap();
+    success(&evidence, "capacity-cli-result.json", &out);
+    let inspected: serde_json::Value = decode(&out.stdout).unwrap();
+    assert_eq!(
+        inspected["capacity"],
+        serde_json::to_value(&preview).unwrap()
+    );
+    assert_eq!(inspected["effects_applied"], false);
+    assert_eq!(before, checkpoint());
+    for (path, pin) in originals {
+        assert_eq!(digest(&fs::read(path).unwrap()), pin);
+    }
+    save(
+        &evidence,
+        "qualification-result.json",
+        &json!({"schema":"reel.retained-capacity-diagnostic-qualification.v1","original":original,"task_key":packet.task_key,"attempt_id":receipt.attempt_id,"activation":receipt.activation,"work":receipt.work,"capacity":preview,"checkpoint_sha256":before,"original_journal_and_controls_unchanged":true,"actual_index_unchanged":true,"original_retention_work_not_staged":true,"native_payloads_verified":false,"retained_acknowledged":false,"task_completed":false,"effects_applied":false,"runtime_adopted":false}),
+    );
+}
+
+#[test]
 #[ignore = "Existing retained repaired part and old sibling only; isolated exact source C, witnessed edge finalization, guarded part close and same-slot assembly-control retention; preserves every root and Waiting job"]
 fn retained_repaired_part_and_historical_sibling_drive_fresh_native_assembly_control() {
     let env = |key| PathBuf::from(std::env::var_os(key).expect(key));

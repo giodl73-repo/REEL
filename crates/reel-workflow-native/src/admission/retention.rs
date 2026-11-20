@@ -32,6 +32,92 @@ fn plan(
 }
 
 impl Prepared {
+    pub(crate) fn retained_capacity(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        target: &Target,
+    ) -> Result<crate::retention::CapacityPreview> {
+        self.check_receipt(receipt)?;
+        let (mut index, mut nodes) = self.stores(Some(receipt))?;
+        self.retained_scope(&index, target)?;
+        let _fences = self.actor_fences(&index, Some(&target.actor))?;
+        self.verify_live(receipt, &mut index, &mut nodes)?;
+        let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
+        let (operation, raw) = plan(&self.profile, receipt, &candidate, target)?;
+        let source = index
+            .actor(&mut nodes, &self.profile.scope.actor)
+            .map_err(|e| native_error(e.into()))?;
+        let retained = index
+            .actor(&mut nodes, &target.actor)
+            .map_err(|e| native_error(e.into()))?;
+        if !source.ready || !retained.ready {
+            return Err(error(
+                ErrorKind::Busy,
+                "retention-capacity-actors-not-ready",
+            ));
+        }
+        let source_objects: BTreeSet<_> = entries(&source.selection, &mut nodes)?
+            .into_values()
+            .chain([source.selection.root.clone()])
+            .collect();
+        let response =
+            work::read(&mut index, &candidate.work, &nodes).map_err(|e| native_error(e.into()))?;
+        let required: BTreeSet<_> = entries(&response.update.selection, &mut nodes)?
+            .into_values()
+            .chain([response.update.selection.root])
+            .collect();
+        if !required.is_subset(&source_objects) {
+            return Err(error(
+                ErrorKind::Stale,
+                "retention-original-response-coverage",
+            ));
+        }
+        let next = entries(&retained.selection, &mut nodes)?;
+        let retained_objects = next.values().collect::<BTreeSet<_>>().len();
+        let mut objects = source_objects.clone();
+        objects.extend([retained.selection.root.clone(), Object::from_bytes(&raw)]);
+        objects.extend(next.values().cloned());
+        let total = objects
+            .iter()
+            .try_fold(0u64, |n, o| n.checked_add(o.bytes))
+            .ok_or_else(|| error(ErrorKind::Budget, "retention-capacity-byte-overflow"))?;
+        let mut additional = 0;
+        for object in &objects {
+            let path = LogicalPath::parse(&format!("objects/{}", object.sha256.as_str()))
+                .map_err(|_| error(ErrorKind::Invalid, "retention-object-path"))?;
+            match next.get(&path) {
+                Some(old) if old != object => {
+                    return Err(error(ErrorKind::Conflict, "retention-object-path-conflict"));
+                }
+                Some(_) => {}
+                None => additional += 1,
+            }
+        }
+        let original = work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?;
+        let complete = original
+            .as_ref()
+            .map(|reference| {
+                work::complete(&mut index, reference).map_err(|e| native_error(e.into()))
+            })
+            .transpose()?;
+        let limits = self.projection_limits();
+        Ok(crate::retention::CapacityPreview {
+            schema: "reel.workflow-retained-capacity-preview.v1",
+            source_objects: source_objects.len(),
+            retained_objects,
+            combined_objects: objects.len(),
+            combined_logical_bytes: total,
+            object_limit: limits.objects,
+            logical_byte_limit: limits.logical_bytes,
+            additional_paths: additional,
+            changed_path_limit: protection::MAX_CHANGES,
+            resource_bound_ok: objects.len() <= limits.objects && total <= limits.logical_bytes,
+            changed_path_bound_ok: additional <= protection::MAX_CHANGES,
+            original_retention_work_exists: original.is_some(),
+            original_retention_work_complete: complete,
+        })
+    }
     /// Read-only preflight; later retention still rechecks actual coverage.
     pub(crate) fn check_retained_target(&self, target: &Target) -> Result<()> {
         let (mut index, mut nodes) = self.stores(None)?;

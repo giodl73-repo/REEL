@@ -77,8 +77,13 @@ source WorkRef is
 `work-51c39c89cc83343b91be8dd4f065ce10dba4bc138fe98176d7375f9234d44b5a`.
 Its source commit is `cc7db03ec47aac00f4e88aff5d54a3d54adaa28a` in the preserved
 owned source repository `F:/src/tig-dev-temp/.tmpXl2PSF`. Admission declares
-70 objects within the existing 128-path phase bound. The part remains Retained
-on an active source actor; it has not been closed, re-admitted or retired.
+70 objects within the existing 128-path phase bound. At that qualification the part
+remained Retained on an active source actor. The subsequent
+[derived control qualification](2026-11-20-derived-repair-edges.md) closed that
+original actor through the same 264efd runtime into retained coverage and reused
+slot2 for a distinct control operation. Its preserved history/packet has not been
+re-admitted or retired. The control operation is currently pending retention-capacity
+reconciliation; it must keep its own original handles.
 
 The verifier proves all eight returned artifacts through native retained-owner
 evidence. It additionally compares clean/reading PNG, transcript and editable

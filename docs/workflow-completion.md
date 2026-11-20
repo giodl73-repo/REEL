@@ -607,6 +607,14 @@ actual repaired-part -> new assembly-control fixture still requires frozen nativ
 qualification. Complete corrected-issue retention/contextual review, native later
 consumer qualification and the rest of the objective remain open.
 
+The corrected native control fixture now passes exact source/byte preflight and
+admission (65 objects), with guarded same-slot handoff and actual worker output.
+Managed import stopped at `retention-resource-bound`; that original control is
+ImportPending and protected, with no retained acknowledgement or task completion
+claimed. Retention-owner aggregation counts need read-only qualification and a
+bounded original-operation recovery path. Neither widening a source budget,
+resetting the actor nor deleting retained history is an acceptable implicit retry.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project

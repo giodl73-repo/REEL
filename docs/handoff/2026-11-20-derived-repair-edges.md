@@ -62,6 +62,37 @@ declares its bounded composite-v1 schema explicitly and saves preflight controls
 before checking them. A separate read-only audit must reopen the original part's
 exact activation and unchanged actual Index before any explicit replan.
 
+That audit passed in 0.32 seconds at source
+`6f78179b2595f8e1f04f7459171c267463ef8af5`. The corrected fixture under
+`F:/src/tig-dev-temp/reel-native-repair-control-20261120-v2` passed source/byte
+preflight, closed the original part with its original 264efd runtime, and admitted
+65 declared resources (189,660,512 logical bytes) in slot2. The worker produced
+the new control, but managed import stopped after 678.31 seconds with
+`Budget/handoff-retain:retention-apply:retention-resource-bound`.
+
+The original operation is `rooted-issue-control-original`, attempt
+`rooted-control-attempt-1`, task
+`c116b7dddd59a15c8d28eee16831bf9ac8594f99fc4a19d5c7e39c7f4bc47589`.
+Activation is `25e841600e8aa93861877f357eae98b84443b29769501862e646790bb5f119e6`,
+source WorkRef is
+`work-63343abc3b3600ed91e97a312fa2d5b25076516372e74000b735f902c9370d25`,
+and source commit is `c184b3db9b94e6001b91c3b69c2546a82750b7c1` in the owned
+`F:/src/tig-dev-temp/.tmpr8GNVM/source-history` repository. The journal remains
+ImportPending with no retained acknowledgement/task completion established.
+Source protection, published/uncertain objects, owned scratch, exact runtime and
+all original handles must be preserved. Do not restart the fixture or retry effects
+under another operation, source snapshot or runtime.
+
+The existing registration code bounds the union of the source and cumulative
+retained-owner history using the job's projection limits (v1: 512 objects / 1 GiB).
+This check is distinct from the 128 changed-path phase limit and the 65-resource
+initial closure. A new read-only `inspect-retention-capacity` command reports exact
+source/history union counts, bytes, delta paths and original retention-work status,
+while reopening the original activation and validating completed response metadata.
+It neither reads native output payloads nor changes budgets, creates retention
+work, returns a job slot or acknowledges completion. Its opt-in pending-operation
+diagnostic still requires frozen qualification before deciding the recovery path.
+
 Producer-applied comics-editor and rights/provenance checklists preserve source
 wording, stable targets, exact lineage and private technical derivatives. They do
 not establish viewing, independent review, creative/font/translation approval or
