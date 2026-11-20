@@ -73,6 +73,9 @@ mod movie_owned_files;
 #[path = "support/movie_verify.rs"]
 mod movie_verify;
 #[cfg(windows)]
+#[path = "support/original_consumer_execution.rs"]
+mod original_consumer_execution_native;
+#[cfg(windows)]
 #[path = "support/original_consumer_rebuild.rs"]
 mod original_consumer_rebuild_native;
 #[cfg(windows)]
