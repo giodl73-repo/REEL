@@ -64,13 +64,17 @@ attempt `owned-review-attempt-1`, operation `owned-issue-review-control-original
 activation `63d32b97a88978e5d8bdd9f0dbc15fc64f0824393c3762a88bb6e21d8e131266`.
 Its source WorkRef is
 `work-ea1de866eed7802b5ad4c3a7385d1911b30311b47cb660cceaf082cf0315c75b`.
-This new retained job still occupies `slot2`; it was not subsequently closed or
-retired. Never rerun this fixture or re-admit this scope/generation. Further
-consumers must use its retained result; slot reuse requires its own guarded close.
+At this qualification it remained on `slot2`. The subsequent
+[protected whole-issue report](2026-11-19-whole-issue-report.md) now closes that
+completed control job through its original runtime and reuses the enrolled slot
+for a distinct report task. Its original retained controls/history still reopen;
+the report now occupies slot2. Never rerun this fixture or re-admit the old scope
+or generation. Further consumers use the retained result.
 
 This is synthetic producer/lifecycle qualification, not model viewing or human
-review. A protected structured-review task, native report retention, issue/fix
-execution and larger/bilingual/real-project qualification remain separate.
+review. The subsequent linked report qualifies protected structured-review
+admission, retention and replay. Issue/fix execution, actual model/creative review
+and larger/bilingual/real-project qualification remain separate.
 There is no provider/tracker call, creative approval, selected master, private
 delivery, source binding adoption/rollback, scratch retirement or payload delete.
 Every uncertain ticket/activation/WorkRef and workspace must be preserved; never

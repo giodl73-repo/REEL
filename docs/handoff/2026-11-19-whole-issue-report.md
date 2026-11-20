@@ -29,7 +29,34 @@ unchanged. The valid scripted technical report targets balloons on both pages,
 uses the original attempt and exact pretty-printed bytes, reaches retained-owner
 acknowledgement and durable completion, replays without return-file arguments,
 and reopens a native checked report. Original small controls must retain their
-byte pins and the other Waiting job must reopen. Qualification is pending.
+byte pins and the other Waiting job must reopen. The corrected frozen qualifier
+passed in 354.45 seconds with exit 0 on 2026-11-20. It admits 71 declared objects
+within the 128-path phase limit, stages both PNGs and all six input pins, checks
+the specific three refusal codes before intent, and retains two scripted findings
+covering both pages. Resume without return-file arguments and native checked-report
+readback pass. The actual replay checkpoint digest remains
+`4ab1a854540d50c0eba060a46c12727519a1425548ff13c10b1728261eb374b1`.
+Original control files retain their byte pins and the other Waiting activation
+reopens. This is not proof of real model behavior or production throughput.
+
+Corrected evidence is retained at
+`F:/src/tig-dev-temp/reel-whole-issue-report-20261119-v2`.
+`qualified-report.json` SHA256 is
+`c1c06ee853f6897381c11ff93c02895f8839d3855be007571cfa1ff192eeebb6`.
+It pins 45 source/tool, original-refusal/audit, close, admission, brief, refusal,
+candidate, retained completion and replay artifacts. Source commit
+`9059eca261f1016d05ad18d7430a92194467ea2a` has 1,968 verified archived files,
+source-manifest SHA256
+`83b228221f4a4939fa28779848cda16c9e5bbf30e33f1f28dbfa39354ba8a6be`.
+The frozen release fixture is 29,288,448 bytes, SHA256
+`21411f1e73cd64128d86c4c54ca158449c01bf55d18cc0271ad16c35f9903e61`.
+The new task's frozen release CLI is 24,872,448 bytes, SHA256
+`ebd1fdb9fac7a2a4af8074f1d033340bcc7f197e98de256733654397fa192fd7`.
+All 134 workflow and 86 standard native tests pass (77 explicit native fixtures
+excluded), including 247 original SDK source pins and strict all-target Clippy
+for workflow and native with/without film. Regression evidence is pinned by
+`qualified-validation.json`, SHA256
+`dda6f8cc8be2da43f9b2604cc52bb0cf69b79de5eb63a8dd705812a438c89ab1`.
 
 The first frozen run (source `438562ca5d66d41b1efd1d641898b65410c1cf44`)
 refused native projection with `Missing/native-snapshot-resolution` in 30.00
@@ -54,12 +81,27 @@ test covers two-record narrowing, exact snapshot reopening, undeclared inputs,
 broad-scope refusal, empty fixed scopes and record-alias refusal without native
 payload access. A separate read-only refusal audit checks the original active
 generation and actual Index checkpoint before explicit replanning.
+The frozen audit passes in 0.32 seconds: the actual checkpoint is still
+`a77650bd1bc3ea0a41728385af365eb8cfbe463512a211626f586a8a1da928ba`,
+the original control activation reopens, and original files stay exact. No close
+or new admission began before that explicit replan. Both failed and successful
+source packets remain retained.
+
+The completed report task is
+`ee4b2dbcc74254ace4f8e95b400396d969fc5edea65e327785afb1b22cbe9145`,
+attempt `issue-report-attempt-1`, operation `whole-issue-report-original`,
+activation `e6f047dd31dded0ab32ee0052220ef790634831d4c81100a22872516968bec93`.
+Its source WorkRef is
+`work-c394e34daae05b8625a1777936c577e8d070f1b92f50496053b0e258d7ca4593`.
+It remains retained on active slot2; no subsequent close/reuse or scratch
+retirement occurred. Do not rerun either fixture or re-admit these generations.
 
 This is a scripted technical protocol exercise with no actual model call or
 creative defect assertion. Declared/staged images and a valid report are not
-verified viewing. Native report retention, actual image inspection, creative
-review, issue delivery, repair execution, source selection and release remain
-separate. There is no tracker/network call, selected master, runtime adoption,
+verified viewing. Native report retention is now qualified within this bounded
+fixture. Actual image inspection, creative review, issue delivery, repair
+execution, source selection and release remain separate. There is no
+tracker/network call, selected master, runtime adoption,
 scratch retirement or payload deletion. Preserve every partial original
 operation, activation, WorkRef and workspace; never restart the whole fixture
 under a new identity after uncertain effects.

@@ -49,6 +49,11 @@ now carries exact inherited selectors into a distinct admitted consumer, through
 guarded part-slot reuse, native retention/completion and actual-checkpoint replay.
 Its scope is the existing two-page Spanish fixture. Protected full-issue review,
 fix execution and actual larger project production remain separate gates.
+The [protected whole-issue report](handoff/2026-11-19-whole-issue-report.md)
+now qualifies exact reading-material declaration, fixed-record narrowing,
+independent review input protection, pre-intent semantic refusals and retained
+report completion/replay. Its two-page Spanish technical findings are scripted;
+model/creative review and the full-issue issue/fix lifecycle remain separate.
 
 ## Current implementation and boundary
 
