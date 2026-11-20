@@ -15,6 +15,9 @@ surface, while the Rust CLI owns manifest validation, render planning, and
 review-pack orchestration. FFmpeg remains an external renderer dependency rather
 than something REEL rewrites.
 
+For workflow commands, examples and current release gates, use
+[REEL workflow — start here](crates/reel-workflow/README.md).
+
 The additive [workflow orchestration plan](docs/workflow-orchestration.md) maps
 the existing crates to direct and manual prompt/result execution. The
 `reel-workflow` prototype checks private task packets and returned candidate bytes;

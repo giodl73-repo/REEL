@@ -1,0 +1,25 @@
+{
+  "schema": "reel.workflow-plan.v2",
+  "project": "workflow-preview-example",
+  "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tasks": [
+    {
+      "id": "comic-editorial-es",
+      "operation": "text-proposal",
+      "language": "es",
+      "prompt": "Ejemplo sintético, sin material de producción: propón un esquema de una página de cómic con tres viñetas. Asigna IDs estables a la página y a cada viñeta. Devuelve solamente texto; no inventes aprobaciones ni afirmes que se ha dibujado la página.",
+      "inputs": [],
+      "depends_on": [],
+      "outputs": {"proposal": {"media_type": "text/plain", "max_bytes": 4096, "required": true}}
+    },
+    {
+      "id": "film-cel-plan-en",
+      "operation": "text-proposal",
+      "language": "en",
+      "prompt": "Synthetic example with no production material: propose three cels for a twelve-second scene. Give each cel a stable story ID, target duration and semantic transition cue. Return plain text only; do not claim images, recordings or approvals exist.",
+      "inputs": [],
+      "depends_on": [],
+      "outputs": {"proposal": {"media_type": "text/plain", "max_bytes": 4096, "required": true}}
+    }
+  ]
+}

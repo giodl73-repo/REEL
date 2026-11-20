@@ -785,6 +785,16 @@ unadmitted; the retained supplemental report still owns slot2. Actual consumer
 execution/retention and rebinding the original `whole-issue-structured-report`
 from real resulting outputs remain required before full frontier/closure checks.
 
+The [original consumer execution](handoff/2026-11-20-original-consumer-execution.md)
+now passes its frozen native run: the original review-control task retains its
+three outputs and all six targets, with unchanged completed replay, preserved
+producer packets and reopened parent/Waiting histories. The original report has
+a 70-resource / 162,722,012-byte preflight from those actual outputs, but remains
+unadmitted. The 25.8-minute synthetic qualification is not a producer-facing
+release. The [workflow entry guide](../crates/reel-workflow/README.md) now makes
+packaging and actual BBJ/S5 consumer demonstrations the next delivery gates;
+additional synthetic variants must not substitute for those outcomes.
+
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect
 evidence leaves the objective active. Hosted checks and real service/project
