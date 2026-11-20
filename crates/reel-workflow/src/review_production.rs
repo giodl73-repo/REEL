@@ -22,7 +22,9 @@ pub(super) fn check_copy(witness: &Production, copy: &Copy) -> Result<()> {
             (&copy.format, tool.capability),
             (
                 Format::Comic { .. },
-                ToolCapability::ComicRender | ToolCapability::ComicIssueAssembly
+                ToolCapability::ComicRender
+                    | ToolCapability::ComicIssueAssembly
+                    | ToolCapability::LayeredComicCompose
             ) | (Format::Film { .. }, ToolCapability::FilmRender)
         )
     {

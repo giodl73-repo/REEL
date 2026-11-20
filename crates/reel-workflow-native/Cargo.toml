@@ -18,7 +18,7 @@ anyhow = "1.0.100"
 base64 = "0.22.1"
 fs2 = "=0.4.3"
 reel-assets = { path = "../reel-assets" }
-reel-workflow = { path = "../reel-workflow" }
+reel-workflow = { path = "../reel-workflow", features = ["comic"] }
 reel-workflow-http = { path = "../reel-workflow-http" }
 reel-publication = { path = "../reel-publication", features = ["comic"] }
 serde = { version = "1", features = ["derive"] }

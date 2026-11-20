@@ -30,6 +30,7 @@ impl InputReader for Inputs {
 pub(crate) struct Generated {
     _inputs: NativeInputs,
     bound: Option<reel_workflow::issue::BoundIssue>,
+    layered: Option<reel_workflow::layered::Bound>,
     pub(crate) outputs: reel_workflow::ArtifactSet,
     pub(crate) files: BTreeMap<String, Vec<u8>>,
     resolution: Option<crate::resolution::Proposal>,
@@ -66,6 +67,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         return Ok(Generated {
             _inputs: native,
             bound: None,
+            layered: None,
             outputs: generated.outputs,
             files: generated.files,
             resolution: Some(generated.checked),
@@ -109,6 +111,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         return Ok(Generated {
             _inputs: inputs.native,
             bound: None,
+            layered: None,
             outputs: generated.outputs,
             files: generated.files,
             resolution: None,
@@ -124,6 +127,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         return Ok(Generated {
             _inputs: inputs.native,
             bound: None,
+            layered: None,
             outputs: g.outputs,
             files: g.files,
             resolution: None,
@@ -143,6 +147,23 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         return Ok(Generated {
             _inputs: inputs.native,
             bound: None,
+            layered: None,
+            outputs: generated.outputs,
+            files: generated.files,
+            resolution: None,
+        });
+    }
+    if packet
+        .task
+        .tool
+        .as_ref()
+        .is_some_and(|t| t.capability == reel_workflow::ToolCapability::LayeredComicCompose)
+    {
+        let generated = reel_workflow::layered::generate(packet, &mut inputs)?;
+        return Ok(Generated {
+            _inputs: inputs.native,
+            bound: None,
+            layered: Some(generated.bound),
             outputs: generated.outputs,
             files: generated.files,
             resolution: None,
@@ -168,6 +189,7 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
     Ok(Generated {
         _inputs: inputs.native,
         bound: Some(bound),
+        layered: None,
         outputs: receipt.outputs,
         files,
         resolution: None,
@@ -257,7 +279,9 @@ fn receipt(generated: &Generated, result: &ReturnedResult, raw: &[u8]) -> Result
     {
         return Err(error(ErrorKind::Integrity, "issue-worker-receipt-replay"));
     }
-    if let Some(bound) = &generated.bound {
+    if let Some(bound) = &generated.layered {
+        bound.check_receipt(result, raw)
+    } else if let Some(bound) = &generated.bound {
         reel_workflow::issue::check_receipt(bound, result, raw)
     } else {
         // Both the receipt and every output must equal deterministic replay.
@@ -329,6 +353,16 @@ impl Proof {
         packet: &Packet,
         result: &ReturnedResult,
     ) -> Result<reel_workflow::review::Export> {
+        if let Some(bound) = &self._generated.layered {
+            let files = self
+                .files
+                .as_ref()
+                .ok_or_else(|| error(ErrorKind::Unsupported, "layered-review-capture-required"))?;
+            let raw = files
+                .get("receipt.json")
+                .ok_or_else(|| error(ErrorKind::Missing, "layered-review-receipt"))?;
+            return bound.review_copy(result, raw);
+        }
         let bound = self
             ._generated
             .bound

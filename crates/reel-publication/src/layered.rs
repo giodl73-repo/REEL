@@ -3,67 +3,21 @@
 use crate::comic::{object, read, write_new};
 use crate::comic_source::{Object, Pin};
 use anyhow::{Context, Result, ensure};
-use serde::{Deserialize, Serialize};
+
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Asset {
-    pub file: String,
-    pub sha256: String,
-    pub bytes: u64,
-}
-impl Asset {
-    fn pin(&self) -> Pin {
-        Pin {
-            path: self.file.clone(),
-            sha256: self.sha256.clone(),
-            bytes: self.bytes,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Layer {
-    pub id: String,
-    pub role: String,
-    pub asset: Asset,
-    #[serde(default)]
-    pub x: f64,
-    #[serde(default)]
-    pub y: f64,
-    #[serde(default = "one")]
-    pub opacity: f64,
-    #[serde(default = "yes")]
-    pub visible: bool,
-}
-fn one() -> f64 {
-    1.0
-}
-fn yes() -> bool {
-    true
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct Source {
-    pub schema: String,
-    pub canvas: [u32; 2],
-    pub title: String,
-    pub layers: Vec<Layer>,
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Request {
-    pub schema: String,
-    pub page_id: String,
-    pub language: String,
-    pub source: Pin,
-    /// Authored provenance is preserved as authored, including older script pins.
-    pub provenance: Vec<Pin>,
-    pub input_bytes: u64,
-    pub output_bytes: u64,
+pub use crate::layered_source::*;
+/// Validate the bounded reading-image payload before a managed result uses it.
+pub fn check_reading_png(raw:&[u8])->Result<()> {
+    ensure!(raw.len()>=24 && raw.len()<=16*1024*1024 && raw.starts_with(b"\x89PNG\r\n\x1a\n") && &raw[12..16]==b"IHDR", "reading PNG framing");
+    let w=u32::from_be_bytes(raw[16..20].try_into()?);let h=u32::from_be_bytes(raw[20..24].try_into()?);
+    ensure!((1..=4096).contains(&w) && (1..=6144).contains(&h) && u64::from(w)*u64::from(h)<=16*1024*1024,"reading pixel bound");
+    let decoded=resvg::tiny_skia::Pixmap::decode_png(raw)?;
+    ensure!(decoded.width()==w && decoded.height()==h,"reading PNG dimensions");
+    Ok(())
 }
 fn portable(path: &str) -> bool {
     crate::comic::portable(path) && path.split('/').count() <= 16

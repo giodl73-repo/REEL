@@ -174,6 +174,33 @@ fn publication_inputs(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        #[cfg(feature = "comic")]
+        [command, packet, bindings]
+            if command == "check-layered-task" || command == "replay-layered-task" =>
+        {
+            let packet: Packet = control(packet)?;
+            let paths: BTreeMap<String, String> = control(bindings)?;
+            let expected: std::collections::BTreeSet<_> =
+                packet.task.inputs.iter().map(|a| &a.logical_id).collect();
+            if expected != paths.keys().collect() {
+                return Err(error(ErrorKind::Conflict, "layered-local-binding-set"));
+            }
+            let mut reader = LocalInputs {
+                paths,
+                guards: Vec::new(),
+            };
+            if command == "check-layered-task" {
+                let bound = reel_workflow::layered::bind(&packet, &mut reader)?;
+                Ok(
+                    serde_json::json!({"ok":true,"scope":"local-layered-task-metadata","output_bytes":bound.output_bytes(),"payloads_verified":false,"native_admitted":false,"retained_owner_acknowledged":false}),
+                )
+            } else {
+                let generated = reel_workflow::layered::generate(&packet, &mut reader)?;
+                Ok(
+                    serde_json::json!({"ok":true,"scope":"local-layered-task-byte-replay","outputs":generated.outputs,"worker_receipt":reel_publication::comic::object(&generated.files["receipt.json"]),"payloads_verified":true,"outputs_written":false,"native_admitted":false,"retained_owner_acknowledged":false,"task_completed":false,"selected":false}),
+                )
+            }
+        }
         [
             command,
             packet,
@@ -415,6 +442,8 @@ fn main() -> std::process::ExitCode {
         println!(
             "reel-workflow: private task/result contract prototype\n\
 Usage: reel-workflow check-plan PLAN\n\
+       reel-workflow check-layered-task PACKET INPUT_BINDINGS\n\
+       reel-workflow replay-layered-task PACKET INPUT_BINDINGS\n\
        reel-workflow bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\n\
        reel-workflow bbj-compose PREPARED_BOOK NEW_DIRECTORY\n\
        reel-workflow bbj-compose-page REQUEST INPUT_BINDINGS NEW_DIRECTORY\n\

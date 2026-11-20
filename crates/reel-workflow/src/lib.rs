@@ -14,6 +14,7 @@ pub mod graph;
 pub mod handoff;
 pub mod issue;
 pub mod issue_control;
+pub mod layered;
 pub mod publication;
 pub mod recipe;
 pub mod repair;
@@ -91,6 +92,7 @@ pub enum Operation {
     ImageCandidate,
     SpeechCandidate,
     BrowserSourceCandidate,
+    ExternalSourceIntake,
     ReviewFinding,
     ReviewReport,
     DeterministicTool,
@@ -103,6 +105,7 @@ pub enum ToolCapability {
     FilmRender,
     FilmSceneControl,
     ComicRender,
+    LayeredComicCompose,
     ComicIssueAssembly,
     ComicIssueControl,
     ComicReviewControl,
@@ -352,10 +355,17 @@ fn task(value: &Task) -> Result<()> {
         artifact(binding)?;
         if binding.media_type != "application/json"
             || binding.bytes > MAX_CONTROL_BYTES as u64
-            || value.depends_on.is_empty()
+            || (value.depends_on.is_empty() && value.operation != Operation::ExternalSourceIntake)
         {
             return fail(ErrorKind::Invalid, "upstream-input-declaration");
         }
+    }
+    if value.operation == Operation::ExternalSourceIntake
+        && (!value.inputs.is_empty()
+            || !value.depends_on.is_empty()
+            || value.upstream_inputs.is_none())
+    {
+        return fail(ErrorKind::Invalid, "source-intake-root-contract");
     }
     let mut inputs = BTreeSet::new();
     for input in &value.inputs {
@@ -538,6 +548,13 @@ pub fn make_packet(
 
 pub fn check_result(packet: &Packet, result: &ReturnedResult) -> Result<()> {
     check_packet(packet)?;
+    if packet.task.operation == Operation::ExternalSourceIntake
+        && (result.provenance.mode != Mode::Handoff
+            || result.provenance.provider.is_some()
+            || result.provenance.model.is_some())
+    {
+        return fail(ErrorKind::Conflict, "source-intake-handoff-provenance");
+    }
     canonical_digest(result)?;
     if result.schema != RESULT_SCHEMA
         || !token(&result.attempt_id)

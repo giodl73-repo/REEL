@@ -9,6 +9,7 @@ pub mod comic;
 pub mod comic_issue;
 pub mod comic_issue_source;
 pub mod comic_source;
+pub mod layered_source;
 pub mod composition;
 #[cfg(feature = "comic")]
 pub mod layered;

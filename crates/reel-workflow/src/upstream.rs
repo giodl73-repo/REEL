@@ -58,6 +58,7 @@ pub struct Parent<'a> {
 impl Bindings {
     pub fn allowance(&self) -> Result<(u64, u64)> {
         match (self.schema.as_str(), &self.streaming) {
+            ("reel.workflow-upstream-empty.v1", None) => Ok((0, 0)),
             ("reel.workflow-upstream-inputs.v1" | "reel.workflow-upstream-inputs.v2", None) => {
                 Ok((64 * 1024 * 1024, 64 * 1024 * 1024))
             }
@@ -94,6 +95,18 @@ pub fn bind(
         return fail(ErrorKind::Integrity, "upstream-binding-content");
     }
     let (input_bytes, object_bytes) = bindings.allowance()?;
+    if bindings.schema == "reel.workflow-upstream-empty.v1" {
+        if !bindings.inputs.is_empty()
+            || !packet.task.inputs.is_empty()
+            || !parents.is_empty()
+            || !packet.dependencies.is_empty()
+            || !packet.task.depends_on.is_empty()
+            || packet.task.operation != Operation::ExternalSourceIntake
+        {
+            return fail(ErrorKind::Conflict, "upstream-empty-root-only");
+        }
+        return Ok(BTreeMap::new());
+    }
     if bindings.inputs.is_empty() || bindings.inputs.len() > MAX_INPUTS {
         return fail(ErrorKind::Invalid, "upstream-binding-contract");
     }

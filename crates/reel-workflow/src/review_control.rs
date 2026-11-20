@@ -305,7 +305,9 @@ pub fn generate_with_issue<R: InputReader>(
     };
     if !matches!(
         producer.capability,
-        ToolCapability::ComicRender | ToolCapability::ComicIssueAssembly
+        ToolCapability::ComicRender
+            | ToolCapability::ComicIssueAssembly
+            | ToolCapability::LayeredComicCompose
     ) || tool.publication != producer.publication
         || tool.edition_id != producer.edition_id
         || packet.task.language != parent.packet.task.language
@@ -339,19 +341,26 @@ pub fn generate_with_issue<R: InputReader>(
     {
         return fail(ErrorKind::Invalid, "review-control-output-contract");
     }
+    let input_bound = if producer.capability == ToolCapability::LayeredComicCompose {
+        256 * 1024 * 1024
+    } else {
+        64 * 1024 * 1024
+    };
     let mut total = 0u64;
     for pin in &expected {
         total = total
             .checked_add(pin.bytes)
-            .filter(|n| *n <= 64 * 1024 * 1024)
+            .filter(|n| *n <= input_bound)
             .ok_or(Error {
                 kind: ErrorKind::Budget,
                 code: "review-control-total-input-bytes".into(),
             })?;
-        read(reader, pin, 64 * 1024 * 1024)?;
+        read(reader, pin, input_bound)?;
     }
     let receipt = read(reader, &tool.request, MAX_CONTROL_BYTES as u64)?;
-    let mut exported = if producer.capability == ToolCapability::ComicIssueAssembly {
+    let mut exported = if producer.capability == ToolCapability::LayeredComicCompose {
+        crate::layered::bind(parent.packet, reader)?.review_copy(parent.result, &receipt)?
+    } else if producer.capability == ToolCapability::ComicIssueAssembly {
         let bound = crate::issue::bind(parent.packet, reader)?;
         crate::issue::check_receipt(&bound, parent.result, &receipt)?;
         let files = capture(parent.packet, parent.result, reader)?;

@@ -138,6 +138,23 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
         );
     }
     match args {
+        [command, source, profile, output] if command == "export-native-bindings" => {
+            use std::io::Write;
+            let source: NativeProfile = read_control(Path::new(source))?;
+            let profile: reel_workflow_native::admission::Profile =
+                read_control(Path::new(profile))?;
+            let raw = source.snapshot.declaration_bytes()?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "native-binding-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-native-binding-export","sha256":reel_workflow::digest(&raw),"bytes":raw.len(),"production_admitted":false,"selected":false}),
+            )
+        }
         [
             command,
             packet,
@@ -1430,6 +1447,7 @@ fn main() -> ExitCode {
     if matches!(args.as_slice(), [a] if a == "--help") {
         println!(concat!(
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
+            "reel-workflow-native export-native-bindings SOURCE_PROFILE ADMISSION_PROFILE NEW_BINDINGS\n",
             "reel-workflow-native inspect-run PLAN RUN_BINDINGS\n",
             "reel-workflow-native inspect-retention-capacity PACKET SOURCE ADMISSION RECEIPT RESULT TARGET\n",
             "reel-workflow-native inspect-input-closure PACKET SOURCE ADMISSION ATTEMPT\n",

@@ -472,3 +472,70 @@ fn streaming_schema_and_numeric_envelopes_cannot_expand_legacy_bindings() {
     bindings.streaming.as_mut().unwrap().input_bytes += 1;
     assert_eq!(bindings.allowance().unwrap_err().kind, ErrorKind::Budget);
 }
+
+#[test]
+fn explicit_empty_inputs_are_only_for_root_candidate_jobs() {
+    let mut bindings = Bindings {
+        schema: "reel.workflow-upstream-empty.v1".into(),
+        inputs: BTreeMap::new(),
+        streaming: None,
+    };
+    let mut job = task("external-source-intake");
+    job.operation = Operation::ExternalSourceIntake;
+    job.upstream_inputs = Some(asset(
+        "control/empty",
+        &bindings.canonical_bytes().unwrap(),
+        "application/json",
+    ));
+    let plan = |task: Task| Plan {
+        schema: PLAN_SCHEMA.into(),
+        project: "synthetic".into(),
+        source_commit: "a".repeat(40),
+        task_snapshots: BTreeMap::new(),
+        tasks: vec![task],
+    };
+    let make = |task: Task| make_packet(&plan(task), "external-source-intake", BTreeMap::new());
+    let accepted = make(job.clone()).unwrap();
+    bind(&accepted, &bindings, &BTreeMap::new()).unwrap();
+    job.inputs
+        .push(asset("hidden/source", b"hidden", "text/plain"));
+    assert_eq!(
+        make(job.clone()).unwrap_err().code,
+        "source-intake-root-contract"
+    );
+    job.inputs.clear();
+    job.operation = Operation::TextProposal;
+    assert_eq!(
+        make(job.clone()).unwrap_err().code,
+        "upstream-input-declaration"
+    );
+    job.operation = Operation::ExternalSourceIntake;
+    bindings.schema = "reel.workflow-upstream-inputs.v2".into();
+    job.upstream_inputs = Some(asset(
+        "control/empty",
+        &bindings.canonical_bytes().unwrap(),
+        "application/json",
+    ));
+    assert_eq!(
+        bind(&make(job).unwrap(), &bindings, &BTreeMap::new())
+            .unwrap_err()
+            .code,
+        "upstream-binding-contract"
+    );
+    let mut result = returned(&accepted, "external/note");
+    result.provenance.mode = Mode::Direct;
+    assert_eq!(
+        check_result(&accepted, &result).unwrap_err().code,
+        "source-intake-handoff-provenance"
+    );
+    bindings.schema = "reel.workflow-upstream-empty.v1".into();
+    bindings.streaming = Some(Streaming {
+        schema: "reel.workflow-upstream-streaming.v1".into(),
+        input_bytes: 1,
+        input_object_bytes: 1,
+    });
+    assert_eq!(
+        bindings.allowance().unwrap_err().code,
+        "upstream-version-envelope"
+    );
+}
