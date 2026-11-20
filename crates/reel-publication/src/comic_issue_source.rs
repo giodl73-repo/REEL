@@ -17,6 +17,59 @@ pub struct Assembly {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub bundles: BTreeMap<String, Pin>,
     pub limits: Limits,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub composition: Option<Composition>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Composition {
+    pub intent: Pin,
+    /// Part ID -> exact workflow producer task ID; native origins must verify it.
+    pub producers: BTreeMap<String, String>,
+}
+impl Assembly {
+    pub fn check_version(&self) -> Result<()> {
+        match (self.schema.as_str(), self.composition.is_some()) {
+            ("reel.comic-issue-assembly.v1", false) | ("reel.comic-issue-assembly.v2", true) => {
+                Ok(())
+            }
+            _ => fail(ErrorKind::Invalid, "issue-assembly-version-envelope"),
+        }
+    }
+}
+pub fn check_composition(
+    plan: &Plan,
+    spec: &Composition,
+    intent: &crate::composition::Intent,
+) -> Result<()> {
+    intent.check()?;
+    plan.check()?;
+    let edition = intent.editions.get(&plan.edition_id).ok_or(Error {
+        kind: ErrorKind::Missing,
+        code: "issue-composition-edition",
+    })?;
+    let publication = plan
+        .publication
+        .editions
+        .iter()
+        .find(|e| e.id == plan.edition_id)
+        .ok_or(Error {
+            kind: ErrorKind::Missing,
+            code: "issue-composition-publication",
+        })?;
+    if intent.format != crate::composition::Format::ComicIssue
+        || edition.language != publication.language
+        || spec.producers.keys().collect::<BTreeSet<_>>()
+            != plan.parts.iter().map(|p| &p.id).collect()
+        || !plan
+            .parts
+            .iter()
+            .map(|p| &spec.producers[&p.id])
+            .eq(edition.components.iter())
+    {
+        return fail(ErrorKind::Conflict, "issue-composition-order");
+    }
+    Ok(())
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

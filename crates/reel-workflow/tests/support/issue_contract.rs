@@ -56,6 +56,7 @@ fn fixture() -> (Plan, Memory, AssemblyReceipt) {
         serde_json::to_vec(&receipt).unwrap(),
     );
     let assembly = Assembly {
+        composition: None,
         bundles: BTreeMap::new(),
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: pin("plan.json", &plan_asset),
@@ -192,6 +193,117 @@ fn complete_issue_binds_every_editable_source_and_checks_original_receipt() {
             .unwrap_err()
             .code,
         "issue-receipt-correspondence"
+    );
+}
+
+#[test]
+fn versioned_issue_binds_intent_to_project_task_and_named_input() {
+    use reel_publication::{
+        comic_issue_source::Composition,
+        composition::{Edition, Format, Intent},
+    };
+    let (mut workflow, mut memory, _) = fixture();
+    let task = &mut workflow.tasks[0];
+    let tool = task.tool.as_mut().unwrap();
+    let mut assembly: Assembly =
+        serde_json::from_slice(&memory.bytes[&tool.request.logical_id]).unwrap();
+    let mut intent = Intent {
+        schema: "reel.workflow-composition-intent.v1".into(),
+        project: workflow.project.clone(),
+        format: Format::ComicIssue,
+        editions: BTreeMap::from([(
+            "es".into(),
+            Edition {
+                language: "es".into(),
+                components: vec!["draw-opening".into()],
+                controls: vec![],
+                final_task: task.id.clone(),
+            },
+        )]),
+    };
+    let intent_asset = memory.put(
+        "issue/intent",
+        "application/json",
+        serde_json::to_vec(&intent).unwrap(),
+    );
+    assembly.schema = "reel.comic-issue-assembly.v2".into();
+    assembly.composition = Some(Composition {
+        intent: pin("intent.json", &intent_asset),
+        producers: BTreeMap::from([("opening".into(), "draw-opening".into())]),
+    });
+    tool.source_bindings
+        .insert("intent.json".into(), intent_asset.logical_id.clone());
+    task.inputs.push(intent_asset);
+    let request = memory.put(
+        &tool.request.logical_id,
+        "application/json",
+        serde_json::to_vec(&assembly).unwrap(),
+    );
+    task.inputs
+        .iter_mut()
+        .filter(|a| a.logical_id == request.logical_id)
+        .for_each(|a| *a = request.clone());
+    tool.request = request;
+    let bound = reel_workflow::issue::bind(&packet(&workflow), &mut memory).unwrap();
+    let origins = bound.composition_origins().unwrap();
+    assert_eq!(
+        origins.parents,
+        std::collections::BTreeSet::from(["draw-opening".into()])
+    );
+    assert_eq!(
+        origins.inputs["part/opening/receipt"].task_id,
+        "draw-opening"
+    );
+    assert_eq!(
+        origins.inputs["part/opening/receipt"].artifact,
+        reel_workflow::upstream::Selector::WorkerReceipt
+    );
+    for change in ["project", "task", "language"] {
+        let mut bad_workflow = workflow.clone();
+        let mut bad_memory = memory.clone();
+        let original = serde_json::to_vec(&intent).unwrap();
+        match change {
+            "project" => intent.project = "another-project".into(),
+            "task" => intent.editions.get_mut("es").unwrap().final_task = "another-task".into(),
+            _ => intent.editions.get_mut("es").unwrap().language = "en".into(),
+        }
+        let asset = bad_memory.put(
+            "issue/intent",
+            "application/json",
+            serde_json::to_vec(&intent).unwrap(),
+        );
+        let mut request = assembly.clone();
+        request.composition.as_mut().unwrap().intent = pin("intent.json", &asset);
+        let task = &mut bad_workflow.tasks[0];
+        let tool = task.tool.as_mut().unwrap();
+        let request_asset = bad_memory.put(
+            &tool.request.logical_id,
+            "application/json",
+            serde_json::to_vec(&request).unwrap(),
+        );
+        for a in &mut task.inputs {
+            if a.logical_id == asset.logical_id {
+                *a = asset.clone();
+            }
+            if a.logical_id == request_asset.logical_id {
+                *a = request_asset.clone();
+            }
+        }
+        tool.request = request_asset;
+        assert!(reel_workflow::issue::bind(&packet(&bad_workflow), &mut bad_memory).is_err());
+        intent = serde_json::from_slice(&original).unwrap();
+    }
+    workflow.tasks[0]
+        .tool
+        .as_mut()
+        .unwrap()
+        .source_bindings
+        .remove("intent.json");
+    assert_eq!(
+        reel_workflow::issue::bind(&packet(&workflow), &mut memory)
+            .unwrap_err()
+            .code,
+        "issue-source-binding"
     );
 }
 #[test]

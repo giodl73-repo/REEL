@@ -271,6 +271,17 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 "producer_order_verified":false,"producer_closure_verified":false,"native_bindings_verified":false,"task_completed":false}),
             )
         }
+        [command, path, destination] if command == "export-composition-intent" => {
+            let declaration: reel_workflow::composition::Declaration = control(path)?;
+            publish_control(
+                destination,
+                &reel_workflow::composition::intent(&declaration)?,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"private-composition-intent-export",
+                "production_admitted":false,"producer_order_verified":false,"task_completed":false}),
+            )
+        }
         [command, plan, task_id, new_packet] if command == "export-task" => {
             let packet = reel_workflow::make_packet(&control(plan)?, task_id, Default::default())?;
             publish_packet(new_packet, &packet)?;
@@ -358,6 +369,7 @@ fn main() -> std::process::ExitCode {
 Usage: reel-workflow check-plan PLAN\n\
        reel-workflow check-composition DECLARATION\n\
        reel-workflow export-composition DECLARATION NEW_RECIPE NEW_REPORT\n\
+       reel-workflow export-composition-intent DECLARATION NEW_INTENT\n\
        reel-workflow check-review COPY REPORT\n\
        reel-workflow check-review-result PACKET RESULT COPY_INPUT COPY_PATH REPORT_OUTPUT REPORT_PATH\n\
        reel-workflow export-review-issues COPY REPORT ROUTES NEW_PROPOSALS\n\

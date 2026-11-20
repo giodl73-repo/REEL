@@ -364,6 +364,25 @@ fn cli_checks_only_authored_controls_and_exports_a_schedulable_recipe_without_ov
     let repeat = export();
     assert!(!repeat.status.success());
     assert_eq!(std::fs::read(&recipe).unwrap(), raw);
+    let intent_path = root.join("intent.json");
+    let export_intent = || {
+        std::process::Command::new(&cli)
+            .arg("export-composition-intent")
+            .arg(&path)
+            .arg(&intent_path)
+            .output()
+            .unwrap()
+    };
+    assert!(export_intent().status.success());
+    let intent_raw = std::fs::read(&intent_path).unwrap();
+    let exported: Intent = decode(&intent_raw).unwrap();
+    exported.check().unwrap();
+    assert_eq!(
+        canonical_digest(&exported).unwrap(),
+        canonical_digest(&intent(&declaration).unwrap()).unwrap()
+    );
+    assert!(!export_intent().status.success());
+    assert_eq!(std::fs::read(&intent_path).unwrap(), intent_raw);
     if temp.is_none() {
         let summary = serde_json::json!({"schema":"reel.workflow-composition-cli-qualification.v1","resources":600,
             "logical_source_bytes":flags["report"]["logical_source_bytes"],"recipe_sha256":digest(&raw),
@@ -379,6 +398,29 @@ fn cli_checks_only_authored_controls_and_exports_a_schedulable_recipe_without_ov
             .unwrap();
         output.sync_all().unwrap();
     }
+}
+
+#[test]
+fn composition_intent_excludes_recipe_bytes_and_keeps_edition_order() {
+    let mut declaration = fixture();
+    let original = canonical_digest(&intent(&declaration).unwrap()).unwrap();
+    declaration.recipe.steps[0]
+        .prompt
+        .push_str("\nRevised production direction.");
+    assert_eq!(
+        canonical_digest(&intent(&declaration).unwrap()).unwrap(),
+        original
+    );
+    declaration
+        .editions
+        .get_mut("es")
+        .unwrap()
+        .components
+        .reverse();
+    assert_ne!(
+        canonical_digest(&intent(&declaration).unwrap()).unwrap(),
+        original
+    );
 }
 
 #[test]

@@ -15,8 +15,27 @@ pub struct BoundIssue {
     parts: BTreeMap<String, Object>,
     pages: Vec<String>,
     output_bytes: u64,
+    composition: Option<CompositionOrigins>,
+}
+/// Expected logical origins, checked against frozen native upstream evidence by
+/// the managed adapter. Byte correspondence alone does not establish origin.
+#[derive(Debug)]
+pub struct CompositionOrigins {
+    pub parents: BTreeSet<String>,
+    pub inputs: BTreeMap<String, crate::upstream::Reference>,
+}
+impl CompositionOrigins {
+    fn insert(&mut self, id: String, reference: crate::upstream::Reference) -> Result<()> {
+        if self.inputs.insert(id, reference).is_some() {
+            return fail(ErrorKind::Conflict, "issue-composition-origin-alias");
+        }
+        Ok(())
+    }
 }
 impl BoundIssue {
+    pub fn composition_origins(&self) -> Option<&CompositionOrigins> {
+        self.composition.as_ref()
+    }
     pub fn output_bytes(&self) -> u64 {
         self.output_bytes
     }
@@ -87,8 +106,8 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
         MAX_CONTROL_BYTES as u64,
     )?)?;
     let request: Assembly = decode(&verified(reader, &tool.request, MAX_CONTROL_BYTES as u64)?)?;
-    if request.schema != "reel.comic-issue-assembly.v1"
-        || !(1..=128).contains(&request.parts.len())
+    request.check_version()?;
+    if !(1..=128).contains(&request.parts.len())
         || !(1..=128 * 1024 * 1024).contains(&request.limits.input_bytes)
         || !(1..=128 * 1024 * 1024).contains(&request.limits.output_bytes)
     {
@@ -142,6 +161,33 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
         return fail(ErrorKind::Conflict, "issue-edition-output-binding");
     }
     let mut expected = BTreeMap::from([(request.plan.path.clone(), pin_object(&request.plan))]);
+    let mut composition = if let Some(spec) = &request.composition {
+        let asset = leaf(packet, &spec.intent.path, &pin_object(&spec.intent))?;
+        let intent: reel_publication::composition::Intent =
+            decode(&verified(reader, asset, MAX_CONTROL_BYTES as u64)?)?;
+        reel_publication::comic_issue_source::check_composition(&plan, spec, &intent)?;
+        let edition = &intent.editions[&plan.edition_id];
+        if intent.project != packet.project || edition.final_task != packet.task.id {
+            return fail(ErrorKind::Conflict, "issue-composition-task-binding");
+        }
+        if expected
+            .insert(spec.intent.path.clone(), pin_object(&spec.intent))
+            .is_some()
+        {
+            return fail(ErrorKind::Conflict, "issue-source-path-alias");
+        }
+        Some(CompositionOrigins {
+            parents: edition
+                .components
+                .iter()
+                .chain(&edition.controls)
+                .cloned()
+                .collect(),
+            inputs: BTreeMap::new(),
+        })
+    } else {
+        None
+    };
     let mut parts = BTreeMap::new();
     for part in &plan.parts {
         let pin = &request.parts[&part.id];
@@ -154,9 +200,20 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
                 code: "issue-part-receipt-path".into(),
             })?;
         let receipt_asset = leaf(packet, &pin.path, &pin_object(pin))?;
+        if let Some(origins) = &mut composition {
+            let spec = request.composition.as_ref().expect("checked composition");
+            origins.insert(
+                receipt_asset.logical_id.clone(),
+                crate::upstream::Reference {
+                    task_id: spec.producers[&part.id].clone(),
+                    artifact: crate::upstream::Selector::WorkerReceipt,
+                },
+            )?;
+        }
         let receipt: Receipt = decode(&verified(reader, receipt_asset, MAX_CONTROL_BYTES as u64)?)?;
         if receipt.schema != "reel.comic-build-receipt.v1"
             || receipt.part_id.as_ref().is_some_and(|id| id != &part.id)
+            || (request.composition.is_some() && receipt.part_id.as_ref() != Some(&part.id))
             || receipt.publication_id != publication.id
             || receipt.edition_id != edition.id
             || receipt.language != edition.language
@@ -175,6 +232,18 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
         if let Some(bundle) = request.bundles.get(&part.id) {
             let object = pin_object(bundle);
             let asset = leaf(packet, &bundle.path, &object)?;
+            if let Some(origins) = &mut composition {
+                let spec = request.composition.as_ref().expect("checked composition");
+                origins.insert(
+                    asset.logical_id.clone(),
+                    crate::upstream::Reference {
+                        task_id: spec.producers[&part.id].clone(),
+                        artifact: crate::upstream::Selector::Output {
+                            name: "editable.packet".into(),
+                        },
+                    },
+                )?;
+            }
             if bundle.path != format!("{prefix}editable.packet")
                 || receipt.outputs.get("editable.packet") != Some(asset)
                 || asset.media_type != "application/vnd.reel.editable-packet.v1"
@@ -195,6 +264,16 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
         }
         for (name, asset) in &receipt.outputs {
             reel_publication::check_artifact(asset)?;
+            if let Some(origins) = &mut composition {
+                let spec = request.composition.as_ref().expect("checked composition");
+                origins.insert(
+                    asset.logical_id.clone(),
+                    crate::upstream::Reference {
+                        task_id: spec.producers[&part.id].clone(),
+                        artifact: crate::upstream::Selector::Output { name: name.clone() },
+                    },
+                )?;
+            }
             let path = format!("{prefix}{name}");
             if leaf(packet, &path, &object(asset))? != asset {
                 return fail(ErrorKind::Conflict, "issue-part-output-logical-binding");
@@ -251,6 +330,7 @@ pub fn bind(packet: &Packet, reader: &mut impl InputReader) -> Result<BoundIssue
         parts,
         pages: pages.iter().map(|p| p.id.clone()).collect(),
         output_bytes: request.limits.output_bytes,
+        composition,
     })
 }
 

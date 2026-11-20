@@ -141,6 +141,11 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         });
     }
     let bound = reel_workflow::issue::bind(packet, &mut inputs)?;
+    if let Some(expected) = bound.composition_origins() {
+        let origins = inputs.native.review_origins()?;
+        let actual = origins.bound(packet)?;
+        check_composition_origins(expected, &actual)?;
+    }
     let raw = source(
         packet,
         &inputs,
@@ -160,6 +165,29 @@ pub(crate) fn generate(packet: &Packet, native: NativeInputs) -> Result<Generate
         resolution: None,
     })
 }
+fn check_composition_origins(
+    expected: &reel_workflow::issue::CompositionOrigins,
+    actual: &BTreeMap<String, reel_workflow::upstream::BoundInput>,
+) -> Result<()> {
+    let parents = actual
+        .values()
+        .map(|a| a.reference.task_id.clone())
+        .collect::<BTreeSet<_>>();
+    if parents != expected.parents
+        || expected.inputs.iter().any(|(id, reference)| {
+            actual
+                .get(id)
+                .is_none_or(|bound| &bound.reference != reference)
+        })
+    {
+        return Err(error(
+            ErrorKind::Conflict,
+            "issue-composition-original-producers",
+        ));
+    }
+    Ok(())
+}
+
 fn receipt_pin(result: &ReturnedResult) -> Result<&Artifact> {
     result
         .worker_receipt
@@ -293,4 +321,76 @@ pub(crate) fn native_proof(
         _outputs: held,
         files,
     })
+}
+
+#[cfg(test)]
+mod composition_tests {
+    use super::*;
+    use reel_workflow::upstream::{BoundInput, Reference, Selector};
+
+    #[test]
+    fn composition_requires_original_receipt_and_bundle_producers_and_exact_parent_set() {
+        let receipt = Reference {
+            task_id: "draw-opening".into(),
+            artifact: Selector::WorkerReceipt,
+        };
+        let bundle = Reference {
+            task_id: "draw-opening".into(),
+            artifact: Selector::Output {
+                name: "editable.packet".into(),
+            },
+        };
+        let expected = reel_workflow::issue::CompositionOrigins {
+            parents: BTreeSet::from(["draw-opening".into(), "assembly-control".into()]),
+            inputs: BTreeMap::from([
+                ("receipt".into(), receipt.clone()),
+                ("bundle".into(), bundle.clone()),
+            ]),
+        };
+        let input = |reference| BoundInput {
+            reference,
+            artifact: Artifact {
+                logical_id: "synthetic".into(),
+                sha256: "a".repeat(64),
+                bytes: 1,
+                media_type: "application/json".into(),
+            },
+            result_sha256: "b".repeat(64),
+        };
+        // Frozen::bound separately verifies artifacts against original parent
+        // packets/results. This unit check covers the editorial origin matcher.
+        let actual = BTreeMap::from([
+            ("receipt".into(), input(receipt)),
+            ("bundle".into(), input(bundle)),
+            (
+                "request".into(),
+                input(Reference {
+                    task_id: "assembly-control".into(),
+                    artifact: Selector::Output {
+                        name: "assembly.json".into(),
+                    },
+                }),
+            ),
+        ]);
+        check_composition_origins(&expected, &actual).unwrap();
+        let mut wrong = actual.clone();
+        wrong.get_mut("receipt").unwrap().reference.task_id = "different-drawing".into();
+        assert!(check_composition_origins(&expected, &wrong).is_err());
+        let mut wrong = actual.clone();
+        wrong.get_mut("receipt").unwrap().reference.artifact = Selector::Output {
+            name: "receipt.json".into(),
+        };
+        assert!(check_composition_origins(&expected, &wrong).is_err());
+        let mut wrong = actual.clone();
+        wrong.get_mut("bundle").unwrap().reference.artifact = Selector::Output {
+            name: "reading.pdf".into(),
+        };
+        assert!(check_composition_origins(&expected, &wrong).is_err());
+        let mut wrong = actual.clone();
+        wrong.remove("bundle");
+        assert!(check_composition_origins(&expected, &wrong).is_err());
+        let mut wrong = actual;
+        wrong.remove("request");
+        assert!(check_composition_origins(&expected, &wrong).is_err());
+    }
 }

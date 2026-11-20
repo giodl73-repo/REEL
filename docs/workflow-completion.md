@@ -109,6 +109,15 @@ producer closure, actual editorial order, admission and completion remain false;
 this is not real E7 resource resolution or an executable episode composition.
 The pending large native job is not retried by these metadata commands.
 
+The [comic composition intent](handoff/2026-11-19-comic-composition-intent.md)
+adds independent intent export and explicit v2 issue requests. The renderer checks
+ordered part-to-producer mapping and carries intent into editable replay; workflow
+binding checks project/final task and named exact inputs, while native execution
+and replay require original receipt/output selectors and the exact declared parent
+set. Legacy v1 request bytes are preserved. Rendered synthetic replay and origin
+matcher tests cover these checks. Derived v2 control generation, managed v2 comic
+lifecycle qualification, film integration and real S5 production remain open.
+
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 has an unresolved large-native prerequisite documented by the
 [3.6 GB native result fixture](handoff/2026-11-19-large-native-return.md). The

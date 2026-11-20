@@ -400,6 +400,7 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
     assert_eq!(report["outputs_written"], false);
     assert_eq!(report["payloads_verified"], false);
     let assembly = Assembly {
+        composition: None,
         bundles,
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: plan_pin,
@@ -552,6 +553,101 @@ fn issue_parts_reassemble_in_order_and_restore_without_original_folders() {
     let mut expected_files = std::collections::BTreeMap::new();
     collect_packet(&second, &second, &mut expected_files);
     assert_eq!(captured_files, expected_files);
+    // Versioned intent binds the actual part order and travels with the editable
+    // issue, independently of its original recipe or request hash.
+    use reel_publication::{
+        comic_issue_source::Composition,
+        composition::{Edition as CompositionEdition, Format, Intent},
+    };
+    let intent = Intent {
+        schema: "reel.workflow-composition-intent.v1".into(),
+        project: "issue-demo".into(),
+        format: Format::ComicIssue,
+        editions: std::collections::BTreeMap::from([(
+            plan.edition_id.clone(),
+            CompositionEdition {
+                language: "es".into(),
+                components: vec!["draw-opening".into(), "draw-spread".into()],
+                controls: vec![],
+                final_task: "assemble-es".into(),
+            },
+        )]),
+    };
+    let intent_bytes = serde_json::to_vec(&intent).unwrap();
+    let intent_object = object(&intent_bytes);
+    memory.insert("intent.json".into(), intent_bytes);
+    let mut versioned: Assembly = serde_json::from_slice(&request_raw).unwrap();
+    assert!(
+        !serde_json::to_value(&versioned)
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("composition")
+    );
+    versioned.schema = "reel.comic-issue-assembly.v2".into();
+    versioned.composition = Some(Composition {
+        intent: Pin {
+            path: "intent.json".into(),
+            sha256: intent_object.sha256,
+            bytes: intent_object.bytes,
+        },
+        producers: std::collections::BTreeMap::from([
+            ("opening".into(), "draw-opening".into()),
+            ("spread".into(), "draw-spread".into()),
+        ]),
+    });
+    let run = |request: &Assembly, sources: &std::collections::BTreeMap<String, Vec<u8>>| {
+        reel_publication::comic_issue::capture_with(
+            &serde_json::to_vec(request).unwrap(),
+            |path, _| {
+                sources
+                    .get(path)
+                    .cloned()
+                    .ok_or_else(|| anyhow::anyhow!("missing source"))
+            },
+        )
+    };
+    let (bound, retained) = run(&versioned, &memory).unwrap();
+    assert_eq!(bound.outputs, captured.outputs);
+    assert!(retained.contains_key("composition-intent.json"));
+    let relocated: Assembly = serde_json::from_slice(&retained["assembly.json"]).unwrap();
+    assert_eq!(run(&relocated, &retained).unwrap().0.outputs, bound.outputs);
+    let mut wrong = versioned.clone();
+    let producers = &mut wrong.composition.as_mut().unwrap().producers;
+    producers.insert("opening".into(), "draw-spread".into());
+    producers.insert("spread".into(), "draw-opening".into());
+    assert!(
+        run(&wrong, &memory)
+            .unwrap_err()
+            .to_string()
+            .contains("issue-composition-order")
+    );
+    let mut wrong_language = intent;
+    wrong_language
+        .editions
+        .get_mut(&plan.edition_id)
+        .unwrap()
+        .language = "en".into();
+    let changed = serde_json::to_vec(&wrong_language).unwrap();
+    let pin = object(&changed);
+    let mut wrong = versioned.clone();
+    wrong.composition.as_mut().unwrap().intent.sha256 = pin.sha256;
+    wrong.composition.as_mut().unwrap().intent.bytes = pin.bytes;
+    let mut sources = memory.clone();
+    sources.insert("intent.json".into(), changed);
+    assert!(
+        run(&wrong, &sources)
+            .unwrap_err()
+            .to_string()
+            .contains("issue-composition-order")
+    );
+    assert!(run(&versioned, &sources).is_err()); // Original pin cannot accept changed intent.
+    let mut wrong = versioned.clone();
+    wrong.schema = "reel.comic-issue-assembly.v1".into();
+    assert!(run(&wrong, &memory).is_err());
+    wrong = versioned.clone();
+    wrong.composition = None;
+    assert!(run(&wrong, &memory).is_err());
     memory.insert(
         "parts/opening/editable.packet".into(),
         b"changed retained output".to_vec(),

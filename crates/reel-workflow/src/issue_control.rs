@@ -192,6 +192,7 @@ pub fn generate(packet: &Packet, reader: &mut impl InputReader) -> Result<Genera
         return fail(ErrorKind::Conflict, "issue-control-unused-input");
     }
     let assembly = Assembly {
+        composition: None,
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: pin(request.plan_path, &plan_asset),
         parts,

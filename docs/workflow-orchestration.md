@@ -21,6 +21,11 @@ authored fixed-resource closures and edition/component recipes through
 example establishes metadata accounting and recipe export only; native binding,
 producer closure/order, admission and episode execution still require their
 separate proofs. It does not bypass the pending large-native recovery boundary.
+The additive [comic composition intent](handoff/2026-11-19-comic-composition-intent.md)
+now binds explicit v2 issue assembly requests to actual ordered parts and checks
+native frozen producer origins. Rendered editable replay and origin matcher tests
+cover that bounded integration; derived v2 control generation and managed v2
+lifecycle qualification remain open.
 
 ## Current implementation and boundary
 

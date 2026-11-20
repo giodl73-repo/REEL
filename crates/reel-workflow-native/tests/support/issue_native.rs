@@ -418,6 +418,7 @@ fn complete_issue(derived_control: bool) {
         part_data[1].1.outputs["reading.pdf"].logical_id
     );
     let assembly = Assembly {
+        composition: None,
         bundles: bundle_pins,
         schema: "reel.comic-issue-assembly.v1".into(),
         plan: assets.pin("issue-plan.json"),

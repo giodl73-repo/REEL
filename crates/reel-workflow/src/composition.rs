@@ -5,29 +5,13 @@ use crate::{
     *,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Format {
-    Film,
-    ComicIssue,
-}
+pub use reel_publication::composition::{Edition, Format, Intent};
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Resource {
     /// Consumer task snapshot, not an assertion of Git/annex origin or custody.
     pub context_commit: String,
     pub artifact: Artifact,
-}
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Edition {
-    pub language: String,
-    /// Authored editorial order; producer-specific controls must enforce it.
-    pub components: Vec<String>,
-    /// Other directly consumed parent tasks, excluded from editorial order.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub controls: Vec<String>,
-    pub final_task: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -47,6 +31,17 @@ pub struct Declaration {
     pub resources: BTreeMap<String, Resource>,
     pub editions: BTreeMap<String, Edition>,
     pub limits: Limits,
+}
+pub fn intent(declaration: &Declaration) -> Result<Intent> {
+    check(declaration)?;
+    let intent = Intent {
+        schema: "reel.workflow-composition-intent.v1".into(),
+        project: declaration.recipe.base.project.clone(),
+        format: declaration.format.clone(),
+        editions: declaration.editions.clone(),
+    };
+    intent.check()?;
+    Ok(intent)
 }
 #[derive(Serialize)]
 pub struct Stage {

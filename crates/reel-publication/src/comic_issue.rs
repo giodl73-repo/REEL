@@ -110,9 +110,9 @@ pub fn capture_with(
         "issue request byte bound exceeded"
     );
     let request: Assembly = serde_json::from_slice(raw)?;
+    request.check_version()?;
     ensure!(
-        request.schema == "reel.comic-issue-assembly.v1"
-            && (1..=128).contains(&request.parts.len())
+        (1..=128).contains(&request.parts.len())
             && (1..=128 * 1024 * 1024).contains(&request.limits.input_bytes)
             && (1..=128 * 1024 * 1024).contains(&request.limits.output_bytes),
         "issue assembly limits refused"
@@ -120,6 +120,14 @@ pub fn capture_with(
     let plan_raw = pinned(&mut input, &request.plan, crate::MAX_CONTROL_BYTES as u64)?;
     let plan: Plan = serde_json::from_slice(&plan_raw)?;
     plan.check()?;
+    let intent_raw = if let Some(spec) = &request.composition {
+        let bytes = pinned(&mut input, &spec.intent, crate::MAX_CONTROL_BYTES as u64)?;
+        let intent = serde_json::from_slice(&bytes)?;
+        crate::comic_issue_source::check_composition(&plan, spec, &intent)?;
+        Some(bytes)
+    } else {
+        None
+    };
     ensure!(
         request.parts.len() == plan.parts.len()
             && plan.parts.iter().all(|p| request.parts.contains_key(&p.id)),
@@ -143,7 +151,7 @@ pub fn capture_with(
     let mut part_receipts = BTreeMap::new();
     let mut pdfs = Vec::new();
     let mut transcript_pages = Vec::new();
-    let mut used = (raw.len() + plan_raw.len()) as u64;
+    let mut used = (raw.len() + plan_raw.len() + intent_raw.as_ref().map_or(0, Vec::len)) as u64;
     let mut font_binding = None;
     for part in &plan.parts {
         let pin = &request.parts[&part.id];
@@ -211,6 +219,7 @@ pub fn capture_with(
         let build: Request = serde_json::from_slice(&packet.files["sources/request.json"])?;
         ensure!(
             build.part_id.as_ref().is_none_or(|id| id == &part.id)
+                && (request.composition.is_none() || build.part_id.as_ref() == Some(&part.id))
                 && build.publication_id == plan.publication.id
                 && build.edition_id == plan.edition_id
                 && build.language == edition.language
@@ -314,6 +323,10 @@ pub fn capture_with(
     // Captured packets are independently reopenable at their new relative paths.
     // Preserve the original request separately; do not pretend relocation kept its hash.
     let relocated = Assembly {
+        composition: request.composition.clone().map(|mut spec| {
+            spec.intent.path = "composition-intent.json".into();
+            spec
+        }),
         plan: Pin {
             path: "issue-plan.json".into(),
             ..request.plan.clone()
@@ -346,6 +359,9 @@ pub fn capture_with(
             .collect(),
         ..request.clone()
     };
+    if let Some(bytes) = intent_raw {
+        files.insert("composition-intent.json".into(), bytes);
+    }
     files.insert(
         "assembly.json".into(),
         serde_json::to_vec_pretty(&relocated)?,
