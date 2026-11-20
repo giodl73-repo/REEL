@@ -11,6 +11,12 @@ It combines creative authoring tools with frame/sample timing, multilingual
 composition, managed execution, revision tracking and independent media checks.
 Producing projects own their content, creative decisions and release authority.
 
+The practical benefit is controlled iteration across a complete production.
+For example, replacing a cel can preserve the dialogue and unaffected pictures,
+identify the work that needs rebuilding and keep the earlier edition recoverable.
+The same approach connects a song to its video, an episode to its language
+editions and a finished programme to its source and review evidence.
+
 **Explore:** [Capabilities](docs/capabilities.md) ·
 [Getting started](docs/getting-started.md) · [Use cases](docs/use-cases.md) ·
 [Architecture](docs/architecture.md) · [Documentation](docs/README.md)
@@ -32,6 +38,29 @@ and tools, including optional runtime requirements. The separate
 task, review and handoff lifecycle; its active branch is not part of this main
 checkout's support claim.
 
+## Dependencies and integrations
+
+REEL combines its own media contracts, authoring tools, compilers and independent
+checks with established rendering, generation and asset technologies:
+
+| Technology | Contribution | Integration scope |
+| --- | --- | --- |
+| Rust and Cargo | Native contracts, compilers, authoring tools and production orchestration | REEL's core workspace; optional features select additional tools |
+| FFmpeg / FFprobe | Picture/audio processing, encoding, mixing, probing and decoded-media checks | External media executables, explicitly identified for production |
+| Chromium-compatible browsers | Frame-clock rendering of supported HTML/SVG/CSS/JS compositions | External browser runtime; separate browser surfaces host editors and graph inspection |
+| [Tig](docs/tig-public-integration.md) | Exact asset identities, Git snapshots, verified byte access and retention/history services | Optional asset integration, with [pinned upstream source](vendor/README.md) vendored for reproducible builds |
+| [ACE-Step](docs/song-generation-v0.2.25.md) | Local AI music generation | Optional generation adapter; runtime and model weights are installed and pinned separately |
+| [ElevenLabs](docs/tig-speech-generation.md) | Generated speech and narration | Optional, explicit speech-provider adapter; performances remain candidates for project review |
+| [PyTorch, Whisper and Demucs](docs/local-song-auditions.md) | Model execution, speech recognition and vocal/source analysis | Selected local music adapters use a separately installed Python/model environment |
+
+Projects can supply existing recordings, pictures and performances as well as
+generated material. REEL's contribution is preserving intent, timing, versions
+and evidence as those inputs become editable scenes and finished productions.
+MusicXML, MIDI and OpenTimelineIO provide additional score/editor interchange
+routes. Dependencies are selected per workflow; the introductory planning example
+needs no media engine or provider account. See [installation](docs/setup/install.md)
+for runtime requirements and [capabilities](docs/capabilities.md) for detailed scope.
+
 ## Choose a workflow
 
 | I want to… | Start with |
@@ -45,6 +74,9 @@ checkout's support claim.
 | Reproduce, revise or recover a production | [Production engineering guide](docs/capabilities.md#production-engineering) and [Tig integration](docs/tig-public-integration.md) |
 | Find an exact command, schema or specialist operation | [Complete reference index](docs/reference-index.md) |
 | Inspect a semantic dependency graph in a browser | [WASM workbench](https://giodl73-repo.github.io/REEL/assembly/) |
+
+<details>
+<summary>Technical setup, architecture and support details</summary>
 
 ## Try it
 
@@ -109,6 +141,8 @@ dated source/adoption checkpoint.
 [CI](https://github.com/giodl73-repo/REEL/actions/workflows/ci.yml)
 qualifies source with synthetic fixtures; creative acceptance remains a project
 decision.
+
+</details>
 
 ## Editorial review
 
