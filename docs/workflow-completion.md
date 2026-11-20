@@ -98,6 +98,20 @@ pins and strict Clippy pass. This is private planning export, not native large
 child admission, automatic episode partitioning or production adoption.
 
 The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
+has an unresolved large-native prerequisite documented by the
+[3.6 GB native result fixture](handoff/2026-11-19-large-native-return.md). The
+actual run closes/reuses the prior synthetic movie slot and preserves its native
+history. Initial ingress fails; one original-identity resume advances publication
+but fails retained-output preflight. Inspections preserve the same complete
+candidate WorkRef and output claims, with an exact native location now reported
+and unchanged Index checkpoint. The job stays ImportPending with no retained ack
+or task completion; its scratch/claims are preserved and no further retry occurs.
+The [Tig request](handoff/2026-11-19-tig-large-native-io-requirements.md) covers
+caller-bounded I/O, structured phase errors and original-work reconciliation.
+This gate is not qualified by the 84 passing standard native tests or prior local
+hash tests. Original source job `.tmpy4yMWg` is now closed; do not re-admit it.
+
+The [streamed input staging adapter](handoff/2026-11-19-streamed-input-staging.md)
 now copies native inputs through fixed 64 KiB buffers without capturing the whole
 input set. It preserves exact bindings/gates, original tickets, capacity, partial
 parts and final completion checks. Its 60.62-second native fixture exports and

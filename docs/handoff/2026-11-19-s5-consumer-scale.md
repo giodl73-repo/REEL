@@ -116,6 +116,16 @@ exports. Its existing-parent fixture preserves the actual Index checkpoint and
 creates no child admission. Automatic partitioning and the full episode-scale
 protection, render, return and recovery requirements remain open.
 
+The subsequent [3.6 GB native result attempt](2026-11-19-large-native-return.md)
+produces concrete negative end-to-end evidence: exact input admission and
+candidate/output protection pass, and a bounded same-identity resume advances
+publication, but retained-output preflight returns NeedsRecovery. The preserved
+job remains ImportPending with positive claims and no retained acknowledgement.
+Previous movie history verifies after close/reuse. This is not S5 adoption or
+successful large native lifecycle qualification. The linked
+[Tig requirements](2026-11-19-tig-large-native-io-requirements.md) define the
+remaining bounded I/O/error/reconciliation work.
+
 The [native input staging adapter](2026-11-19-streamed-input-staging.md) now
 stream-copies exact inputs with fixed 64 KiB buffers and preserves partial-copy
 recovery, native gates, tickets and claims. Its ten-input movie fixture passes
