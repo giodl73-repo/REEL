@@ -579,15 +579,24 @@ remain open. A planning candidate and private issue drafts close neither gate.
 The [native part repair fixture](handoff/2026-11-19-native-part-repair.md) now
 targets the next boundary: a real exact source declaration, guarded original-report
 slot handoff and protected retained execution of only the corrected opening.
-It still requires frozen-source qualification. Complete corrected-issue controls,
-assembly, contextual review and the remaining project requirements stay open.
+The original native dispatch completed, then its fixture failed while recording
+updated staged bindings. The original operation's frozen 174.18-second follow-up
+now verifies retained proof, all eight outputs, exact local editable-part bytes,
+stable target IDs, historical report/closing-part access, the Waiting generation
+and replay with unchanged actual Index state. No close, admission, publication or
+render is repeated. Both the failed run and successful original-operation proof
+remain preserved. Complete corrected-issue controls, assembly, contextual review
+and the remaining project requirements stay open.
 
 [Repair-revision v3](handoff/2026-11-20-repair-task-snapshots.md) now names exact
 snapshots for every rebuilt task, allowing later consumer commits without changing
 an already frozen repair-root packet. Two additional workflow tests pass (139
-total), with legacy revision JSON preserved. This is planning qualification; native
-v3 export, actual corrected whole-issue execution and explicit reviewed-producer
-binding for repeated mixed-snapshot repair loops remain open.
+total), with legacy revision JSON preserved. A separate frozen 36.56-second native
+v3 export reopens the actual retained part, preserves its exact packet/plan and
+leaves actual Index state unchanged. Native later-commit consumer execution,
+derived-output identity/edge finalization, actual corrected whole-issue execution
+and explicit reviewed-producer binding for repeated mixed-snapshot repair loops
+remain open. A same-logical-ID asset edit cannot rename a task-key-derived output.
 
 The final audit must inspect every listed command, contract, named integration,
 test, gate and deliverable at its actual scope. Unknown, missing or indirect

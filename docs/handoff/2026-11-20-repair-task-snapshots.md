@@ -31,12 +31,16 @@ legacy behavior/serialization and strict map/version refusal. All 139 workflow
 tests and strict workflow Clippy pass. The opt-in
 `retained_part_packet_survives_native_v3_revision_export` follow-up checks a real
 retained part before read-only native CLI export, exact plan/root-packet equality
-and an unchanged actual Index checkpoint. It still requires frozen qualification.
-This is metadata planning qualification; corrected complete-issue execution still
+and an unchanged actual Index checkpoint. It passed in 36.56 seconds at source
+`e7881f3e4726719bbcbd9310166678d7477f3f94`, following the
+[original-operation part verification](2026-11-19-native-part-repair.md).
+The exported v3 candidate is exactly equal to that retained root's earlier plan;
+the native qualifier does not execute consumers at a later commit. The separate
+two-commit tests remain metadata checks. Corrected complete-issue execution still
 needs actual qualified results. It does not relax the existing ambiguous mixed-snapshot
 baseline refusal. Repeated repair loops over such a completed multi-commit plan
 still need an explicit authenticated reviewed-producer binding.
 
-The concurrently running corrected-part job remains bound to its original frozen
-runtime and source packet. This planning change does not adopt that job into a
+The retained corrected-part job remains bound to its original frozen runtime
+and source packet. This planning change does not adopt that job into a
 new binary, modify its source commit, release protection or select anything.
