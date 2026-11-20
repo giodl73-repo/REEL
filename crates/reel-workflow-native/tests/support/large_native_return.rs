@@ -426,8 +426,12 @@ fn inspect_original_large_native_result() {
         .unwrap()
         .checkpoint();
     assert_eq!(before, after);
+    let report = (0..4)
+        .map(|i| root.join(format!("inspection-{i}.json")))
+        .find(|p| !p.exists())
+        .expect("Bounded read-only inspections exhausted");
     save(
-        root.join("original-inspection.json"),
+        report,
         &json!({"schema":"reel.workflow-large-native-inspection.v1",
         "task_key":packet.task_key,"attempt_id":result.attempt_id,"journal_state":journal.state(),
         "candidate":candidate,"candidate_work_complete":completed,"protected_by":protected,
