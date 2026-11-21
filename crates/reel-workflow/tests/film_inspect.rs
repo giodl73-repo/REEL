@@ -82,6 +82,8 @@ impl Fixture {
         authored["schema"] = json!("reel.scene-authoring.v2");
         authored["canonical_cue_ids"] = json!(["source-block-1"]);
         authored["shared_events"] = json!([{"semantic_id":"first-line", "canonical_cue_id":"source-block-1",
+            "picture_binding":"picture.first-line", "score":{"disposition":"role","role":"poem.intimate"}},
+            {"semantic_id":"second-line", "canonical_cue_id":"source-block-1",
             "picture_binding":"picture.first-line", "score":{"disposition":"role","role":"poem.intimate"}}]);
         let mut cues = BTreeMap::new();
         let mut identities = BTreeMap::new();
@@ -96,7 +98,10 @@ impl Fixture {
             authored["languages"][lang]["events"] = json!([]);
             authored["language_event_bindings"][lang] = json!([{"semantic_id":"first-line", "event_id":format!("{lang}-event-1"),
                 "cue_id":cue_id, "semantic_trigger_id":"first-line", "spoken_trigger_phrase":text.split_whitespace().next().unwrap(),
-                "picture_slot_id":format!("{lang}-picture-slot")}]);
+                "picture_slot_id":format!("{lang}-picture-slot")},
+                {"semantic_id":"second-line", "event_id":format!("{lang}-event-2"),
+                "cue_id":cue_id,"semantic_trigger_id":"second-line", "spoken_trigger_phrase":text.split_whitespace().nth(1).unwrap(),
+                "picture_slot_id":format!("{lang}-picture-slot-2")}]);
             let text = put(
                 &mut documents,
                 &format!("{lang}.txt"),
@@ -116,7 +121,7 @@ impl Fixture {
                 &format!("{lang}-alignment.json"),
                 json!({
                     "schema":"reel.scene-native-alignment.v1", "language":lang,"cue_id":cue_id,
-                    "selected_take_sha256":sha.repeat(64),"sample_rate":rate,"cue_end_sample":end,"semantic_markers":{"first-line":0}
+                    "selected_take_sha256":sha.repeat(64),"sample_rate":rate,"cue_end_sample":end,"semantic_markers":{"first-line":0,"second-line":start+300}
                 }),
             );
             alignment.artifact.logical_id = format!("{lang}-alignment-1");
@@ -134,13 +139,22 @@ impl Fixture {
             );
             identities.insert(
                 lang.into(),
-                BTreeMap::from([(
-                    format!("{lang}-event-1"),
-                    CelIdentity {
-                        story_id: "story-1".into(),
-                        cel_id: "C100".into(),
-                    },
-                )]),
+                BTreeMap::from([
+                    (
+                        format!("{lang}-event-1"),
+                        CelIdentity {
+                            story_id: "story-1".into(),
+                            cel_id: "C100".into(),
+                        },
+                    ),
+                    (
+                        format!("{lang}-event-2"),
+                        CelIdentity {
+                            story_id: "story-1".into(),
+                            cel_id: "C101".into(),
+                        },
+                    ),
+                ]),
             );
         }
         for (language, a) in alignments {
@@ -272,6 +286,8 @@ fn committed_bilingual_inspection_preserves_ids_clocks_approvals_and_worktree() 
     // The established cue-opening rule covers the leading recorded breath.
     assert_eq!(sidecar.lanes["es"].events[0].start_sample, 0);
     assert_eq!(sidecar.lanes["en"].events[0].start_sample, 0);
+    assert_eq!(sidecar.lanes["es"].events[1].start_sample, 400);
+    assert_eq!(sidecar.lanes["en"].events[1].start_sample, 1000);
     assert_eq!(sidecar.lanes["es"].cues[0].alignment.cue_end_sample, 8000);
     assert_eq!(sidecar.lanes["en"].cues[0].alignment.sample_rate, 16000);
     assert_eq!(sidecar.request.approvals[0].subject.sha256, "7".repeat(64));
