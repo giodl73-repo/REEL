@@ -90,6 +90,7 @@ pub struct CuePlacement {
     pub start_sample: u64,
     pub end_sample: u64,
     pub engineering_signal: bool,
+    pub observed_text: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -100,10 +101,10 @@ pub struct Chapter {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct PlacedText {
+pub struct PlacedWordEvidence {
     pub performance_id: String,
     pub speaker_id: String,
-    pub text: String,
+    pub evidence_text: String,
     pub start_sample: u64,
     pub end_sample: u64,
 }
@@ -121,7 +122,7 @@ pub struct CompiledEdition {
     pub duration_samples: u64,
     pub cues: Vec<CuePlacement>,
     pub chapters: Vec<Chapter>,
-    pub words: Vec<PlacedText>,
+    pub word_evidence: Vec<PlacedWordEvidence>,
     pub markers: Vec<PlacedMarker>,
 }
 
@@ -203,7 +204,8 @@ fn check_alignment(p: &Performance, script: &Script, evidence: &AlignmentEvidenc
             let mut previous = 0;
             for word in &timing.words {
                 require(word.start_sample >= previous && word.start_sample < word.end_sample
-                    && word.end_sample <= p.duration_samples, "spoken word clock invalid")?;
+                    && word.end_sample <= p.duration_samples && word.word.len() <= 8192
+                    && !word.word.chars().any(char::is_control), "spoken word clock or text invalid")?;
                 previous = word.start_sample;
             }
             verify_word_text(timing, observed_text).map_err(|_| anyhow::anyhow!("spoken observed word sequence differs"))?;
@@ -290,8 +292,8 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
                 if let Observation::WordEvidence { timing, .. } = &alignment.observation {
                     for word in &timing.words {
                         let (a,b) = at(shift(word.start_sample, word.end_sample), "cue", cues.len())?;
-                        let placed = PlacedText { performance_id:p.id.clone(), speaker_id:cue.speaker_id.clone(),
-                            text:word.word.clone(), start_sample:a, end_sample:b };
+                        let placed = PlacedWordEvidence { performance_id:p.id.clone(), speaker_id:cue.speaker_id.clone(),
+                            evidence_text:word.word.clone(), start_sample:a, end_sample:b };
                         spend_derived(&mut derived_bytes, &placed)?;
                         words.push(placed);
                     }
@@ -304,10 +306,16 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
                     spend_derived(&mut derived_bytes, &placed)?;
                     markers.push(placed);
                 }
-                cues.push(CuePlacement { module_id:module.id.clone(), cue_id:cue.id.clone(),
+                let placed = CuePlacement { module_id:module.id.clone(), cue_id:cue.id.clone(),
                     performance_id:p.id.clone(), speaker_id:cue.speaker_id.clone(),
                     source_start_sample:take.start_sample, source_end_sample:take.end_sample,
-                    start_sample:start, end_sample:cursor, engineering_signal:matches!(p.scope.kind, PerformanceKind::EngineeringSignal) });
+                    start_sample:start, end_sample:cursor, engineering_signal:matches!(p.scope.kind, PerformanceKind::EngineeringSignal),
+                    observed_text:match &alignment.observation {
+                        Observation::EngineeringSignal {} => None,
+                        Observation::WordEvidence { observed_text, .. } => Some(observed_text.clone()),
+                    } };
+                spend_derived(&mut derived_bytes, &placed)?;
+                cues.push(placed);
                 let mut requirements = module.requires.clone(); requirements.sort();
                 let mut performance = p.clone(); performance.scope.edition_ids.sort();
                 let script = cue.scripts.iter().find(|s| s.id == p.script_id).context("spoken selected script missing")?;
@@ -324,7 +332,7 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
             required_modules:requirements, sample_rate:document.sample_rate, output_profile:"wav-pcm24-stereo-48000",
             cues:consumed, joins:edition.joins.clone() };
         Ok(CompiledEdition { recipe_sha256:canonical_hash(&recipe)?, recipe, duration_samples:cursor,
-            cues, chapters, words, markers })
+            cues, chapters, word_evidence:words, markers })
         })();
         editions.push(at(compiled, "edition", edition_index)?);
     }
@@ -356,18 +364,18 @@ pub fn compile_with_inputs(document: &Document, inputs: &(impl InputFiles + ?Siz
 
 pub fn compile_file(declaration: &Path, output: &Path) -> Result<CompilationSummary> {
     let document = load(declaration)?;
-    let executable = std::env::current_exe().context("spoken compiler executable unavailable")?;
+    let executable = std::env::current_exe().map_err(|_| anyhow::anyhow!("spoken compiler executable unavailable"))?;
     let compiler = CompilerIdentity {
         sha256:crate::sha256_file(&executable).map_err(|_| anyhow::anyhow!("spoken compiler identity unavailable"))?,
-        bytes:std::fs::metadata(&executable).context("spoken compiler size unavailable")?.len(),
+        bytes:std::fs::metadata(&executable).map_err(|_| anyhow::anyhow!("spoken compiler size unavailable"))?.len(),
     };
     let root = declaration.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let plan = compile_with_inputs(&document, root, &compiler)?;
     let bytes = serde_json::to_vec_pretty(&plan)?;
     require(bytes.len() <= MAX_PLAN, "spoken compiled plan exceeds budget")?;
     let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let mut staged = tempfile::NamedTempFile::new_in(parent).context("spoken plan staging unavailable")?;
-    staged.write_all(&bytes).context("spoken plan staging write failed")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent).map_err(|_| anyhow::anyhow!("spoken plan staging unavailable"))?;
+    staged.write_all(&bytes).map_err(|_| anyhow::anyhow!("spoken plan staging write failed"))?;
     staged.persist_noclobber(output).map_err(|_| anyhow::anyhow!("spoken plan destination unavailable or exists"))?;
     Ok(CompilationSummary { schema:"reel.spoken-edition-compilation.v1", editions:plan.editions.len(),
         cues:plan.editions.iter().map(|e| e.cues.len()).sum(), alignment_metadata_verified:true,

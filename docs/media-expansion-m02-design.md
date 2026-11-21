@@ -76,7 +76,7 @@ resolves only the union of selected performances, at most 128 envelopes and
 exactly that key set; unrelated files in a provider namespace are not enumerated
 or treated as extra inputs. An unselected variant must not cause a read. Reject
 pin/length/budget mismatches before deserialization or extra reads as applicable.
-Derived word/marker metadata is bounded to 8 MiB before accumulating more entries;
+Derived cue/text/word/marker metadata is bounded to 8 MiB before accumulating more entries;
 the new plan is at most 16 MiB. These control budgets are additional to M00's
 media execution budgets, not replacements for them.
 
@@ -93,6 +93,10 @@ gaps/overlaps, total sample count and exact consumed-source identities. Compile
 the four independent goldens from M00. Reject output beyond the 720,000-sample
 fixture profile and arithmetic overflow before creating a plan destination.
 Text positions derive from actual selected intervals; no English timing fallback.
+Keep exact observed text on each cue separately from positioned `word_evidence`.
+Native recognizer spelling/punctuation is evidence, never an automatic transcript
+replacement. Engineering cues have no observed text. M04 owns presentation/text
+assembly and independent correspondence checks against these separate layers.
 
 Derive each edition's consumed-recipe hash from its selected module/cue/script
 variants, performances/evidence, dependency requirements, join policy and output

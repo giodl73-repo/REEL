@@ -73,6 +73,10 @@ impl Fixture {
 
     fn replace(&mut self, index: usize, evidence: &Value) {
         let bytes = serde_json::to_vec(evidence).unwrap();
+        self.set_bytes(index, bytes);
+    }
+
+    fn set_bytes(&mut self, index: usize, bytes: Vec<u8>) {
         let p = &mut self.document.performances[index];
         p.alignment.sha256 = hash(&bytes); p.alignment.bytes = bytes.len() as u64;
         self.metadata.insert(p.id.clone(), bytes);
@@ -104,7 +108,8 @@ fn compiles_four_exact_sample_plans() {
         assert_eq!(e.cues.iter().map(|c| (c.start_sample,c.end_sample)).collect::<Vec<_>>(),spans);
         assert_eq!(e.duration_samples, spans.last().unwrap().1);
         assert_eq!(e.chapters.len(), spans.len());
-        assert!(e.words.is_empty());
+        assert!(e.word_evidence.is_empty());
+        assert!(e.cues.iter().all(|c| c.observed_text.is_none()));
         assert!(e.cues.iter().all(|c| c.engineering_signal));
     }
     assert!(plan.alignment_metadata_verified);
@@ -116,12 +121,13 @@ fn lexical_metadata_is_not_audio_proof_and_keeps_language_local_positions() {
     let f = Fixture::lexical();
     let plan = f.compile().unwrap();
     for e in &plan.editions {
-        assert!(!e.words.is_empty());
+        assert!(!e.word_evidence.is_empty());
         assert!(!e.cues.iter().any(|c| c.engineering_signal));
         let offset = if e.recipe.language == "en" {2400} else {4800};
-        assert_eq!(e.words[0].start_sample, offset);
+        assert_eq!(e.word_evidence[0].start_sample, offset);
         assert_eq!(e.markers[0].marker.start_sample, offset);
-        assert!(e.words.iter().all(|w| w.end_sample <= e.duration_samples));
+        assert!(e.word_evidence.iter().all(|w| w.end_sample <= e.duration_samples));
+        assert!(e.cues.iter().all(|c| c.observed_text.is_some()));
     }
     assert!(!plan.media_verified && !plan.authority_verified);
 }
@@ -173,6 +179,20 @@ fn rehashed_word_evidence_still_requires_native_marker_and_text_correspondence()
     let mut f = Fixture::engineering();
     let mut v = f.evidence(0); v["observation"]["observed_text"] = json!("private-canary"); f.replace(0,&v);
     assert!(f.compile().unwrap_err().to_string().contains("strict JSON"));
+    let mut f = Fixture::lexical();
+    let mut v = f.evidence(0); v["observation"]["timing"]["words"][0]["end_sample"] = json!(144001); f.replace(0,&v);
+    assert!(f.compile().unwrap_err().to_string().contains("word clock"));
+    let mut f = Fixture::lexical();
+    let mut v = f.evidence(0); v["observation"]["timing"]["selected_take_sha256"] = json!(hash(b"wrong take")); f.replace(0,&v);
+    assert!(f.compile().unwrap_err().to_string().contains("identity"));
+    let mut f = Fixture::lexical();
+    let mut v = f.evidence(0); v["word_bindings"].as_array_mut().unwrap().pop(); f.replace(0,&v);
+    assert!(f.compile().unwrap_err().to_string().contains("word binding"));
+    let mut f = Fixture::engineering();
+    let bytes = String::from_utf8(f.metadata["en-opening"].clone()).unwrap()
+        .replacen('{',"{\"schema\":\"duplicate\",",1).into_bytes();
+    f.set_bytes(0,bytes);
+    assert!(f.compile().unwrap_err().to_string().contains("strict JSON"));
 }
 
 #[test]
@@ -218,6 +238,18 @@ impl InputFiles for ControlsOnly {
 }
 
 #[test]
+fn metadata_budgets_refuse_before_input_reads_or_plan_allocation() {
+    let mut f = Fixture::engineering();
+    let provider = ControlsOnly { bytes:BTreeMap::new(), reads:RefCell::new(vec![]) };
+    f.document.performances[0].alignment.bytes = spoken_programme::MAX_DECLARATION_BYTES as u64+1;
+    let error = compiler::compile_with_inputs(&f.document,&provider,&f.runtime).unwrap_err().to_string();
+    assert!(error.contains("budget")); assert!(provider.reads.borrow().is_empty());
+    let mut f = Fixture::engineering();
+    f.metadata.get_mut("en-opening").unwrap().resize(spoken_programme::MAX_DECLARATION_BYTES+1,b' ');
+    assert!(f.compile().unwrap_err().to_string().contains("budget"));
+}
+
+#[test]
 fn input_port_reads_only_selected_metadata_without_media() {
     let mut f = Fixture::engineering();
     let mut unused = f.document.performances[0].clone();
@@ -249,11 +281,17 @@ fn cli_compiles_without_audio_and_never_clobbers_or_leaks_private_errors() {
     let report: Value = serde_json::from_slice(&result.stdout).unwrap();
     assert_eq!(report["editions"],4); assert_eq!(report["media_verified"],false);
     let original = std::fs::read(&output).unwrap();
+    let files = || std::fs::read_dir(root.path()).unwrap().map(|entry| entry.unwrap().file_name()).collect::<std::collections::BTreeSet<_>>();
+    let before = files();
     assert!(!run(&output).status.success()); assert_eq!(std::fs::read(&output).unwrap(),original);
+    let bad_parent = root.path().join("private-canary-missing-parent").join("plan.json");
+    let result = run(&bad_parent); assert!(!result.status.success());
+    assert!(!String::from_utf8_lossy(&result.stderr).contains("private-canary"));
     std::fs::write(root.path().join(&f.document.performances[0].alignment.path),b"private-canary corrupt").unwrap();
     let failed = root.path().join("not-published.json");
     let result = run(&failed); assert!(!result.status.success()); assert!(!failed.exists());
     assert!(!String::from_utf8_lossy(&result.stderr).contains("private-canary"));
     assert!(!String::from_utf8_lossy(&result.stdout).contains("private-canary"));
+    assert_eq!(before,files());
     assert!(f.document.performances.iter().all(|p| !root.path().join(&p.source.path).exists()));
 }
