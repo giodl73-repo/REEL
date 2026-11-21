@@ -9,7 +9,11 @@ description = "Exact native inputs, protected manual handoffs and retained-resul
 # Separate workspace/lock: existing producers retain vendor/tig unchanged.
 [workspace]
 
+[features]
+film = ["dep:reel"]
+
 [dependencies]
+reel = { path = "../..", optional = true, default-features = false }
 anyhow = "1.0.100"
 fs2 = "=0.4.3"
 reel-assets = { path = "../reel-assets" }

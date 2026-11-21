@@ -19,6 +19,8 @@ use tig_assets::resolve::AssetResolver;
 use tig_core::{LogicalPath, Object};
 pub mod admission;
 pub mod closing;
+#[cfg(all(windows, feature = "film"))]
+pub mod film_inputs;
 pub mod film_metadata;
 pub mod handoff;
 mod qualified;
@@ -348,15 +350,27 @@ impl SnapshotInputs {
 }
 
 /// Native provider handles remain held for this object's lifetime. This bridges
-/// exact record-to-leaf identity and byte access, not durable actor protection.
+/// exact record-to-leaf identity and byte access. `open` grants no durable actor
+/// protection; `from_claims` additionally holds exact reopened admission claims.
 pub struct NativeInputs {
     snapshot: SnapshotInputs,
     source: reader::Profile,
     held: Vec<reader::VerifiedRead>,
     opens: usize,
     _annex_guard: File,
+    _claims: Option<admission::ClaimsGuard>,
 }
 impl NativeInputs {
+    pub fn from_claims(
+        packet: &Packet,
+        profile: &NativeProfile,
+        claims: admission::ClaimsGuard,
+    ) -> Result<Self> {
+        claims.check_source(packet, profile)?;
+        let mut inputs = Self::open(packet, profile)?;
+        inputs._claims = Some(claims);
+        Ok(inputs)
+    }
     /// Exact native streaming read retaining this input context and its pinned
     /// tools. No whole-payload buffer or durable job admission is created.
     pub fn stream<'a>(&'a mut self, asset: &Artifact, maximum: u64) -> Result<NativeStream<'a>> {
@@ -392,6 +406,7 @@ impl NativeInputs {
         }
         let guard = hold_tool(&profile.annex)?;
         Ok(Self {
+            _claims: None,
             snapshot,
             source: profile.source.clone(),
             held: Vec::new(),

@@ -110,6 +110,33 @@ Accepted existing film producers remain in use. Further W3a producer/scale work,
 W3b providers, W4 review/rebuild and W5 owned adoption/rollback remain required;
 this is not Season 5 adoption or full episode-scale qualification.
 
+## Film file bridge (optional feature)
+
+`--features film` adds a Windows-only `film_inputs::Inputs` implementation of
+the existing renderer's `scene_delivery::InputFiles` trait. The default build
+does not include the renderer. This bridge exposes exact guarded native paths;
+it does not dispatch a producer or create producer completion receipts.
+
+Construct `NativeInputs::from_claims` with a reopened live admission guard for
+the exact packet/source. The bridge requires authored aliases covering every
+declared input and the exact `FilmRender` contract. Matching bytes at another
+logical input do not authorize an alias swap. Pinned `ffmpeg` and `ffprobe`
+programs must match the task's auxiliary executable contracts; held installed
+paths are returned directly, without ambient PATH lookup. Admission includes
+all auxiliary runtime objects in the protected envelope. Reserved native path
+names refuse before admission effects.
+
+File access retains the claims, enrolled reader gates, verified provider files,
+runtime handles and directory identities for the bridge lifetime. Only exact
+declared FileRef names/hash/lengths resolve. Reads permit up to 128 inputs and
+128 distinct live objects, a 64 GiB declared sum and a 30-second verification
+budget; snapshot, provider and admission limits still apply independently.
+These bounds are not episode-scale qualification or a new output/workspace/time
+contract. The explicit existing-pool test covers one 1 MiB synthetic object,
+alias deduplication, guarded path integrity and exact runtime selection; its
+pinned stand-in programs are never executed as media tools. Actual FFmpeg
+execution, conform receipts, large episode admission and retention remain open.
+
 ## Validation
 
 ```text

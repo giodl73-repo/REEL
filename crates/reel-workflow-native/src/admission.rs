@@ -98,6 +98,22 @@ pub struct ClaimsGuard {
     _fences: Vec<reel_assets::admission::MetadataLock>,
     _prepared: Prepared,
 }
+impl ClaimsGuard {
+    pub(crate) fn check_source(&self, packet: &Packet, source: &NativeProfile) -> Result<()> {
+        let current = Prepared::open(
+            packet,
+            source,
+            &self._prepared.profile,
+            &self._prepared.attempt,
+        )?;
+        if current.source_binding != self._prepared.source_binding
+            || current.input != self._prepared.input
+        {
+            return Err(error(ErrorKind::Conflict, "claims-exact-source-required"));
+        }
+        Ok(())
+    }
+}
 /// Passive original-generation recovery fence. May coexist with a native
 /// Prepare; it grants no mutation capability and is not a settled ClaimsGuard.
 pub(crate) struct RecoveryGuard {
@@ -241,13 +257,13 @@ impl Prepared {
             return Err(error(ErrorKind::Budget, "admission-native-reader-bound"));
         }
         let snapshot = SnapshotInputs::open(packet, &source.snapshot)?;
-        let mut runtime = BTreeMap::new();
+        let mut runtime: BTreeMap<String, Object> = BTreeMap::new();
         for (name, tool) in [("git", &snapshot.git), ("annex", &source.annex)] {
             if tool.bytes == 0 || tool.bytes > 256 * 1024 * 1024 {
                 return Err(error(ErrorKind::Budget, "admission-runtime-pin-bytes"));
             }
             runtime.insert(
-                name,
+                name.to_owned(),
                 Object {
                     sha256: Digest::parse(&tool.sha256)
                         .map_err(|_| error(ErrorKind::Invalid, "admission-runtime-pin"))?,
@@ -257,13 +273,27 @@ impl Prepared {
         }
         if let Some(tool) = &packet.task.tool {
             runtime.insert(
-                "producer",
+                "producer".to_owned(),
                 Object {
                     sha256: Digest::parse(&tool.executable.sha256)
                         .map_err(|_| error(ErrorKind::Invalid, "admission-producer-pin"))?,
                     bytes: tool.executable.bytes,
                 },
             );
+            for (name, executable) in &tool.auxiliary_executables {
+                let role = format!("auxiliary/{name}");
+                LogicalPath::parse(&format!("runtime/{role}"))
+                    .map_err(|_| error(ErrorKind::Invalid, "admission-runtime-path"))?;
+                runtime.insert(
+                    role,
+                    Object {
+                        sha256: Digest::parse(&executable.sha256).map_err(|_| {
+                            error(ErrorKind::Invalid, "admission-auxiliary-runtime-pin")
+                        })?,
+                        bytes: executable.bytes,
+                    },
+                );
+            }
         }
         let mut memory = MemoryNodes::default();
         for (_, bytes) in snapshot.metadata.objects() {
@@ -302,7 +332,8 @@ impl Prepared {
         }
         for (name, object) in &runtime {
             entries.insert(
-                LogicalPath::parse(&format!("runtime/{name}")).unwrap(),
+                LogicalPath::parse(&format!("runtime/{name}"))
+                    .map_err(|_| error(ErrorKind::Invalid, "admission-runtime-path"))?,
                 object.clone(),
             );
         }
