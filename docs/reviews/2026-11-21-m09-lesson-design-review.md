@@ -58,6 +58,10 @@ runtime successful skips.
 
 ## Execution
 
+Local execution used parent `c4b55ba`; the PR was subsequently rebased cleanly
+onto workflow merge `298fea5`, with all-feature Clippy and hosted qualification
+required on that combined tree.
+
 Exclusive target: `F:/tmp/reel-builds/media-m09-isolated`, Windows / Rust 1.98.0,
 debug symbols disabled. Initial two lesson positives passed in 47.35 seconds;
 the complete five-case explicit print-feature run passed in 118.59 seconds,
