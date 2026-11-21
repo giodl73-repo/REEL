@@ -1,7 +1,8 @@
 # Bounded spoken-edition candidate production
 
-**Status:** M03 local engineering draft, stacked on M02. No merged or independent
-qualification is claimed here. See the [PR plan](media-expansion-pr-plan.md),
+**Status:** M03 implementation locally checked on merged M02 `cc099b4`.
+Hosted qualification and merge remain pending; independent checking is M04.
+See the [PR plan](media-expansion-pr-plan.md),
 [compiler contract](spoken-edition-compilation-v1.md) and
 [fixture specification](media-expansion-spoken-fixture.md).
 

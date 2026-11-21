@@ -1,7 +1,7 @@
 # M03 spoken producer: checklist review
 
-**Status:** local preparatory draft on M02 `fbe16fd`; M02's final PR is #380.
-Final qualification must be rerun on its merged parent. No hosted, independent
+**Status:** local checks rerun on merged M02 `cc099b4` (#380), after its required
+hosted qualification passed. No M03 hosted, independent
 media-checker, retained-publication or listening pass is recorded here.
 
 **Method:** one assistant applying the [REEL checklists](../../.roles/ROLE.md).
@@ -45,13 +45,13 @@ production recording, upload or native publication is used.
 
 ## Execution record
 
-Preparatory Windows execution passed eleven media integration tests, twenty
+Merged-parent Windows execution passed eleven media integration tests, twenty
 declaration/compiler cases, nine clock regressions and six PCM/WAVE helper unit
 tests: 46 tests total, with no ignored case in these selected targets. The media
-target completed in 10.71 seconds. All-target/all-feature Clippy with warnings
-denied passed. Local links and `git diff --check` passed; final formatting applies
-before committing. Merged-parent and hosted qualification remain pending. This
-is deliberately not M03's final technical exit record.
+target completed in 15.25 seconds. All-target/all-feature Clippy with warnings
+denied, formatting, local links and `git diff --check` passed. Required M03 hosted
+Windows/Linux qualification remains pending; local results are not substituted
+for those gates. The earlier stacked run is supplementary evidence only.
 
 Independent reopening/text evidence belongs to M04. Actual speech wording,
 natural handoffs, voice scope, language approval, listening, selection and adoption

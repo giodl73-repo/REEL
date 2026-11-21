@@ -92,7 +92,7 @@ cannot claim or inherit them for real performances or delivery.
 | 0 — map | M00: reuse/gap map and fixture briefs | Current main | Documented in [PR #378](https://github.com/giodl73-repo/REEL/pull/378) |
 | 1 — spoken core | M01: minimal edition/handoff contract | M00 | Merged [#379](https://github.com/giodl73-repo/REEL/pull/379), `f473431` |
 | 1 | M02: edition planning and sample-clock compilation | M01 | Merged [#380](https://github.com/giodl73-repo/REEL/pull/380), `cc099b4`; required hosted checks passed |
-| 1 | M03: bounded audio-only assembly | M02 | [Preparatory branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m03-assembly); local signal checks only, merged-parent/hosted qualification pending |
+| 1 | M03: bounded audio-only assembly | M02 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m03-assembly); local merged-parent checks pass, hosted qualification pending |
 | 1 | M04: independent output check and accessible text | M03 | Planned |
 | 1 | M05: retained editions and selective invalidation | M04 | Planned |
 | 1 checkpoint | M06: spoken fixture qualification and multi-cue coverage | M05 | Planned |
@@ -385,4 +385,4 @@ remains not run; that is not a completed spoken-performance acceptance checkpoin
 | M00 | [PR #378](https://github.com/giodl73-repo/REEL/pull/378), merged `bee948e` | [Source map and review](media-expansion-m00.md); [fixture/test specification](media-expansion-spoken-fixture.md) | Technical planning complete; no runtime tests or listening performed |
 | M01 | [PR #379](https://github.com/giodl73-repo/REEL/pull/379), merged `f473431` | [Contract](spoken-edition-v1.md); [checklist review](reviews/2026-11-20-m01-spoken-contract-review.md) | Full required hosted checks passed; media/authority remain unverified |
 | M02 | [PR #380](https://github.com/giodl73-repo/REEL/pull/380), merged `cc099b4` | [Compiler contract](spoken-edition-compilation-v1.md); [checklist review](reviews/2026-11-20-m02-spoken-compiler-review.md); hosted run `44874211442` | Required Windows/Linux checks passed; media/listening/authority remain unverified |
-| M03 | [Preparatory branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m03-assembly), based on merged M02 `cc099b4` | [Producer contract](spoken-edition-production-v1.md); [checklist review](reviews/2026-11-20-m03-spoken-producer-review.md) | Local controlled-signal evidence only; merged-parent checks, hosted CI and merge pending; independent checking is M04 |
+| M03 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m03-assembly), based on merged M02 `cc099b4` | [Producer contract](spoken-edition-production-v1.md); [checklist review](reviews/2026-11-20-m03-spoken-producer-review.md) | Local 46 tests/lint pass; hosted CI and merge pending; independent checking is M04; listening/authority unperformed |
