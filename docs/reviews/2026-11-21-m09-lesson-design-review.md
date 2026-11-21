@@ -72,10 +72,15 @@ cargo clippy --locked -p reel-music --all-targets -- -D warnings
 cargo test --locked --all-features --test spoken_programme_media lesson:: -- --ignored --test-threads=1
 ```
 
-The all-feature run, existing root score/arrangement and reading regressions,
-root all-target/all-feature Clippy, final docs checks and required hosted checks
-remain to be recorded. No native asset custody or project adoption is claimed by
-the retained test byte provider.
+Root all-target/all-feature Clippy passed with warnings denied. All seven existing
+score/arrangement integration tests passed (four score export, three arrangement).
+Formatting, actionlint, diff whitespace and local links in changed Markdown passed.
+The all-feature lesson rerun passed all five cases in 166.93 seconds, with no
+ignored tests in the explicit run. All five existing reading regressions passed
+in 140.76 seconds. In total, 82 distinct local tests passed; the five lesson cases
+were also repeated under all features. Required hosted checks remain pending.
+No native asset custody or project adoption
+is claimed by the retained test byte provider.
 
 Retained disagreements/limitations: readable notation and repeat usefulness need
 actual musical review; language/voice/listening/device/selection/adoption gates

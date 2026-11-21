@@ -4,7 +4,7 @@
 `d48c42722bf33e2868653872c2fe5b5939f83796`, [PR #391](https://github.com/giodl73-repo/REEL/pull/391).
 Its required CI passed in 22 minutes 33 seconds. M09 implementation has started
 with the admitted score-input seam, lesson index and public synthetic fixtures.
-Required full regression and hosted qualification remain incomplete.
+Local qualification passed 82 distinct tests and all-feature Clippy. Required hosted qualification remains pending.
 
 The package connects an explanation, an editable score, checked notation exports
 and a selected audio reference. A repeated passage has an explicit occurrence ID;
@@ -68,7 +68,7 @@ There is no implicit speech trimming, adjacency change, mixing, resampling or
 automatic interleaving between them. A different spoken selection goes through
 the original edition compiler and checks.
 
-An authored `reel.lesson.v1` request will bind:
+An authored `reel.lesson.v1` request binds:
 
 - the original reading index/edition identities and their admitted check inputs;
 - the editable score, source/analysis context, export plan, receipt and actual
@@ -116,7 +116,7 @@ not established by writing this index.
 ```mermaid
 flowchart LR
     accTitle: A written passage and its two exercise occurrences
-    accDescr: The editable pickup and section A retain their original score ticks. The exercise plays the pickup once and references A twice with unique occurrence IDs and separate resolved sample positions.
+    accDescr: The editable pickup and section A retain their original score ticks. The virtual exercise references the pickup once and A twice with unique occurrence IDs and separate resolved sample positions.
     score["Editable source<br/>pickup + written bar A"] --> exports["Checked MIDI / MusicXML<br/>original 2.25 s guide"]
     exports --> pickup["pickup-once<br/>0–12000 samples"]
     exports --> first["A-pass-1<br/>12000–108000"]
@@ -138,7 +138,7 @@ must remain explicit, separate concepts.
 
 A second clock probe must exercise rounding: PPQ 960, tempo 500010 microseconds
 per quarter at 48 kHz makes tick 1000 exactly 25000.5 samples, resolving to 25001.
-This is a planned arithmetic oracle, not executed evidence. A contradictory
+The focused fixture executes this arithmetic oracle against the original packet checker. A contradictory
 timebase/rounding declaration must refuse rather than be guessed or normalized.
 
 ## Limits fixed before execution
