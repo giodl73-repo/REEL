@@ -623,6 +623,31 @@ fn retained_v1_reopens_and_stale_reviews_refuse() {
         reopened.receipt().request.declaration.sha256,
         f.request.declaration.sha256
     );
+    // A caller can rehash a forged receipt; original external admission and
+    // replayed controls must still reject a substituted context or source pin.
+    let original_receipt = serde_json::to_value(reopened.receipt()).unwrap();
+    for mutation in 0..3 {
+        let mut altered = original_receipt.clone();
+        match mutation {
+            0 => altered["contexts"]["es-technical"] = altered["contexts"]["en-technical"].clone(),
+            1 => altered["request"]["declaration"]["sha256"] = json!("2".repeat(64)),
+            _ => altered["release_authorized"] = json!(true),
+        }
+        let bytes = tig_core::identity::canonical_json(&altered).unwrap();
+        let pin = Object::from_bytes(&bytes);
+        Fixture::seed_at(&f.root().join("cache"), &pin, &bytes);
+        assert!(
+            history::reopen(
+                &pin,
+                archive.clone(),
+                "es-technical",
+                published.claim(),
+                &mut reader,
+                TreeLimits::default()
+            )
+            .is_err()
+        );
+    }
     let missing = [
         reopened.receipt().source_inputs["runtime/reel"].clone(),
         reopened.receipt().source_inputs["takes/en-opening"].clone(),

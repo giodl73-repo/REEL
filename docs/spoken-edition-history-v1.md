@@ -1,7 +1,8 @@
 # Retained spoken editions through the existing native SDK
 
-**Status:** M05 preparatory contract on M04's checked draft. M04 and M05 final
-qualification require their respective merged parents. No new cache, custody
+**Status:** M05 implementation on merged M04 (`c59b490`, PR #382).
+Local and hosted qualification are recorded in the [M05 review](reviews/2026-11-21-m05-spoken-history-review.md).
+No new cache, custody
 engine, automatic restore or project cutover is introduced.
 
 ## Existing interfaces and ownership
@@ -108,7 +109,7 @@ Required `spoken_programme_history` tests under `--features tig-history`:
 | Case | Required evidence |
 | --- | --- |
 | `spanish_detail_change_preserves_other_consumed_recipes` | Four compiled/execution/native IDs compared; only Spanish technical changes; original immutable payloads stay retained |
-| `retained_v1_reopens_and_stale_reviews_refuse` | Finish/readback metadata, reopen original context with checkout unavailable, independently check original WAV/text and reject stale take/join/mix/runtime/text bindings |
+| `retained_v1_reopens_and_stale_reviews_refuse` | Finish/readback metadata, reopen original context with checkout unavailable, independently check original WAV/text and reject an altered review target; the selective-change test proves actual take replacement stales only affected review bindings |
 | `unsupported_protected_input_refuses` | Exact unsupported refusal on platforms without mandatory path protection; no fallback or writes |
 | Missing/adversarial inputs | Missing retained payload/runtime, edited context/controls, changed output/receipt, insufficient publication budget/capability; no hydration or success/promotion |
 | Publication/retry | Existing backend ACKs exact selected outputs and retained controls, failure/retry uses stable operation keys; no overwrite or deletion of retained versions |

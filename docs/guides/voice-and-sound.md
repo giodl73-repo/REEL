@@ -54,17 +54,24 @@ language/audience script variants explicit. The
 [control compiler](../spoken-edition-compilation-v1.md) places each selected take
 and its authored handoffs on a language-local sample clock. It produces a private
 plan and checks alignment metadata; it does not assemble audio or verify consent.
-The [bounded candidate producer](../spoken-edition-production-v1.md), currently
-an M03 engineering draft, reuses exact PCM windows to assemble selected takes
+The [bounded candidate producer](../spoken-edition-production-v1.md)
+reuses exact PCM windows to assemble selected takes
 with explicit pauses, overlap and processing. Its final local receipt closes a
 candidate package; independent checking and authority remain separate.
-The [phased plan](../media-expansion-pr-plan.md) tracks merged scope and the
-remaining independent checker and retained-edition work.
+The [phased plan](../media-expansion-pr-plan.md) tracks merged scope and remaining
+qualification work.
 
-The [independent checker and text-access draft](../spoken-edition-check-v1.md)
+The [independent checker and text-access contract](../spoken-edition-check-v1.md)
 reopens source/output PCM, recomputes the declared processing and derives exact
 speaker-role transcripts, pauses, word evidence and chapters. Selected script
 and recognition evidence stay separate; actual listening remains a project gate.
+
+The [retained-edition adapter](../spoken-edition-history-v1.md) connects those
+checks to existing git-asset contexts and publication. For example, replacing
+Spanish technical detail changes that edition's consumed recipe and review
+binding while the two executive editions and English technical edition stay
+exact. Original WAVs and text can be checked again from retained inputs with
+the source checkout unavailable. M05 qualification remains tracked in the plan.
 
 | Work | Detailed contract |
 | --- | --- |

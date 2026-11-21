@@ -93,8 +93,8 @@ cannot claim or inherit them for real performances or delivery.
 | 1 — spoken core | M01: minimal edition/handoff contract | M00 | Merged [#379](https://github.com/giodl73-repo/REEL/pull/379), `f473431` |
 | 1 | M02: edition planning and sample-clock compilation | M01 | Merged [#380](https://github.com/giodl73-repo/REEL/pull/380), `cc099b4`; required hosted checks passed |
 | 1 | M03: bounded audio-only assembly | M02 | Merged [#381](https://github.com/giodl73-repo/REEL/pull/381), `a8b481b`; required hosted checks passed |
-| 1 | M04: independent output check and accessible text | M03 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m04-checker); local merged-parent checks pass, hosted qualification pending |
-| 1 | M05: retained editions and selective invalidation | M04 | Planned |
+| 1 | M04: independent output check and accessible text | M03 | Merged [#382](https://github.com/giodl73-repo/REEL/pull/382), `c59b490`; required hosted checks passed ([CI](https://github.com/giodl73-repo/REEL/actions/runs/44881625182)) |
+| 1 | M05: retained editions and selective invalidation | M04 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m05-history); [contract and checks](spoken-edition-history-v1.md), qualification pending |
 | 1 checkpoint | M06: spoken fixture qualification and multi-cue coverage | M05 | Planned |
 | 2 — companion formats | M07: declared music/Sonic layers | M06 | Planned |
 | 2 | M08: narrated reading package | M07 | Planned |
