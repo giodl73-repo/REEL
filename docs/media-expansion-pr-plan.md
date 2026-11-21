@@ -86,7 +86,7 @@ cannot claim or inherit them for real performances or delivery.
 
 | Phase | PR ID / bounded outcome | Depends on | Status |
 | --- | --- | --- | --- |
-| 0 — map | M00: reuse/gap map and fixture briefs | Current main | Mapping/brief evidence recorded; pending merge |
+| 0 — map | M00: reuse/gap map and fixture briefs | Current main | Documented in [PR #378](https://github.com/giodl73-repo/REEL/pull/378) |
 | 1 — spoken core | M01: minimal edition/handoff contract | M00 | Planned |
 | 1 | M02: edition planning and sample-clock compilation | M01 | Planned |
 | 1 | M03: bounded audio-only assembly | M02 | Planned |
@@ -379,4 +379,4 @@ remains not run; that is not a completed spoken-performance acceptance checkpoin
 
 | Planning ID | PR / exact revision | Evidence and review | Remaining gate |
 | --- | --- | --- | --- |
-| M00 | `docs/media-m00-map`, based on `d923375` | [Source map and review](media-expansion-m00.md); [fixture/test specification](media-expansion-spoken-fixture.md) | Pending hosted docs checks/merge; no runtime tests or listening performed |
+| M00 | [PR #378](https://github.com/giodl73-repo/REEL/pull/378), based on `d923375` | [Source map and review](media-expansion-m00.md); [fixture/test specification](media-expansion-spoken-fixture.md) | PR state/checks establish landing; no runtime tests or listening performed |
