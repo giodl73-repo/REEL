@@ -254,6 +254,8 @@ records the applied lenses, findings, corrections and remaining review limits.
 | `crates/reel-music/` | Native music contracts and editor tools |
 | `crates/reel-print/` | Bounded print production |
 | `crates/reel-assets/` | Existing asset accounting, editors and custody adapters |
+| [`crates/reel-workflow/`](crates/reel-workflow/README.md) | Task contracts and manual prompt/result exchange (W1; no production admission) |
+| [`crates/reel-publication/`](crates/reel-publication/README.md) | Shared artifact identities and named output contracts |
 | `browser/assembly/` | Browser/WASM semantic workbench |
 | `manifests/` | Contracts, templates and synthetic fixtures |
 | `docs/` | [Task guides and reference index](docs/README.md) |

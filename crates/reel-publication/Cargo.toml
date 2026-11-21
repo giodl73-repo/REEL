@@ -1,0 +1,11 @@
+[package]
+name = "reel-publication"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT"
+publish = false
+description = "Named artifact and output contracts shared by REEL workflow adapters"
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }

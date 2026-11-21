@@ -1,0 +1,18 @@
+{
+  "schema": "reel.workflow-plan.v2",
+  "project": "synthetic-film",
+  "source_commit": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "tasks": [
+    {
+      "id": "cel-note",
+      "operation": "text-proposal",
+      "language": "es",
+      "prompt": "Escribe una nota breve para un cel sintético de olas. No uses personas ni material privado.",
+      "inputs": [],
+      "depends_on": [],
+      "outputs": {
+        "note": { "media_type": "text/plain", "max_bytes": 4096, "required": true }
+      }
+    }
+  ]
+}

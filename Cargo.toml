@@ -131,7 +131,7 @@ path = "src/bin/reel-print.rs"
 required-features = ["print"]
 
 [workspace]
-members = ["crates/reel-music", "crates/reel-assembly", "crates/reel-assets", "crates/reel-print"]
+members = ["crates/reel-music", "crates/reel-assembly", "crates/reel-assets", "crates/reel-print", "crates/reel-publication", "crates/reel-workflow"]
 exclude = ["vendor/tig"]
 resolver = "3"
 
