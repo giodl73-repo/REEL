@@ -1,6 +1,9 @@
 use reel::spoken_programme::{self, Document};
 use serde_json::{Value, json};
 
+#[path = "support/spoken_compilation.rs"]
+mod compilation;
+
 fn fixture() -> Value {
     serde_json::from_str(include_str!("fixtures/spoken-programme/four-editions.json")).unwrap()
 }

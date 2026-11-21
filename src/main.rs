@@ -657,6 +657,10 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
+        Command::SpokenEditionCompile { edition, output } => {
+            let report = reel::spoken_programme::compiler::compile_file(&edition, &output)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::SpokenEditionValidate { edition } => {
             let document = reel::spoken_programme::load(&edition)?;
             println!(
@@ -2920,6 +2924,12 @@ enum Command {
     },
     /// Validate an audio-edition declaration without reading media or executing tools.
     SpokenEditionValidate { edition: PathBuf },
+    /// Compile selected spoken control evidence into a new private sample plan.
+    SpokenEditionCompile {
+        edition: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {
         contract: PathBuf,

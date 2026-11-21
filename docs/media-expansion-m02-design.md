@@ -1,8 +1,9 @@
 # M02 compiler design and evidence boundary
 
-**Status:** design notes prepared while M01 PR #379 qualifies. No M02 compiler
-implementation, execution or qualification is claimed. Rebase on the merged M01
-revision before implementation. This is part of M02, not an extra phase/PR.
+**Status:** local draft prepared while M01 PR #379 qualifies, against its exact
+`be9049b` revision. Draft code may be prepared without executing or qualifying it.
+Rebase onto merged M01 before running qualification or publishing the M02 PR.
+This preserves the phased merge/execution order; it is not an extra phase/PR.
 
 ## Resolve existing evidence, without opening media
 
@@ -65,7 +66,7 @@ Unknown/duplicate fields reject; this is control metadata, not a media manifest.
 Each lexical word binding carries `marker_id`, `first_word_index` and
 `end_word_index_exclusive`; it covers a nonempty contiguous interval. A word
 marker spans exactly one native word. Its sample interval is the first word's
-start through the last word's end. Each declared marker appears exactly once in
+start through the maximum word end in that span. Each declared marker appears exactly once in
 both the marker list and binding list, with no extras. Reject invalid native word
 intervals/order even if the text sequence agrees. Evidence is not source truth.
 
@@ -75,7 +76,8 @@ resolves only the union of selected performances, at most 128 envelopes and
 exactly that key set; unrelated files in a provider namespace are not enumerated
 or treated as extra inputs. An unselected variant must not cause a read. Reject
 pin/length/budget mismatches before deserialization or extra reads as applicable.
-The new plan is at most 16 MiB. These control budgets are additional to M00's
+Derived word/marker metadata is bounded to 8 MiB before accumulating more entries;
+the new plan is at most 16 MiB. These control budgets are additional to M00's
 media execution budgets, not replacements for them.
 
 ## Compile sample placements and selected consumption
