@@ -1,6 +1,8 @@
 //! Controlled signals only; these tests do not establish speech/listening approval.
 #[path = "support/spoken_checking.rs"]
 mod checking;
+#[path = "support/spoken_layers.rs"]
+mod layers;
 #[path = "support/spoken_multicue.rs"]
 mod qualification;
 use anyhow::{Result, bail};
