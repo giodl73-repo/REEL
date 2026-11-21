@@ -52,6 +52,15 @@ Authored reading text stays separate from word-recognition evidence and listenin
 review. See the [illustrated reading contract](../narrated-reading-v1.md) for the
 bindings, limits and current engineering qualification status.
 
+## A lesson separates written and exercise positions
+
+A [lesson or rehearsal index](../lesson-rehearsal-v1.md) can retain that complete
+explanation alongside an editable score and checked guide. A pickup appears once;
+bar A can have distinct first and second exercise occurrences even though both
+refer to the same original written ticks. The index keeps the spoken clock,
+score clock and virtual exercise positions explicit. It does not create a player
+or turn a timing guide into a performance master.
+
 ## Delivery is another relationship
 
 Rendering a movie, selecting it for release, copying it to a destination and
@@ -68,6 +77,7 @@ checkpoint rather than the target's perpetual current state.
 | Check readability and picture geometry | [Accessibility](../caption-accessibility-v0.2.8.md), [caption-safe layout](../caption-safe-picture-layout-v0.2.48.md), [speaker presentation](../speaker-caption-presentation-v0.2.9.md) |
 | Assemble supported PDFs | [Native print collections](../native-print-collections.md) |
 | Bind authored wording, audio chapters and print pages | [Narrated reading editions](../narrated-reading-v1.md) |
+| Connect an explanation, editable pickup and repeated exercise passages | [Lesson and rehearsal package](../lesson-rehearsal-v1.md) |
 | Export an editorial interchange | [OpenTimelineIO](../otio-export-v0.2.40.md) |
 | Track selected revisions and target evidence | [Delivery use case](../use-cases.md#track-a-delivery-over-time), [history host](../tig-history.md), [delivery observation](../tig-delivery-observation.md) |
 | Recheck retained movie/source correspondence | [Retained delivery checker](../tig-retained-delivery-check.md) |

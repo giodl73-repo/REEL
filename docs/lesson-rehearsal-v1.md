@@ -1,10 +1,10 @@
 # Source-bound lesson and rehearsal package
 
-**Status:** preparatory M09 contract on merged M08
+**Status:** M09 implementation under qualification on merged M08
 `d48c42722bf33e2868653872c2fe5b5939f83796`, [PR #391](https://github.com/giodl73-repo/REEL/pull/391).
-Its required CI passed in 22 minutes 33 seconds. No M09 runtime or fixture
-has been produced. This draft fixes the intended example and records the source
-interfaces and gaps before implementation.
+Its required CI passed in 22 minutes 33 seconds. M09 implementation has started
+with the admitted score-input seam, lesson index and public synthetic fixtures.
+Required full regression and hosted qualification remain incomplete.
 
 The package connects an explanation, an editable score, checked notation exports
 and a selected audio reference. A repeated passage has an explicit occurrence ID;
@@ -50,6 +50,16 @@ or duplicate the score validator. Unsupported absolute/outside references refuse
 under the selected profile. Record the precise callback interface and byte/cap
 tests before its first runtime fixture; no production adapter adoption is implied.
 
+The seam is `reel_music::validation_inputs::ValidationInputs::admitted`, borrowing
+`FnMut(&Path) -> Result<Vec<u8>>`. It captures each original relative name once
+per operation, at most 32 objects, 1 MiB each and 16 MiB total. The host retains
+its byte guards. `source`, `analysis` and `model` expose `load_with_inputs` and
+`validate_with_inputs`; `export` additionally exposes `build_with_inputs`.
+`music_score::check_with_inputs` uses the same reader for model lineage and the
+actual packet. Legacy entry points select filesystem mode explicitly. Admitted
+mode rejects semantic imports and lyric/lead-sheet/piano-vocal layouts in this
+initial instrumental profile before those filesystem-only paths can run.
+
 ## Two independent content clocks
 
 The complete checked explanation edition retains its spoken programme clock.
@@ -72,6 +82,12 @@ relationships and resolved source/exercise sample ranges. Portable summaries
 contain counts and fixed flags, omitting titles, texts, note/source identities,
 paths, private hashes and authority names. Musical/voice/language authority,
 listening, device playback, selection, release and adoption remain separate.
+The implementation is `spoken_programme::lesson` behind the `print` feature:
+`prepare`, `produce` and `check` borrow the checked reading context and an explicit
+asset provider. The request supplies the closed score-file namespace, independent
+model contract pin and selected explanation editions. Each selected language has
+an original UTF-8 instruction file and a separate pinned scope declaration;
+these instructions are not described as performed words.
 
 ## The required pickup and repeat example
 
@@ -141,6 +157,12 @@ total score inputs/exports. The lesson index is at most 1 MiB and uses a maximum
 30-second cooperative operation deadline. Trusted synchronous I/O must return.
 Borrowed M08 checks retain their own declared provider/resource limits; these
 lesson limits do not redefine those upstream contexts.
+Instruction and scope-declaration objects are at most 64 KiB each, at most four
+language pairs. The original reading index retains its upstream 4 MiB bound.
+All written sections occur in source order; repeats are contiguous within their
+section and the initial pickup occurs exactly once. Anchors may name an interval
+endpoint but cannot point outside the named section or note. The guide reference
+is an exact FileRef, separate from the virtual traversal duration.
 
 Reserve a new output directory and publish the final index with the existing
 owned no-clobber writer. Earlier indexes reopen with their original reading,
@@ -164,5 +186,6 @@ Apply Platform/Audience, Score/Arrangement, Music Reconstruction, Vocal Adaptati
 Sound and Rights checklists, explicitly as one assistant's technical review.
 The [pre-implementation checklist review](reviews/2026-11-21-m09-lesson-design-review.md)
 records the input-boundary decision, source provenance and repeat-sidecar meaning.
-No M09 test, role approval,
-musical/linguistic accuracy, listening or device gate is claimed here.
+The five focused lesson tests and three admitted-input tests pass locally; see
+the review for exact cases and remaining checks. Musical/linguistic accuracy,
+listening, device acceptance and actual authority remain separate and unperformed.

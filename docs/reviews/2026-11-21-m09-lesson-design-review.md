@@ -1,8 +1,9 @@
-# M09 lesson: source audit and pre-implementation checklist
+# M09 lesson: source audit, checklist and qualification record
 
-Status: preparatory design only, on merged M08 `d48c427` / PR #391. No M09 runtime,
-assets, musical approval or tests have been produced. M09 implementation and its
-own qualification remain required. This is one assistant applying the repository's role
+Status: implementation under qualification, on merged M08 `d48c427` / PR #391.
+The lesson and admitted-reader fixtures are public synthetic data; no production
+assets or musical approval have been produced. Full M09 qualification remains
+required. This is one assistant applying the repository's role
 checklists; it is not independent review or authorization.
 
 The [lesson contract](../lesson-rehearsal-v1.md) fixes the hand-derived pickup,
@@ -31,23 +32,50 @@ the existing validators/checker, preserving legacy filesystem behavior and exact
 original names. It must independently verify supplied bytes and use the same
 musical algorithms. A callback refusal must not retry disk paths. No generic
 filesystem projection, store, cache inventory, automatic hydration or new score
-grammar belongs in this phase. The exact interface and its first targeted tests
-remain the next implementation task; this review does not assert they exist.
+grammar belongs in this phase. The implemented interface is
+`ValidationInputs::admitted(FnMut(&Path) -> Result<Vec<u8>>)`, with operation-local
+snapshots and fixed 32-object / 1 MiB-object / 16 MiB-total bounds. Existing source,
+analysis, model, export and packet-check algorithms receive that explicit reader.
+Filesystem entry points select filesystem mode and retain their existing support;
+admitted mode rejects semantic imports and lyric/vocal layouts in this profile.
 
-## Planned evidence IDs
+## Requirement-to-test map
 
-These IDs are requirements, not existing passing tests. The implementation PR
-must replace each row with exact runnable test names/commands and actual results.
+The three admitted-input cases are in the music crate; the five bounded lesson
+cases are in `spoken_programme_media::lesson` and explicitly run in core shard 2
+on both hosted operating systems. They remain ordinary-run ignores, not missing
+runtime successful skips.
 
 | ID | Oracle / failure relationship |
 | --- | --- |
-| L01 | Same validation/export result through legacy files and admitted bytes; false bytes and terminal refusal while original disk files exist |
-| L02 | Actual editable pickup, MIDI/MusicXML/guide and EN/ES reading bindings; the 12000/108000/204000-sample traversal table |
-| L03 | Tick 720 resolves differently for each A occurrence; PPQ 960 / tempo 500010 / tick 1000 resolves 25000.5 → 25001 without floats |
-| L04 | Missing/duplicate occurrence, unknown section/note, incompatible pickup, reversed/outside ranges and unsupported timebase/rounding refuse |
-| L05 | Changed model/note/tempo/audio/export/reading and rehashed false receipts cannot replace original control identities |
-| L06 | Declared bounds, deadline/cancellation, occupied output and prior-version reopening preserve original assets and prevent a partial final index |
-| L07 | Portable count summaries omit fixture-only private canaries; planning/checking starts no provider process, player, daemon, upload or cache mutation |
+| L01 | `admitted_model_and_plan_preserve_original_validation_without_disk_fallback`: same model/report/plan, false raw-source bytes refuse; callback refusal while the same relative disk paths validate. Packet equivalence is also checked by `half_frame_rounding_and_original_score_packet_callbacks`. |
+| L02 | `actual_score_exports_and_bilingual_lesson_follow_pickup_repeat_goldens`: actual editable model/MIDI/MusicXML/guide, EN/ES instructions and reading bindings; exact 12000/108000/204000 intervals and source reference pin. |
+| L03 | The same golden case resolves tick 720 to 36000/132000; `half_frame_rounding_and_original_score_packet_callbacks` resolves exactly 25000.5 → 25001. |
+| L04 | `malformed_traversal_stale_clock_and_interrupted_publication_refuse`: duplicate/omitted/reordered/unknown sections or occurrences, missing note, outside tick, wrong PPQ/rounding, stale contract, language mismatch and unused input refuse with diagnostic-class assertions. `unsupported_admitted_layout_and_semantic_import_refuse_before_following_paths` checks early profile refusal. |
+| L05 | `rehashed_false_midi_and_receipt_cannot_replace_the_original_model`: consistent altered note-on/off pitches plus rewritten MIDI/receipt hashes still fail the independent model comparison; original prepared index also refuses changed inputs. |
+| L06 | `admitted_names_and_object_size_refuse_before_fallback_or_reuse` checks path, object, count and total bounds. The malformed/publication case checks zero deadline and interruption after directory reservation; the golden case proves no overwrite. `retained_lesson_reopens_without_original_score_directories_after_v2` re-prepares v1 after v2, with both original score directories removed and exact retained test providers; missing v1 bytes refuse while v2 still checks. |
+| L07 | The golden case asserts the private request canary is absent from the portable summary and all authority/device/release flags stay false. The retained provider offers no filesystem view. Call inspection confirms that the lesson only reads/checks and writes its explicitly requested new index; it does not start a player, generation service, cache operation or daemon. |
+
+## Execution
+
+Exclusive target: `F:/tmp/reel-builds/media-m09-isolated`, Windows / Rust 1.98.0,
+debug symbols disabled. Initial two lesson positives passed in 47.35 seconds;
+the complete five-case explicit print-feature run passed in 118.59 seconds,
+0 failed and 0 ignored. Every inherited artifact fixture retained its original
+60-second bound. The three admitted-reader cases passed; music-crate all-target
+Clippy passed with warnings denied, and all 65 music-crate tests passed (including
+those three new cases). This is 70 distinct local passing tests at this checkpoint.
+
+```sh
+cargo test --locked -p reel-music --all-targets
+cargo clippy --locked -p reel-music --all-targets -- -D warnings
+cargo test --locked --all-features --test spoken_programme_media lesson:: -- --ignored --test-threads=1
+```
+
+The all-feature run, existing root score/arrangement and reading regressions,
+root all-target/all-feature Clippy, final docs checks and required hosted checks
+remain to be recorded. No native asset custody or project adoption is claimed by
+the retained test byte provider.
 
 Retained disagreements/limitations: readable notation and repeat usefulness need
 actual musical review; language/voice/listening/device/selection/adoption gates

@@ -23,6 +23,7 @@ pub mod semantic_import;
 pub mod source;
 pub mod time;
 pub mod underlay_editor;
+pub mod validation_inputs;
 
 use std::collections::BTreeSet;
 
