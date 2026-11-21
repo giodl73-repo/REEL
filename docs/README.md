@@ -20,6 +20,10 @@ Each walkthrough links to its relevant contracts. The [capability map](capabilit
 lists the wider toolset; [use cases](use-cases.md) describe task sequences; the
 [reference index](reference-index.md) is the full contract catalogue.
 
+For proposed work beyond the current delivery routes, see the
+[media format expansion plan](media-format-expansion.md), starting with reusable
+spoken-content modules and audience/language editions.
+
 ## Learning paths
 
 | Goal | Read in order |
