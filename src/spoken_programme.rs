@@ -13,6 +13,8 @@ pub mod compiler;
 pub mod history;
 pub mod layers;
 pub mod producer;
+#[cfg(feature = "print")]
+pub mod reading;
 
 pub const SCHEMA: &str = "reel.spoken-edition.v1";
 pub const VALIDATION_SCHEMA: &str = "reel.spoken-edition-validation.v1";

@@ -76,3 +76,21 @@ resources, decoded stream preservation, deterministic rebuild, output tamper,
 no-clobber, privacy, stale pins, duplicate IDs, budgets and active SVG refusal.
 Collection listening HTML, passage timing, calibrated piano, new engraving and
 editable score changes retain their own adapters and acceptance requirements.
+
+## Admitted asset inputs
+
+Rust hosts can use `plan_with_inputs`, `render_with_inputs` and
+`check_with_inputs` with the original request bytes and a callback returning the
+exact bytes for each `Pin`. The same snapshot, layout and packet reconstruction
+are used by the filesystem API. Returned source lengths and hashes are checked;
+a provider error is terminal and never retried through the request's disk paths.
+
+The checker receives an explicit output-object namespace, including
+`receipt.json`, and checks its exact names, declared pins and actual bytes
+against the rebuilt packet. This describes admitted objects rather than a census
+of an entire asset store. The original filesystem checker still rejects extra
+physical files in its packet directory. The provider retains its own guards;
+these callbacks do not establish custody, load a cache or grant publication.
+
+[Narrated reading](narrated-reading-v1.md) uses this seam to bind manuscript
+wording and checked print pages to independently checked spoken chapters.

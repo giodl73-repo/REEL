@@ -8,7 +8,7 @@ use reel::{
 };
 use std::{path::Path, sync::OnceLock, time::Duration};
 
-struct LayerFiles {
+pub(super) struct LayerFiles {
     root: PathBuf,
     runtime: PathBuf,
 }
@@ -63,7 +63,7 @@ fn pin_file(root: &Path, name: &str, bytes: &[u8]) -> FileRef {
         bytes: bytes.len() as u64,
     }
 }
-fn fixture() -> (Fixture, LayerFiles, &'static api::Runtime) {
+pub(super) fn fixture() -> (Fixture, LayerFiles, &'static api::Runtime) {
     let (runtime, pin) = runtime();
     let mut f = Fixture::new();
     for p in &mut f.document.performances {
@@ -98,7 +98,7 @@ fn fixture() -> (Fixture, LayerFiles, &'static api::Runtime) {
     pin_file(&root, "effect.wav", &wave(&effect));
     (f, LayerFiles { root, runtime }, pin)
 }
-fn request(f: &Fixture, files: &LayerFiles, edition: &str) -> api::Request {
+pub(super) fn request(f: &Fixture, files: &LayerFiles, edition: &str) -> api::Request {
     let receipt: producer::ProductionReceipt =
         serde_json::from_slice(&fs::read(f.output().join("receipt.json")).unwrap()).unwrap();
     let parent = receipt
