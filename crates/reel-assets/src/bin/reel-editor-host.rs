@@ -134,6 +134,10 @@ impl Bundle {
             .ok_or("Missing native editor session schema")?
             .to_owned();
         let (html, script): (&[u8], &[u8]) = match schema.as_str() {
+            "reel.screenplay-session.v1" => (
+                include_bytes!("../../../reel-screenplay/src/review.html"),
+                include_bytes!("../../../reel-screenplay/src/review.js"),
+            ),
             "reel.music-note-session.v1" => (
                 include_bytes!("../../../reel-music/src/note_editor.html"),
                 include_bytes!("../../../reel-music/src/note_editor.js"),
@@ -163,6 +167,7 @@ impl Bundle {
             }
         }
         match schema.as_str() {
+            "reel.screenplay-session.v1" => (),
             "reel.music-note-session.v1" | "reel.music-underlay-session.v1" => (),
             "reel.cel-sorter-session.v1"
             | "reel.cel-sorter-session.v2"
@@ -779,6 +784,10 @@ mod tests {
     fn fixture(schema: &str) -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         let (html, js): (&[u8], &[u8]) = match schema {
+            "reel.screenplay-session.v1" => (
+                include_bytes!("../../../reel-screenplay/src/review.html"),
+                include_bytes!("../../../reel-screenplay/src/review.js"),
+            ),
             "reel.music-note-session.v1" => (
                 include_bytes!("../../../reel-music/src/note_editor.html"),
                 include_bytes!("../../../reel-music/src/note_editor.js"),
@@ -926,6 +935,7 @@ mod tests {
     #[test]
     fn only_known_native_frontends_and_explicit_resources_are_hosted() {
         for schema in [
+            "reel.screenplay-session.v1",
             "reel.cel-sorter-session.v1",
             "reel.cel-sorter-session.v2",
             "reel.cel-sorter-session.v3",
