@@ -177,6 +177,9 @@ for runtime requirements and [capabilities](docs/capabilities.md) for detailed s
 | Make multilingual, captioned or print editions | [Editions and delivery](docs/guides/editions-and-delivery.md) |
 | Reproduce, revise or recover a production | [git-asset, revisions and reproducibility](docs/guides/assets-and-revisions.md) |
 | Find an exact command, schema or specialist operation | [Complete reference index](docs/reference-index.md) |
+| Analyze bilingual screenplay dialogue and ensemble pivots | [Screenplay review](docs/screenplay-review-v1.md) |
+| Design original synthetic voices and record exact speech | [Voice design](docs/voice-design-v1.md) and [speech adapter](docs/tig-speech-generation.md) |
+| Review exact local video, audio and image candidates | [Private media review](docs/local-media-review.md) |
 | Inspect a semantic dependency graph in a browser | [WASM workbench](https://giodl73-repo.github.io/REEL/assembly/) |
 
 <details>

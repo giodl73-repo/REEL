@@ -14,6 +14,9 @@ use tig_core::Object;
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache, RequiredProtection};
 use zeroize::Zeroizing;
 
+mod cut;
+pub use cut::cut;
+
 const CONTROL_MAX: u64 = 65_536;
 const RESPONSE_MAX: u64 = 16 * 1024 * 1024;
 const RATE: u64 = 44_100;
@@ -91,6 +94,22 @@ fn provider_text(request: &Request) -> String {
         |tag| format!("[{tag}] {}", request.source_text),
     )
 }
+fn is_v4(request: &Request) -> bool {
+    matches!(request.model_id.as_str(), "eleven_v4" | "eleven_v4_turbo")
+}
+fn provider_body(request: &Request) -> Result<Vec<u8>> {
+    let settings = if is_v4(request) {
+        json!({"stability":request.voice_settings.stability,
+            "similarity_boost":request.voice_settings.similarity_boost})
+    } else {
+        serde_json::to_value(&request.voice_settings)?
+    };
+    Ok(serde_json::to_vec(&json!({
+        "text":provider_text(request), "model_id":request.model_id,
+        "language_code":request.language_code,"seed":request.seed,
+        "voice_settings":settings,"apply_text_normalization":"off"
+    }))?)
+}
 fn validate_limits(profile: &Profile) -> Result<()> {
     let required = profile
         .max_response_bytes
@@ -114,6 +133,11 @@ fn validate_limits(profile: &Profile) -> Result<()> {
 fn validate(profile: &Profile, request: &Request, authorization: &Authorization) -> Result<()> {
     validate_limits(profile)?;
     let settings = &request.voice_settings;
+    if is_v4(request)
+        && (settings.style != 0.0 || settings.speed != 1.0 || settings.use_speaker_boost)
+    {
+        bail!("v4 requires neutral unsupported legacy controls");
+    }
     if request.schema != "reel.speech-request.v1"
         || request.provider != "elevenlabs"
         || !token(&request.voice_id)
@@ -190,11 +214,7 @@ fn prepare(profile_path: &Path) -> Result<(Prepared, ReadCache)> {
     // Existing evidence bytes are required; their truth/authority is not inferred by this tool.
     read_object(&mut cache, &authorization.consent_evidence, CONTROL_MAX)?;
     read_object(&mut cache, &authorization.casting_evidence, CONTROL_MAX)?;
-    let provider_body = serde_json::to_vec(&json!({
-        "text":provider_text(&request), "model_id":request.model_id,
-        "language_code":request.language_code,"seed":request.seed,
-        "voice_settings":request.voice_settings,"apply_text_normalization":"off"
-    }))?;
+    let provider_body = provider_body(&request)?;
     Ok((
         Prepared {
             profile,
