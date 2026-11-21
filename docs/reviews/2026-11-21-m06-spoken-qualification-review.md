@@ -1,7 +1,7 @@
 # M06 spoken slice: role checklist and evidence map
 
-**Status:** preparatory engineering checks on M05 PR #383 at `704cec7`.
-Final local qualification and hosted checks require merged M05. Spoken review
+**Status:** engineering checks on merged M05 `027164f`, PR #383.
+Final local qualification passed; hosted checks remain pending. Spoken review
 remains **awaiting listening evidence**.
 
 One assistant applied the six spoken-plan [role checklists](../../.roles/ROLE.md).
@@ -49,8 +49,15 @@ cases in the default-feature media target (14.80 seconds), then 58 distinct
 tests with `tig-history`: 24 media cases (33.07 seconds), four native history
 cases (32.08 seconds), 20 compiler/declaration, nine clock and one existing review
 CLI case. None were ignored. All-target/all-feature Clippy with warnings denied,
-formatting, local links and `git diff --check` passed. Final merged-parent
-and hosted results remain pending. Commands are recorded in the qualification contract. Each worktree has
+formatting, local links and `git diff --check` passed.
+
+After rebasing onto merged M05 `027164f`, the complete 58-case regression command
+passed again, none ignored: native history 29.24 seconds, media 36.87 seconds,
+compiler/declaration 5.80 seconds, clocks 0.01 seconds and review CLI 0.20 seconds.
+All-target/all-feature Clippy with warnings denied, formatting and diff checks
+also passed again. Hosted qualification remains pending. M05's merged tree was
+confirmed byte-identical to its tested PR head. Commands are recorded in the
+qualification contract. Each worktree has
 its own Cargo target directory; no result from another worktree's executable is
 accepted as evidence.
 

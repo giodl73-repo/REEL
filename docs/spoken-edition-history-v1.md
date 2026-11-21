@@ -1,6 +1,7 @@
 # Retained spoken editions through the existing native SDK
 
-**Status:** M05 implementation on merged M04 (`c59b490`, PR #382).
+**Status:** M05 merged as `027164f` in [PR #383](https://github.com/giodl73-repo/REEL/pull/383)
+after required hosted checks passed, based on merged M04 (`c59b490`, PR #382).
 Local and hosted qualification are recorded in the [M05 review](reviews/2026-11-21-m05-spoken-history-review.md).
 No new cache, custody
 engine, automatic restore or project cutover is introduced.

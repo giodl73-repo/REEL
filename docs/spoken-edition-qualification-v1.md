@@ -1,7 +1,8 @@
 # Spoken programme engineering qualification
 
-**Status:** M06 preparatory scope on M05 PR #383 at `704cec7`. Final
-qualification waits for merged M05. The spoken checkpoint is **awaiting listening
+**Status:** M06 engineering scope on merged M05 `027164f`, [PR #383](https://github.com/giodl73-repo/REEL/pull/383).
+Final local and hosted results are recorded in the [review](reviews/2026-11-21-m06-spoken-qualification-review.md).
+The spoken checkpoint is **awaiting listening
 evidence**: no approved voice profiles or actual EN/ES recordings have been
 supplied for this work.
 
