@@ -105,3 +105,9 @@ cap stays fixed. Packaging and independent artifact verification still enforce
 both limits and exact inventory/provenance subjects; no source or license files
 are excluded to meet the budget. Final hosted package/source replay remains
 required after this change. No workflow run is manually canceled.
+Local packaging/independent verification passed at `14766d9`: 8,403,117 complete
+bytes, 319,155 runtime bytes, 2,336 exact Git source pins and 87 served files.
+This local check repackaged the existing qualified main browser binaries (the
+protected assembly foundation is unchanged), not a fresh WASM build. The final
+hosted assembly workflow must still rebuild, exercise the browser, replay the
+delivered source outside Git and verify the transferred artifact.
