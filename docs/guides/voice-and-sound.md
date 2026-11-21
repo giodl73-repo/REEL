@@ -61,6 +61,11 @@ candidate package; independent checking and authority remain separate.
 The [phased plan](../media-expansion-pr-plan.md) tracks merged scope and the
 remaining independent checker and retained-edition work.
 
+The [independent checker and text-access draft](../spoken-edition-check-v1.md)
+reopens source/output PCM, recomputes the declared processing and derives exact
+speaker-role transcripts, pauses, word evidence and chapters. Selected script
+and recognition evidence stay separate; actual listening remains a project gate.
+
 | Work | Detailed contract |
 | --- | --- |
 | Capture or execute a speech attempt | [Speech adapter](../tig-speech-generation.md) |

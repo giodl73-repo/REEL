@@ -657,6 +657,28 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
+        Command::SpokenEditionCheck {
+            declaration,
+            plan,
+            asset_root,
+            candidate,
+            processing,
+            access,
+            write_access,
+        } => {
+            let report = reel::spoken_programme::checker::check_file(
+                reel::spoken_programme::checker::FileCheckRequest {
+                    declaration: &declaration,
+                    plan: &plan,
+                    source_root: &asset_root,
+                    candidate: &candidate,
+                    processing: processing.as_deref(),
+                    access: access.as_deref(),
+                    write_access: write_access.as_deref(),
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::SpokenEditionProduce {
             plan,
             declaration,
@@ -2945,6 +2967,21 @@ enum Command {
     },
     /// Validate an audio-edition declaration without reading media or executing tools.
     SpokenEditionValidate { edition: PathBuf },
+    /// Independently check lossless spoken PCM and optional local text access.
+    SpokenEditionCheck {
+        declaration: PathBuf,
+        plan: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        candidate: PathBuf,
+        #[arg(long)]
+        processing: Option<PathBuf>,
+        #[arg(long, conflicts_with = "write_access")]
+        access: Option<PathBuf>,
+        #[arg(long)]
+        write_access: Option<PathBuf>,
+    },
     /// Assemble a new private lossless spoken candidate from current exact controls.
     SpokenEditionProduce {
         plan: PathBuf,

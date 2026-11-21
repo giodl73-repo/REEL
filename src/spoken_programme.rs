@@ -7,6 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{cue_relative::CueMarker, scene_delivery::FileRef};
 
+pub mod checker;
 pub mod compiler;
 pub mod producer;
 
