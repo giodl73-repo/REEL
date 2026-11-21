@@ -73,6 +73,13 @@ binding while the two executive editions and English technical edition stay
 exact. Original WAVs and text can be checked again from retained inputs with
 the source checkout unavailable. M05 qualification remains tracked in the plan.
 
+The [two-speaker module example](../spoken-edition-qualification-v1.md) adds a
+host question and expert answer inside one detail module. Its EN technical
+edition lasts 12.2 seconds and ES lasts 14.45 seconds under the declared signal
+clock; both executive editions keep their earlier bytes. The example shows exact
+cue/gap/chapter intervals and a separately authored reordered version. These are
+engineering signals; real speech and natural handoffs still need listening.
+
 | Work | Detailed contract |
 | --- | --- |
 | Capture or execute a speech attempt | [Speech adapter](../tig-speech-generation.md) |

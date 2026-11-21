@@ -1,7 +1,8 @@
 # M05 retained spoken editions: checklist review
 
-**Status:** local qualification passed on merged M04 `c59b490`;
-required hosted checks pending. This is one assistant applying the repository's
+**Status:** merged in [PR #383](https://github.com/giodl73-repo/REEL/pull/383)
+as `027164f` after full [hosted qualification](https://github.com/giodl73-repo/REEL/actions/runs/44916089006)
+passed. This is one assistant applying the repository's
 role checklists, not independent review or human approval.
 
 ## Scope and findings
@@ -61,7 +62,9 @@ receipt mutations, the four native cases passed again (40.58 seconds), alongside
 the existing review-decision CLI regression (one case, 0.26 seconds): 55 distinct
 passing tests overall. All-target/all-feature Clippy with warnings denied,
 formatting, local documentation links and `git diff --check` passed.
-Hosted Windows/Linux qualification remains pending. The four-edition source
+Hosted Windows/Linux qualification passed on exact PR head `704cec7`;
+the full CI run completed in 22 minutes 23 seconds, with Windows media at
+22 minutes 2 seconds. The four-edition source
 fixture is the M00 48 kHz stereo PCM24 engineering signal, with distinct EN/ES
 sample counts and no acoustic word or listening claim. Runtime identities are
 derived from the actual executing test binary and checked against protected
