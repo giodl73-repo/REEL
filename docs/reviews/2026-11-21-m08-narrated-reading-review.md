@@ -86,8 +86,13 @@ existing collection cases. This is **76 distinct locally passing tests**, not a
 claim that every required hosted runtime case has run locally.
 
 Print-crate all-target Clippy passed with warnings denied. Root all-target,
-all-feature Clippy passed before the final fixture adjustment; its final rerun,
-formatting, links/actionlint and hosted qualification remain to be recorded.
+all-feature Clippy passed again after the final fixture adjustment and after
+separating the authored request and generated index schema IDs. The focused
+bilingual test then passed in 17.41 seconds, asserting both wire IDs and refusal
+to use an index schema for a request. This rechecks the final serialization
+change without repeating unrelated media work. Formatting, changed-document
+links, actionlint 1.7.12 and diff checks passed. Hosted qualification remains
+pending until the M07 prerequisite merges.
 
 The principal commands are:
 

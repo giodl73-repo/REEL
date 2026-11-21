@@ -18,6 +18,7 @@ use std::{
 };
 
 pub const SCHEMA: &str = "reel.narrated-reading.v1";
+pub const INDEX_SCHEMA: &str = "reel.narrated-reading-index.v1";
 const CONTROL: u64 = 4 * 1024 * 1024;
 const PRINT: u64 = 32 * 1024 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -494,7 +495,7 @@ fn derive(
         languages.len() == request.language_columns.len(),
         "unused reading language column"
     );
-    let index = serde_json::json!({"schema":SCHEMA,"request":request,"sample_rate":48000,"editions":editions,
+    let index = serde_json::json!({"schema":INDEX_SCHEMA,"request":request,"sample_rate":48000,"editions":editions,
         "print_outputs":rebuilt.outputs,"print_provider":"print","layered_receipts":layered_receipts,"text_basis":"authored-source",
         "pdf_raster_check":rebuilt.pdf_raster_check,"authority_verified":false,"release_authorized":false});
     files.insert("reading.json".into(), serde_json::to_vec_pretty(&index)?);

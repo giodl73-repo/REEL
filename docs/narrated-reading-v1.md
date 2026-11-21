@@ -32,6 +32,8 @@ A reading request maps each declared language to a source column (`text`,
 or approve a translation. Every edition names its language, exact parent recipe
 pins and ordered chapter bindings. Each chapter names the parent module and
 print entry, plus one source byte span per selected cue.
+The authored request uses `reel.narrated-reading.v1`; the generated index uses
+the distinct `reel.narrated-reading-index.v1` schema. They are not interchangeable.
 
 The full-reading profile requires all text entries in source order. Spans must
 be nonempty UTF-8 boundaries, monotonic, nonoverlapping, and exactly equal to
@@ -44,6 +46,8 @@ receipt, access manifest, print request and print receipt. Providers resolve
 those exact names; failure never falls back to a checkout, latest version or
 ambient asset search. Producer identity is independently verified from its
 declared bytes. Checking an earlier contract does not execute an older binary.
+Within one provider namespace, a name binds one immutable hash and byte count.
+Conflicting pins refuse; simultaneous versions require distinct declared names.
 
 ## Existing interfaces and the narrow print seam
 

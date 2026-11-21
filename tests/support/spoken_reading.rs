@@ -289,6 +289,11 @@ fn bilingual_source_order_clocks_pages_and_authored_text() {
     reading::check(&prepared, &output, Duration::from_secs(30)).unwrap();
     let index: serde_json::Value =
         serde_json::from_slice(&fs::read(output.join("reading.json")).unwrap()).unwrap();
+    assert_eq!(index["schema"], "reel.narrated-reading-index.v1");
+    assert_eq!(index["request"]["schema"], "reel.narrated-reading.v1");
+    let mut wrong_schema = f.request.clone();
+    wrong_schema.schema = reading::INDEX_SCHEMA.into();
+    assert!(reading::prepare(wrong_schema, f.inputs(), Duration::from_secs(30)).is_err());
     for (i, duration) in [508800, 590400].iter().enumerate() {
         assert_eq!(index["editions"][i]["duration_samples"], *duration);
         let clocks = [
