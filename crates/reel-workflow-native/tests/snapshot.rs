@@ -2134,6 +2134,272 @@ struct AdmissionCase {
     profile: reel_workflow_native::admission::Profile,
     source: reel_workflow_native::NativeProfile,
 }
+
+#[cfg(all(windows, feature = "film"))]
+fn film_input_fixture() -> Fixture {
+    film_input_fixture_with_object(Object::from_bytes(b"synthetic input"))
+}
+
+#[cfg(all(windows, feature = "film"))]
+fn film_input_fixture_with_object(object: Object) -> Fixture {
+    let mut fixture = Fixture::with_object(object);
+    let root = fixture.temp.path();
+    let original: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("records/input.tig")).unwrap()).unwrap();
+    for name in ["publication", "request"] {
+        let id = format!("controls/{name}");
+        let mut record = original.clone();
+        record["id"] = json!(id);
+        record["streams"] = json!([]);
+        let record_path = format!("records/{name}.tig");
+        write(root, &record_path, record);
+        let leaf = format!("payloads/{name}.bin");
+        fs::copy(root.join("payloads/source.bin"), root.join(&leaf)).unwrap();
+        fixture.profile.records.push(record_path);
+        fixture.profile.bindings.insert(
+            id.clone(),
+            Binding {
+                selected: LogicalPath::parse(&leaf).unwrap(),
+                streams: BTreeMap::new(),
+            },
+        );
+        fixture.profile.input_streams.insert(id.clone(), None);
+        let mut artifact = fixture.packet.task.inputs[0].clone();
+        artifact.logical_id = id;
+        fixture.packet.task.inputs.push(artifact);
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "synthetic film controls"]);
+    fixture.profile.commit = git(root, &["rev-parse", "HEAD"]);
+    let program = Artifact {
+        logical_id: "runtime/producer".into(),
+        sha256: fixture.profile.git.sha256.clone(),
+        bytes: fixture.profile.git.bytes,
+        media_type: "application/octet-stream".into(),
+    };
+    let task = &mut fixture.packet.task;
+    task.operation = Operation::DeterministicTool;
+    task.prompt.clear();
+    task.tool = Some(ToolContract {
+        schema: "reel.workflow-tool.v1".into(),
+        capability: ToolCapability::FilmRender,
+        executable: program.clone(),
+        auxiliary_executables: BTreeMap::from([
+            ("ffmpeg".into(), program.clone()),
+            ("ffprobe".into(), program),
+        ]),
+        publication: task.inputs[1].clone(),
+        request: task.inputs[2].clone(),
+        edition_id: "synthetic-es".into(),
+        source_bindings: task
+            .inputs
+            .iter()
+            .enumerate()
+            .map(|(i, a)| (format!("asset-{i}.bin"), a.logical_id.clone()))
+            .collect(),
+        part: None,
+    });
+    fixture.repin();
+    fixture
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+fn film_files_require_live_claims_and_preserve_authored_alias_and_program_identity() {
+    use reel_workflow_native::{
+        NativeInputs,
+        admission::Prepared,
+        film_inputs::{Inputs, Programs},
+    };
+    let fixture = film_input_fixture();
+    let mut case = AdmissionCase::new(&fixture);
+    // Real pinned executable bytes, never invoked as a media program or annex.
+    // Every refusal below occurs before the nonexistent payload pool is read.
+    case.source.annex = fixture.profile.git.clone();
+    case.source.source.pool.executable = fixture.profile.git.path.clone();
+    let programs = Programs {
+        ffmpeg: fixture.profile.git.clone(),
+        ffprobe: fixture.profile.git.clone(),
+    };
+    let aliases = &fixture.packet.task.tool.as_ref().unwrap().source_bindings;
+    let unclaimed = NativeInputs::open(&fixture.packet, &case.source).unwrap();
+    let error = Inputs::prepare(&fixture.packet, unclaimed, aliases, programs.clone())
+        .err()
+        .unwrap();
+    assert_eq!(error.kind, ErrorKind::Denied);
+    assert_eq!(error.code, "film-input-live-authority-required");
+
+    let prepared = Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "film-attempt-1",
+    )
+    .unwrap();
+    let receipt = prepared.accept().unwrap();
+    let native = || {
+        NativeInputs::from_claims(
+            &fixture.packet,
+            &case.source,
+            Prepared::open(
+                &fixture.packet,
+                &case.source,
+                &case.profile,
+                "film-attempt-1",
+            )
+            .unwrap()
+            .reopen(&receipt)
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    let mut swapped = aliases.clone();
+    swapped.insert(
+        "asset-1.bin".into(),
+        fixture.packet.task.inputs[2].logical_id.clone(),
+    );
+    swapped.insert(
+        "asset-2.bin".into(),
+        fixture.packet.task.inputs[1].logical_id.clone(),
+    );
+    assert_eq!(
+        fixture.packet.task.inputs[1].sha256,
+        fixture.packet.task.inputs[2].sha256
+    );
+    let error = Inputs::prepare(&fixture.packet, native(), &swapped, programs.clone())
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "film-input-authored-aliases");
+    let mut changed = programs;
+    changed.ffmpeg.sha256 = "0".repeat(64);
+    let error = Inputs::prepare(&fixture.packet, native(), aliases, changed)
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "film-input-program-content");
+
+    let claims = prepared.reopen(&receipt).unwrap();
+    let mut changed_packet = fixture.packet.clone();
+    changed_packet.task.tool.as_mut().unwrap().edition_id = "another-edition".into();
+    changed_packet = make_packet(
+        &Plan {
+            schema: PLAN_SCHEMA.into(),
+            task_snapshots: BTreeMap::new(),
+            project: changed_packet.project,
+            source_commit: changed_packet.source_commit,
+            tasks: vec![changed_packet.task],
+        },
+        "review",
+        BTreeMap::new(),
+    )
+    .unwrap();
+    assert!(NativeInputs::from_claims(&changed_packet, &case.source, claims).is_err());
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+fn film_auxiliary_runtime_namespace_refuses_reserved_names_before_admission() {
+    use reel_workflow_native::admission::Prepared;
+    let mut fixture = film_input_fixture();
+    let original_key = fixture.packet.task_key.clone();
+    let tool = fixture.packet.task.tool.as_mut().unwrap();
+    let pin = tool.auxiliary_executables["ffmpeg"].clone();
+    tool.auxiliary_executables.insert("aux".into(), pin);
+    fixture.repin();
+    assert_ne!(fixture.packet.task_key, original_key);
+    let case = AdmissionCase::new(&fixture);
+    let before = fs::read(case.profile.metadata_root.join("metadata.json")).unwrap();
+    let error = Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "film-attempt-1",
+    )
+    .err()
+    .unwrap();
+    assert_eq!(error.kind, ErrorKind::Invalid);
+    assert_eq!(error.code, "admission-runtime-path");
+    assert_eq!(
+        before,
+        fs::read(case.profile.metadata_root.join("metadata.json")).unwrap()
+    );
+    assert!(
+        case.protected(&Object::from_bytes(b"synthetic input"))
+            .is_empty()
+    );
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Reads an explicitly declared existing synthetic native object only; no rendering, pool setup, hydration or project adoption"]
+fn film_native_files_hold_verified_paths_and_exact_programs_without_rendering() {
+    use reel::scene_delivery::{FileRef, InputFiles, MediaProgram};
+    use reel_workflow_native::{
+        NativeInputs,
+        admission::Prepared,
+        film_inputs::{Inputs, Programs},
+    };
+    let raw = fs::read(
+        std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set REEL_NATIVE_INPUT_FIXTURE"),
+    )
+    .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let object: Object = serde_json::from_value(value["object"].clone()).unwrap();
+    let fixture = film_input_fixture_with_object(object.clone());
+    let source: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let mut case = AdmissionCase::with_store(&fixture, source.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source.source = source;
+    case.source.source.pool.control = control;
+    case.source.annex = serde_json::from_value(value["annex"].clone()).unwrap();
+    let receipt = Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "film-attempt-1",
+    )
+    .unwrap()
+    .accept()
+    .unwrap();
+    let claims = Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "film-attempt-1",
+    )
+    .unwrap()
+    .reopen(&receipt)
+    .unwrap();
+    let native = NativeInputs::from_claims(&fixture.packet, &case.source, claims).unwrap();
+    let aliases = &fixture.packet.task.tool.as_ref().unwrap().source_bindings;
+    let programs = Programs {
+        ffmpeg: fixture.profile.git.clone(),
+        ffprobe: fixture.profile.git.clone(),
+    };
+    let inputs = Inputs::prepare(&fixture.packet, native, aliases, programs).unwrap();
+    assert_eq!(inputs.objects(), 1);
+    let mut reference = FileRef {
+        path: "asset-0.bin".into(),
+        sha256: object.sha256.as_str().into(),
+        bytes: object.bytes,
+    };
+    let path = inputs.verified_path(&reference).unwrap();
+    assert_eq!(digest(&fs::read(&path).unwrap()), reference.sha256);
+    assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+    assert_eq!(
+        inputs.media_program(MediaProgram::Ffmpeg).unwrap(),
+        fixture.profile.git.path
+    );
+    assert_eq!(
+        inputs.media_program(MediaProgram::Ffprobe).unwrap(),
+        fixture.profile.git.path
+    );
+    reference.sha256 = "0".repeat(64);
+    assert!(inputs.verified_path(&reference).is_err());
+    reference.sha256 = object.sha256.as_str().into();
+    reference.path = "undeclared.bin".into();
+    assert!(inputs.verified_path(&reference).is_err());
+}
 impl AdmissionCase {
     fn new(fixture: &Fixture) -> Self {
         Self::with_store(fixture, tig_core::Digest::blob(b"synthetic-store"))
