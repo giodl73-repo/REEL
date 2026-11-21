@@ -1,7 +1,7 @@
 # Independent spoken-edition checking and text access
 
-**Status:** M04 design/preparatory work, stacked on M03. This document specifies
-checks to implement, not passed qualification. Dependencies and closure remain
+**Status:** M04 implementation locally checked on merged M03 `a8b481b`.
+Required hosted qualification and merge remain pending. Dependencies and closure remain
 in the [PR plan](media-expansion-pr-plan.md). The
 [producer contract](spoken-edition-production-v1.md) defines the candidate input.
 
