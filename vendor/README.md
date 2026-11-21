@@ -1,5 +1,11 @@
 # Pinned source dependencies
 
+The separately reviewed [workflow SDK intake](../crates/reel-workflow-native/README.md)
+uses `tig-workflow/`, `reel-workflow-lifecycle/` and `git-asset-capacity/` in an
+isolated workspace. Their original source pins and licenses are preserved;
+accepted producers continue using `tig/`. The sections below describe that
+existing producer dependency, not the new workflow intake.
+
 `tig/` contains unmodified Cargo manifests, lock, Rust source and embedded catalogue
 web assets from Tig at the
 exact commit in `tig/source-pin.json`, with its unchanged MIT license. It is a

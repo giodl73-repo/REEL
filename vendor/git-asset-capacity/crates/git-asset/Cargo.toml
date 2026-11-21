@@ -1,0 +1,102 @@
+[package]
+name = "git-asset"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "git-asset"
+path = "src/bin/git-asset.rs"
+
+[features]
+assets = ["dep:git-asset-model"]
+schema = ["assets", "git-asset-model/schema", "dep:regex", "dep:flate2"]
+annex-read = ["dep:process-wrap", "dep:tokio"]
+upload = ["git-asset-store/upload-witness", "dep:ureq"]
+github = ["dep:base64", "dep:ring", "dep:ureq"]
+
+[dependencies]
+git-asset-core = { path = "../core" }
+git-asset-store = { path = "../store" }
+git-asset-model = { path = "../model", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sha1 = "=0.11.0"
+getrandom = "=0.4.3"
+fs2 = "=0.4.3"
+regex = { version = "=1.13.1", optional = true }
+flate2 = { version = "=1.1.9", optional = true }
+process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "job-object", "kill-on-drop", "creation-flags"], optional = true }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "process", "io-util", "time"], optional = true }
+ureq = { version = "=3.5.1", default-features = false, features = ["rustls"], optional = true }
+base64 = { version = "=0.22.1", optional = true }
+ring = { version = "=0.17.14", optional = true }
+
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[[bin]]
+name = "git-asset-lifecycle"
+path = "src/bin/git-asset-lifecycle.rs"
+
+[[bin]]
+name="git-asset-trigger"
+path="src/bin/git-asset-trigger.rs"
+required-features=["github"]
+
+[[bin]]
+name = "git-asset-lfs"
+path = "src/bin/git-asset-lfs.rs"
+
+[[bin]]
+name = "git-asset-propose"
+path = "src/bin/git-asset-propose.rs"
+
+[[bin]]
+name = "git-asset-resolve"
+path = "src/bin/git-asset-resolve.rs"
+required-features = ["assets"]
+
+[[bin]]
+name = "git-asset-graph"
+path = "src/bin/git-asset-graph.rs"
+required-features = ["assets"]
+
+[[bin]]
+name = "git-asset-restore"
+path = "src/bin/git-asset-restore.rs"
+required-features = ["assets"]
+
+[[bin]]
+name = "git-asset-project"
+path = "src/bin/git-asset-project.rs"
+required-features = ["assets"]
+
+[[bin]]
+name = "git-asset-history"
+path = "src/bin/git-asset-history.rs"
+required-features = ["schema"]
+
+[[bin]]
+name = "git-asset-catalogue"
+path = "src/bin/git-asset-catalogue.rs"
+required-features = ["schema"]
+
+[[bin]]
+name = "git-asset-sample"
+path = "src/bin/git-asset-sample.rs"
+required-features = ["schema"]
+
+[[bin]]
+name = "git-asset-query"
+path = "src/bin/git-asset-query.rs"
+required-features = ["schema"]
+
+[[bin]]
+name = "git-asset-retirement"
+path = "src/bin/git-asset-retirement.rs"
+required-features = ["schema"]

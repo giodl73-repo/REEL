@@ -1,0 +1,78 @@
+[package]
+name = "tig-git"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+assets = ["dep:tig-assets"]
+remote-lfs = ["dep:ureq", "dep:time"]
+remote-lfs-fixtures = ["remote-lfs", "dep:rcgen", "dep:rustls"]
+
+[dependencies]
+tig-core = { path = "../tig-core" }
+tig-store = { path = "../tig-store" }
+tig-assets = { path = "../tig-assets", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sha1 = "=0.11.0"
+getrandom = "=0.4.3"
+fs2 = "=0.4.3"
+same-file = "=1.0.6"
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"], optional = true }
+time = { version = "=0.3.55", default-features = false, features = ["std", "parsing"], optional = true }
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring", "pem"], optional = true }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"], optional = true }
+process-wrap = { version = "=10.0.1", default-features = false, features = ["tokio1", "job-object", "kill-on-drop", "creation-flags"] }
+tokio = { version = "=1.54.1", default-features = false, features = ["rt", "process", "io-util", "time"] }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[[bin]]
+name = "tig-lfs"
+path = "src/bin/tig-lfs.rs"
+
+[[bin]]
+name = "tig-plan"
+path = "src/bin/tig-plan.rs"
+
+[[bin]]
+name = "tig-acquire"
+path = "src/bin/tig-acquire.rs"
+
+[[bin]]
+name = "tig-admit"
+path = "src/bin/tig-admit.rs"
+
+[[bin]]
+name = "tig-init"
+path = "src/bin/tig-init.rs"
+
+[[bin]]
+name = "tig-reconcile"
+path = "src/bin/tig-reconcile.rs"
+
+[[bin]]
+name = "tig-retain"
+path = "src/bin/tig-retain.rs"
+
+[[bin]]
+name = "tig-source"
+path = "src/bin/tig-source.rs"
+
+[[bin]]
+name = "tig-resolve"
+path = "src/bin/tig-resolve.rs"
+required-features = ["assets"]
+
+[[test]]
+name = "remote_lfs"
+path = "tests/remote_lfs.rs"
+required-features = ["remote-lfs-fixtures"]
+
+[target."cfg(windows)".dependencies]
+firehazard = "=0.0.0-2022-09-10"

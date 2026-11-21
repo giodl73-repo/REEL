@@ -13,3 +13,8 @@ manifests/fixtures/sprite-library/two-color.ppm text eol=lf
 manifests/fixtures/sprite-library/two-color-reversed.ppm text eol=lf
 
 browser/** text eol=lf
+
+# Qualified source bytes must survive checkout without line-ending conversion.
+vendor/tig-workflow/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+vendor/reel-workflow-lifecycle/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
+vendor/git-asset-capacity/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol
