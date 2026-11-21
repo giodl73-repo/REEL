@@ -111,3 +111,11 @@ This local check repackaged the existing qualified main browser binaries (the
 protected assembly foundation is unchanged), not a fresh WASM build. The final
 hosted assembly workflow must still rebuild, exercise the browser, replay the
 delivered source outside Git and verify the transferred artifact.
+First hosted Rust/FFmpeg cycle [44944853801](https://github.com/giodl73-repo/REEL/actions/runs/44944853801)
+passed in 23m43s at `19924ab9b49b0321859ebf9431c5d022940c89f4`, base `298fea5`.
+All five lesson tests actually ran in both core-shard-2 jobs: Linux 47.74 seconds,
+Windows 45.62 seconds, no failed or ignored cases in those explicit invocations.
+Existing reading qualification also passed (Linux 75.90s, Windows 64.36s).
+The separate assembly build failed at the old complete-package cap. The final
+head containing the documented 10 MiB allowance still requires a fresh complete
+hosted cycle and assembly/source-replay qualification before merge.
