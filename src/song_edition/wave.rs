@@ -14,7 +14,15 @@ fn u32le(raw: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(raw[at..at + 4].try_into().unwrap())
 }
 
-pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
+struct Layout {
+    tag: u16,
+    bits: u16,
+    rate: u32,
+    channels: u16,
+    data_range: std::ops::Range<usize>,
+}
+
+fn layout(raw: &[u8]) -> Result<Layout> {
     if raw.len() < 12
         || &raw[..4] != b"RIFF"
         || &raw[8..12] != b"WAVE"
@@ -96,6 +104,34 @@ pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
     {
         bail!("WAVE frame bounds")
     }
+    Ok(Layout {
+        tag,
+        bits,
+        rate,
+        channels,
+        data_range: data_range.ok_or_else(|| anyhow::anyhow!("WAVE data range missing"))?,
+    })
+}
+
+/// Borrow exact normalized source bytes using the same bounded RIFF validation.
+pub(crate) fn pcm24(raw: &[u8]) -> Result<&[u8]> {
+    let value = layout(raw)?;
+    if (value.tag, value.bits, value.rate, value.channels) != (1, 24, 48_000, 2) {
+        bail!("source requires exact 48kHz stereo PCM24 WAVE");
+    }
+    Ok(&raw[value.data_range])
+}
+
+pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
+    let Layout {
+        tag,
+        bits,
+        rate,
+        channels,
+        data_range,
+    } = layout(raw)?;
+    let data = &raw[data_range.clone()];
+    let width = usize::from(bits / 8);
     let mut samples = Vec::with_capacity(data.len() / width);
     for bytes in data.chunks_exact(width) {
         let sample = match (tag, bits) {
@@ -122,7 +158,7 @@ pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
         rate,
         channels,
         samples,
-        float_data: if tag == 3 { data_range } else { None },
+        float_data: if tag == 3 { Some(data_range) } else { None },
     })
 }
 

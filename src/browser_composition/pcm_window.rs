@@ -1,12 +1,9 @@
 //! Exact stereo PCM24 sample window and integer linear envelope.
 //! No resampling, padding, floating point, storage lookup or process launch.
-#[cfg(any(test, all(windows, feature = "tig-publication")))]
 use anyhow::Context;
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
-#[cfg(any(test, all(windows, feature = "tig-publication")))]
 use sha2::{Digest as _, Sha256};
-#[cfg(any(test, all(windows, feature = "tig-publication")))]
 use std::io::{Read, Write};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -20,14 +17,19 @@ pub struct PcmWindow {
 }
 impl PcmWindow {
     pub(crate) fn validate(&self, frames: u64, fps: u32) -> Result<()> {
+        self.validate_samples()?;
+        if fps == 0 || u128::from(self.samples()) * u128::from(fps) != u128::from(frames) * 48_000 {
+            bail!("invalid exact 48kHz stereo PCM window or frame duration");
+        }
+        Ok(())
+    }
+    pub(crate) fn validate_samples(&self) -> Result<()> {
         if self.source_samples == 0
             || self.source_samples > 9_007_199_254_740_991 / 6
             || self.start_sample >= self.end_sample
             || self.end_sample > self.source_samples
             || self.fade_in_samples > self.samples()
             || self.fade_out_samples > self.samples() - self.fade_in_samples
-            || fps == 0
-            || u128::from(self.samples()) * u128::from(fps) != u128::from(frames) * 48_000
         {
             bail!("invalid exact 48kHz stereo PCM window or frame duration");
         }
@@ -41,15 +43,32 @@ impl PcmWindow {
 /// Read the complete normalized source, including the unselected suffix, so a
 /// truncated/excess source cannot pass as the declared original. The caller owns
 /// output retirement on error and provides cancellation/deadline checks.
-#[cfg(any(test, all(windows, feature = "tig-publication")))]
+#[cfg(any(all(windows, feature = "tig-history"), test))]
 pub(crate) fn transform(
+    input: impl Read,
+    output: impl Write,
+    window: &PcmWindow,
+    check: impl FnMut() -> Result<()>,
+) -> Result<(String, String)> {
+    transform_with_gain(input, output, window, 1, 1, check)
+}
+
+pub(crate) fn transform_with_gain(
     mut input: impl Read,
     mut output: impl Write,
     window: &PcmWindow,
+    gain_numerator: u32,
+    gain_denominator: u32,
     mut check: impl FnMut() -> Result<()>,
 ) -> Result<(String, String)> {
     // Validate the window independently of any caller's manifest validation.
-    window.validate(window.samples(), 48_000)?;
+    window.validate_samples()?;
+    if gain_denominator == 0
+        || gain_denominator > 1_000_000
+        || u64::from(gain_numerator) > u64::from(gain_denominator) * 8
+    {
+        bail!("invalid rational PCM gain");
+    }
     let mut selected = Sha256::new();
     let mut envelope = Sha256::new();
     for absolute in 0..window.source_samples {
@@ -72,7 +91,7 @@ pub(crate) fn transform(
         } else {
             None
         };
-        if let Some((numerator, denominator)) = gain {
+        if gain.is_some() || gain_numerator != gain_denominator {
             for channel in [0, 3] {
                 let value = i32::from_le_bytes([
                     0,
@@ -82,8 +101,15 @@ pub(crate) fn transform(
                 ]) >> 8;
                 // Signed integer division truncates toward zero, exactly as the
                 // original production envelope; FFmpeg afade is not equivalent.
-                let value =
-                    (i128::from(value) * i128::from(numerator) / i128::from(denominator)) as i32;
+                let mut value =
+                    i128::from(value) * i128::from(gain_numerator) / i128::from(gain_denominator);
+                if let Some((numerator, denominator)) = gain {
+                    value = value * i128::from(numerator) / i128::from(denominator);
+                }
+                if !(-8_388_608..=8_388_607).contains(&value) {
+                    bail!("rational PCM gain/envelope clips");
+                }
+                let value = value as i32;
                 sample[channel..channel + 3].copy_from_slice(&value.to_le_bytes()[..3]);
             }
         }
@@ -155,6 +181,33 @@ mod tests {
         assert!(transform(&raw[..], Vec::new(), &invalid, || Ok(())).is_err());
         assert!(transform(&raw[..], Vec::new(), &window(), || bail!("cancelled")).is_err());
         assert!(window().validate(1, 24).is_err());
+    }
+
+    #[test]
+    fn rational_gain_is_explicit_signed_and_clipping_checked() {
+        let raw = bytes(&[7, -7, 7, -7]);
+        let window = PcmWindow {
+            source_samples: 4,
+            start_sample: 0,
+            end_sample: 4,
+            fade_in_samples: 0,
+            fade_out_samples: 0,
+        };
+        let mut output = vec![];
+        transform_with_gain(&raw[..], &mut output, &window, 1, 2, || Ok(())).unwrap();
+        assert_eq!(output, bytes(&[3, -3, 3, -3]));
+        assert!(transform_with_gain(&raw[..], vec![], &window, 1, 0, || Ok(())).is_err());
+        assert!(
+            transform_with_gain(
+                &bytes(&[8_388_607; 4])[..],
+                vec![],
+                &window,
+                2,
+                1,
+                || Ok(())
+            )
+            .is_err()
+        );
     }
     /// Explicitly enrolled private normalized source; never an implicit lookup.
     #[test]

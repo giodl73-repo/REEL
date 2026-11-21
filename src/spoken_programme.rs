@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use crate::{cue_relative::CueMarker, scene_delivery::FileRef};
 
 pub mod compiler;
+pub mod producer;
 
 pub const SCHEMA: &str = "reel.spoken-edition.v1";
 pub const VALIDATION_SCHEMA: &str = "reel.spoken-edition-validation.v1";
