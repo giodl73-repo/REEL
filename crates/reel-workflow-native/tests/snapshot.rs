@@ -2392,7 +2392,8 @@ fn explicit_large_input_metadata_uses_a_new_task_bound_budget_and_refuses_unqual
             .input_count(),
         1
     );
-    let case = AdmissionCase::new(&fixture);
+    let mut case = AdmissionCase::new(&fixture);
+    case.source.source.maximum_bytes = object.bytes;
     let before = fs::read(case.profile.metadata_root.join("metadata.json")).unwrap();
     assert_eq!(
         Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
@@ -2455,6 +2456,92 @@ fn response_close_preflight_refuses_before_admission_even_when_inputs_fit() {
         case.protected(&Object::from_bytes(b"synthetic input"))
             .is_empty()
     );
+}
+
+#[test]
+fn response_and_reader_budgets_refuse_before_claims_or_metadata_writes() {
+    use reel_workflow_native::{SnapshotBudget, admission::Prepared};
+    for mode in [
+        "objects",
+        "response-bytes",
+        "combined-bytes",
+        "reader-input",
+        "reader-output",
+    ] {
+        let input_bytes = if mode == "combined-bytes" {
+            900 * 1024 * 1024
+        } else {
+            17
+        };
+        let object = if mode == "combined-bytes" {
+            Object {
+                sha256: tig_core::Digest::blob(b"synthetic large input pointer"),
+                bytes: input_bytes,
+            }
+        } else {
+            Object::from_bytes(b"synthetic input")
+        };
+        let mut fixture = Fixture::with_object(object.clone());
+        if mode == "combined-bytes" {
+            fixture.profile.schema = "reel.workflow-native-snapshot.v2".into();
+            fixture.profile.budget = Some(SnapshotBudget {
+                schema: "reel.workflow-native-input-budget.v1".into(),
+                input_bytes,
+                input_object_bytes: input_bytes,
+            });
+        }
+        let count = if mode == "objects" { 33 } else { 1 };
+        let maximum = match mode {
+            "response-bytes" => 128 * 1024 * 1024 + 1,
+            "combined-bytes" => 128 * 1024 * 1024,
+            "reader-output" => 2048,
+            _ => 1024,
+        };
+        fixture.packet.task.outputs = (0..count)
+            .map(|i| {
+                (
+                    format!("output-{i}"),
+                    OutputContract {
+                        media_type: "text/plain".into(),
+                        max_bytes: maximum,
+                        required: true,
+                    },
+                )
+            })
+            .collect();
+        fixture.repin();
+        let mut case = AdmissionCase::new(&fixture);
+        case.source.source.maximum_bytes = match mode {
+            "reader-input" => 1,
+            "reader-output" => 1024,
+            _ => 64 * 1024 * 1024 * 1024,
+        };
+        let before = fs::read(case.profile.metadata_root.join("metadata.json")).unwrap();
+        if mode == "reader-input" {
+            assert_eq!(
+                Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1")
+                    .err()
+                    .unwrap()
+                    .code,
+                "admission-native-reader-bound"
+            );
+        } else {
+            let prepared =
+                Prepared::open(&fixture.packet, &case.source, &case.profile, "attempt-1").unwrap();
+            assert!(!prepared.preview().unwrap().response_budget_ok, "{mode}");
+            assert_eq!(
+                prepared.accept().unwrap_err().kind,
+                ErrorKind::Budget,
+                "{mode}"
+            );
+        }
+        assert!(case.protected(&object).is_empty(), "{mode}");
+        assert_eq!(
+            before,
+            fs::read(case.profile.metadata_root.join("metadata.json")).unwrap(),
+            "{mode}"
+        );
+    }
 }
 
 #[cfg(windows)]

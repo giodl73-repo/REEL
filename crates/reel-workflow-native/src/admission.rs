@@ -74,8 +74,14 @@ pub struct Preview {
     pub changed_path_limit: usize,
     pub response_close_paths_upper_bound: usize,
     pub response_close_bound_ok: bool,
+    pub response_objects_upper_bound: usize,
+    pub response_object_limit: usize,
+    pub response_bytes_upper_bound: u64,
+    pub response_byte_limit: u64,
+    pub response_budget_ok: bool,
 }
 pub struct Prepared {
+    reader_limit: u64,
     snapshot: SnapshotInputs,
     memory: MemoryNodes,
     input: Selection,
@@ -224,6 +230,16 @@ impl Prepared {
                 "admission-provider-tool-binding",
             ));
         }
+        if source.source.maximum_bytes == 0
+            || source.source.maximum_bytes > 64 * 1024 * 1024 * 1024
+            || packet
+                .task
+                .inputs
+                .iter()
+                .any(|input| input.bytes > source.source.maximum_bytes)
+        {
+            return Err(error(ErrorKind::Budget, "admission-native-reader-bound"));
+        }
         let snapshot = SnapshotInputs::open(packet, &source.snapshot)?;
         let mut runtime = BTreeMap::new();
         for (name, tool) in [("git", &snapshot.git), ("annex", &source.annex)] {
@@ -310,6 +326,7 @@ impl Prepared {
             return Err(error(ErrorKind::Budget, "admission-atomic-claim-bound"));
         }
         Ok(Self {
+            reader_limit: source.source.maximum_bytes,
             snapshot,
             memory,
             input,
@@ -415,6 +432,11 @@ impl Prepared {
             changed_path_limit: protection::MAX_CHANGES,
             response_close_paths_upper_bound: self.response_close_paths()?,
             response_close_bound_ok: self.response_close_paths()? <= protection::MAX_CHANGES,
+            response_objects_upper_bound: self.snapshot.packet.task.outputs.len(),
+            response_object_limit: 32,
+            response_bytes_upper_bound: self.response_bytes()?,
+            response_byte_limit: 128 * 1024 * 1024,
+            response_budget_ok: self.response_budget_ok()?,
         })
     }
     /// Explicitly apply original qualified slot work. On uncertainty retry this
@@ -424,6 +446,12 @@ impl Prepared {
             return Err(error(
                 ErrorKind::Budget,
                 "admission-response-close-path-bound",
+            ));
+        }
+        if !self.response_budget_ok()? {
+            return Err(error(
+                ErrorKind::Budget,
+                "admission-response-envelope-bound",
             ));
         }
         let (mut index, mut nodes) = self.stores(None)?;
@@ -516,6 +544,38 @@ impl Prepared {
             .and_then(|count| count.checked_add(self.snapshot.packet.task.outputs.len()))
             .and_then(|count| count.checked_add(3))
             .ok_or_else(|| error(ErrorKind::Budget, "admission-response-close-overflow"))
+    }
+    fn response_bytes(&self) -> Result<u64> {
+        self.snapshot
+            .packet
+            .task
+            .outputs
+            .values()
+            .try_fold(0u64, |total, output| total.checked_add(output.max_bytes))
+            .ok_or_else(|| error(ErrorKind::Budget, "admission-response-byte-overflow"))
+    }
+    fn response_budget_ok(&self) -> Result<bool> {
+        let outputs = self.response_bytes()?;
+        let inputs = self
+            .resources
+            .objects()
+            .iter()
+            .try_fold(0u64, |total, object| total.checked_add(object.bytes));
+        // Reserve worst-case metadata-node overhead inside the same envelope.
+        let reserve = protection::MAX_CHANGES as u64 * metadata::MAX_NODE_BYTES as u64;
+        Ok(self.snapshot.packet.task.outputs.len() <= 32
+            && self
+                .snapshot
+                .packet
+                .task
+                .outputs
+                .values()
+                .all(|output| output.max_bytes <= self.reader_limit)
+            && outputs <= 128 * 1024 * 1024
+            && inputs
+                .and_then(|n| n.checked_add(outputs))
+                .and_then(|n| n.checked_add(reserve))
+                .is_some_and(|n| n <= limits().logical_bytes))
     }
     fn check_receipt(&self, receipt: &Receipt) -> Result<()> {
         if receipt.schema != "reel.workflow-native-admission-receipt.v1"
