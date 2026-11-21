@@ -3,6 +3,9 @@
 **Status:** planning record, requested 2026-11-20. No implementation, recording,
 provider execution or project cutover is claimed by this plan.
 
+The [role-checklist review](reviews/2026-11-20-spoken-plan-role-review.md)
+records the planning gaps corrected below and the remaining production gates.
+
 REEL's reusable foundation is authored meaning, semantic events, source layers,
 versions and editions. Extend that foundation to additional delivery forms while
 keeping content authority in producing projects and generic asset management in
@@ -64,6 +67,12 @@ script/performance variant. Reordering or omitting a module still needs coherent
 joins, references and narrative review; recording fragments are not universally
 interchangeable.
 
+Declare each module's required context, factual qualifications and references.
+An edition that omits supporting detail must still preserve the source claim's
+meaning and uncertainty. Resolve missing dependencies with an explicitly authored
+bridge or a different selection; reject an unresolved reference rather than
+silently rewriting the source or implying an exchange that never occurred.
+
 ### Integrated speakers and natural pausing
 
 Treat a speaker change as an authored conversational handoff. Stable speaker
@@ -88,6 +97,12 @@ or alter an immutable selected performance.
 Naturalness requires listening across the joins, not merely checking that files
 abut on a sample clock. Technical checks should expose cue entrances, gaps,
 overlaps and protected regions so that review is concrete and reproducible.
+
+Keep requested script, observed as-performed words, alignment/transcription
+evidence and any approved correction distinct. Mark uncertain words explicitly.
+Input text and successful alignment do not prove that the selected take says
+every intended word; check pronunciation, stress and wording by listening in
+each language before selecting a performance.
 
 Semantic markers inside a spoken module can also drive cels, diagrams, captions,
 Sonic or visual effects in a companion visual edition. The proposed audio-only
@@ -129,13 +144,35 @@ coordinate interfaces without changing that lane as part of this planning task.
 **Proposed fixture:** an original three-module explanation (host opening, expert
 technical detail, host closing), with English and Spanish script versions.
 Select one take per module/language when recording is explicitly authorized:
-six performances can feed four audience/language editions. Existing selected audio or controlled
-synthetic fixtures can exercise engineering first; synthetic evidence must not
+six performances can feed four audience/language editions. Use distinct host and
+expert speaker roles, explicitly mapped per language. This fixture proves
+between-module handoffs; multiple speakers within one module remain a later
+case. Existing selected audio or controlled synthetic fixtures can exercise
+engineering first; synthetic evidence must not
 be described as a listening-reviewed real performance.
+
+Before producing the fixture, author a delivery brief for each edition: audience,
+purpose, target duration range, listening device/context, output format and
+sample/channel policy, mix/loudness target, and accessible transcript/chapter
+requirements. Choose concrete values in that brief rather than assuming one
+podcast or video profile suits every use. Check the whole programme and its joins
+on the declared listening setup; text access must retain speaker roles, relevant
+non-speech information and edition-local timing without requiring pictures.
+
+Before selecting or generating any take, record the actual text/adaptation and
+speaker/voice authorities for its language, audience and reuse scope. Permission
+to record one cue does not automatically authorize a new assembly or imply a
+speaker endorsed its surrounding claims. Provider use additionally needs the
+declared service/runtime, model/license, retention and outbound-transfer scope.
+Keep private authority/voice details in governed local evidence; portable review
+receipts follow REEL's privacy-safe contract. Listening acceptance, creative
+selection, private delivery and public release retain separate decision records.
 
 Acceptance for this slice:
 
 - Inspect the source/edition model and plan all four combinations before output.
+- Check each combination's context dependencies and factual qualifications;
+  resolve or reject omissions and reordered references explicitly.
 - Reuse exact opening/closing takes where compatible, preserving full declared
   words, breath/tail policy and sample placement without hidden time stretching.
 - Compose the technical host → expert → host exchange with speaker-specific,
@@ -145,6 +182,11 @@ Acceptance for this slice:
 - Derive each edition's transcript/chapter timing from its actual selected
   performances and declared joins. Never copy English times into Spanish.
 - Build and independently check audio without opening or inventing picture inputs.
+- Exercise rejection cases: missing required context, stale script/take alignment,
+  a trim through a protected word/breath/tail, an undeclared overlap, and reuse
+  outside the declared speaker scope. The proposed producer must report the
+  failing relationship and publish no final edition package for invalid input.
+  These are future acceptance cases, not checks executed by this planning review.
 - Change one language's technical-detail performance, then show that only its
   consuming technical edition updates. Executive editions and the other
   language's edition retain their consumed-source identity.
@@ -153,6 +195,9 @@ Acceptance for this slice:
 - Review word fidelity, intelligibility, context/joins, mix priority, audience fit
   and source/voice rights through the applicable REEL checklists. Technical
   completion, listening approval, selection and delivery remain distinct.
+- Bind listening findings and decisions to the exact edition, selected takes,
+  scripts, handoffs and mix version. A changed bound input makes the affected
+  review stale; untouched editions retain their existing evidence.
 
 This plan does not choose a voice, generate speech, select private source text,
 initialize caches, enroll a publisher or commit to a delivery service.
