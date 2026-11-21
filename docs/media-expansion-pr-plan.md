@@ -5,6 +5,10 @@ work to do; it does not mark any implementation or production gate complete.
 It operationalizes the [format-expansion plan](media-format-expansion.md) and its
 [six role-review findings](reviews/2026-11-20-spoken-plan-role-review.md).
 
+The [test and evidence matrix](media-expansion-test-matrix.md) is part of each
+PR's exit criteria. The [PR-plan role review](reviews/2026-11-20-media-pr-plan-role-review.md)
+records the expectation/test gaps corrected in this sequence.
+
 The first deliverable is a reusable spoken programme: three semantic modules,
 two speaker roles, English and Spanish performances, and executive and technical
 editions. Subsequent phases reuse that foundation for music, reading/learning,
@@ -51,6 +55,12 @@ visual companions, installations and interactive experiences.
    or explicitly rescope the dependent PR before merging it. Documentation must
    distinguish implemented, technically checked, listening-reviewed and adopted.
 
+Every runtime PR must name runnable commands, expected results and the applicable
+numeric limits/tolerances before implementation begins; see the test matrix.
+Missing runtime coverage is recorded as **not run**, not a passing test.
+Documentation-only rows use source/contract/fixture inspection and link checks;
+they do not need a new test harness merely to repeat the prose.
+
 ## Sequence and checkpoints
 
 ```mermaid
@@ -66,9 +76,13 @@ flowchart TD
 ```
 
 The table gives merge order. Design notes may be prepared early, but execution
-and qualification wait for the listed dependencies. Every row starts **planned**;
-replace its status only with a linked merged PR and evidence record. A phase
-checkpoint is a recorded conclusion, not an additional approval role.
+and qualification wait for the listed dependencies. Every row starts **planned**.
+An **in progress** entry links its branch/PR; a merged or qualified entry links the
+exact revision and evidence. A phase checkpoint is a recorded conclusion, not an
+additional approval role. Engineering dependencies refer to merged technical
+evidence. Listening/device acceptance and project adoption are separate gates:
+later controlled-fixture engineering may proceed without those decisions, but
+cannot claim or inherit them for real performances or delivery.
 
 | Phase | PR ID / bounded outcome | Depends on | Status |
 | --- | --- | --- | --- |
@@ -110,6 +124,10 @@ and delivery briefs. Use an original short explanation, three modules
 speaker roles, context dependencies, target duration ranges and output/mix/text
 requirements. Choose deterministic signal fixtures for automated tests; keep
 them distinct from speech/listening evidence. Enumerate scope exclusions.
+Pin the core test inventory, commands, tool/platform matrix, duration/resource
+caps, sample/channel policy, timebase/rounding and numeric mix/quality thresholds.
+Give each expected result an independent oracle; no unresolved threshold may be
+deferred into M03/M04 execution. M11/M13 similarly pin later runtime profiles.
 
 **Exit:** every M01 requirement has an existing owner or a bounded missing
 behavior. No code, generation, cache changes or production output in this PR.
@@ -125,6 +143,8 @@ take/alignment identity, protected intervals, and explicit handoff policy.
 Distinguish recorded silence, added pause and intentional overlap. Specify
 integer sample timebases, rounding, incompatible-input rejection, output closure
 and review bindings. Reuse existing controls; version any necessary extension.
+Represent multiple speaker-scoped cues inside a module from this contract onward;
+M06 adds a qualification fixture, not an unplanned schema change.
 
 **Exit:** schema/contract fixtures accept all four declared combinations and
 reject unknown/duplicate IDs, unresolved required context, stale source links,
@@ -144,6 +164,8 @@ ordering; retained breaths/tails; distinct host → expert → host and host →
 joins. Reject missing/extra inputs, invalid protected-region trims, stale markers,
 unsupported timebases and out-of-scope reuse declarations. No file discovery,
 hidden time stretch, provider execution or dummy picture dependencies.
+Context tests enforce authored dependency declarations; they cannot prove factual
+truth or infer a missing qualification. That remains source/story review.
 Review lenses: Editor, Sound, Vocal Adaptation, Rights.
 
 ### M03 — assemble bounded audio-only candidates
@@ -159,6 +181,8 @@ decoded output against an independently calculated expected signal, including
 boundaries and unchanged regions. Reject changed inputs, unsupported formats,
 resource overrun and interrupted output without a usable final package. No
 speech generation, storage-engine changes, music beds or visual renderer.
+Prove neutral lossless assembly first. Container and decoded-signal identities
+are separate; encoded-byte equality is not a cross-platform audio oracle.
 Review lenses: Sound, Editor, Rights.
 
 ### M04 — independently check outputs and produce matching text access
@@ -173,6 +197,8 @@ with audio, order, offsets, text, speaker mapping or source/runtime bindings is
 detected. A self-consistent producer receipt alone cannot pass. Check language,
 word fidelity evidence and time bounds separately; automated checks do not prove
 naturalness, translation correctness or consent. No public upload or UI player.
+Tamper tests must also recompute superficial receipt hashes after altering a
+placement/source reference, so rejection exercises semantic/media checks.
 Review lenses: Sound, Platform/Audience, Vocal Adaptation, Rights.
 
 ### M05 — retain editions and prove selective change propagation
@@ -187,6 +213,8 @@ technical recipe changes; both executive recipes and English technical recipe
 retain their consumed identities. Reopen/check v1 with its original pins. Changes
 stale only affected review bindings. Inject missing retained input and stale
 review cases and report them honestly; no automatic restoration or deletion.
+Check consumed-recipe identity separately from an aggregate fixture index or
+selection log: the latter may change while an unaffected edition remains exact.
 Review lenses: Editor, Rights, Sound.
 
 ### M06 — qualify the spoken slice and add within-module speaker coverage
@@ -240,9 +268,12 @@ store integration. Lenses: Story, Editor, Vocal Adaptation, Platform/Audience, R
 ### M09 — package a lesson or rehearsal example
 
 **Change:** compose a small lesson from explanation, selected reference audio and
-editable score/songbook references where applicable. Preserve corrected-model
+editable score/songbook references. Preserve corrected-model
 authority and explicitly declared musical timebases/anchors; PDF is a derivative.
 Use existing notation/underlay exports rather than inventing a score editor.
+The required fixture includes a tiny explicit editable score with a pickup and
+repeat traversal, plus a text explanation and selected reference audio. A
+diagram-only lesson does not satisfy the score/songbook coverage in this PR.
 
 **Exit:** a source-bound lesson index connects the correct text, score/diagram
 section and audio interval. Validate anchor ordering, repeat/pickup policy and
@@ -342,6 +373,9 @@ progress → merged / technically checked → listening or device reviewed (wher
 applicable) → project adopted** as separate recorded facts, not one readiness flag.
 Skipped gates remain visible. A blocker records the exact missing interface,
 input or decision and its owning project/lane; it does not justify widening the PR.
+Record engineering/technical, listening/device, selection and adoption states in
+separate fields. In particular, M06 can be technically checked while listening
+remains not run; that is not a completed spoken-performance acceptance checkpoint.
 
 | Planning ID | PR / exact revision | Evidence and review | Remaining gate |
 | --- | --- | --- | --- |
