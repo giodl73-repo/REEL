@@ -41,6 +41,43 @@ actual tiny control-evidence bytes and update those alignment references rather
 than pretending the old placeholder files existed. Media may still be absent:
 that is a required no-media-access test, not output qualification.
 
+### Proposed envelope shape and bounds
+
+Use `reel.spoken-alignment.v1` with `performance_id`, `cue_id`, `language`,
+`source` (the existing FileRef), `sample_rate`, `duration_samples`, `script_id`,
+`script_sha256`, `observation`, `markers` (existing CueMarker values) and
+`word_bindings`. Every identity/clock/reference must match its selected declaration.
+Unknown/duplicate fields reject; this is control metadata, not a media manifest.
+
+`observation` is a tagged union:
+
+- `engineering-signal`: no observed text or native words. Its declaration's
+  observed-text hash must be SHA-256 of empty UTF-8 bytes, explicitly representing
+  absence; M02's prepared control fixture updates M01's placeholder value. All
+  marker coordinates are labeled engineering evidence and `word_bindings` is
+  empty. This never claims measured words or listening acceptance.
+- `word-evidence`: carries exact `observed_text` and the existing typed
+  `WordTimingEvidence`. The observed hash matches the declaration, native take/
+  language/cue/rate/duration match, and `verify_word_text` checks complete lexical
+  agreement against both the observation and the selected script. Preserve exact
+  text identities even where lexical normalization regards them as equivalent.
+
+Each lexical word binding carries `marker_id`, `first_word_index` and
+`end_word_index_exclusive`; it covers a nonempty contiguous interval. A word
+marker spans exactly one native word. Its sample interval is the first word's
+start through the last word's end. Each declared marker appears exactly once in
+both the marker list and binding list, with no extras. Reject invalid native word
+intervals/order even if the text sequence agrees. Evidence is not source truth.
+
+Each envelope is at most 256 KiB, with at most 1,024 words and markers. Compile
+resolves only the union of selected performances, at most 128 envelopes and
+4 MiB of metadata in total. Require that an explicitly supplied evidence map has
+exactly that key set; unrelated files in a provider namespace are not enumerated
+or treated as extra inputs. An unselected variant must not cause a read. Reject
+pin/length/budget mismatches before deserialization or extra reads as applicable.
+The new plan is at most 16 MiB. These control budgets are additional to M00's
+media execution budgets, not replacements for them.
+
 ## Compile sample placements and selected consumption
 
 Flatten selected module cues in authored order, retaining speaker roles and exact
@@ -62,6 +99,10 @@ aggregate source-document identity may be retained separately for provenance;
 changing it must not automatically invalidate an unchanged consumed recipe.
 Use canonical typed serialization and explicit runtime/contract identity, not
 filesystem order, physical machine paths, wall-clock timestamps or floating point.
+Canonicalize set-valued dependency/required-module/scope lists before recipe
+hashing; preserve authored cue, selection and join order. Reordering global
+declaration registries or set-valued lists must not change an edition's consumed
+recipe. Changing a selected script, take, join or authority-evidence pin must.
 
 ## Runtime and report boundaries
 
