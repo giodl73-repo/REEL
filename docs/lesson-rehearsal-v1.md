@@ -21,6 +21,7 @@ a canonical score tick alone cannot identify its position in an exercise.
 | `music_score::native_note_clock` and existing private `tick_to_sample` | Reuse the integer tempo/tick conversion; expose only the narrow validated clock operation needed by the lesson |
 | `PianoVocalScore::pickup_ticks` / `InstrumentalScore::pickup_ticks` | Existing editable pickup and implicit short-measure support |
 | `MusicModel::form` | Named, source-ordered tick ranges; this is not a repeat traversal or repeat-barline grammar |
+| `tig_music_editor` / `tig_music_underlay` | Guarded raw model/lyric authoring bytes; explicitly not complete musical/source validation |
 
 Source: `crates/reel-music/src/{model,time,export}.rs`, `src/music_score.rs`,
 `src/music_sample_clock.rs`, [native score exports](music-score-export-v0.3.1.md)
@@ -35,13 +36,19 @@ player has executed the exercise. Editable model authority remains upstream of
 MIDI, MusicXML, SVG or PDF derivatives.
 
 The score validator/export checker currently takes filesystem paths and opens
-relative source/analysis bindings. Before implementing the lesson, fix its narrow
-admitted-input boundary: either reuse an existing caller-held protected score
-context with the original relative names, or extend the existing validator with
-a bounded provider seam. Do not rewrite original paths, search a checkout,
-silently hydrate assets, or create a parallel score validator. Absolute/outside
-references unsupported by the selected profile must refuse explicitly. This
-decision and its byte/cap tests must be recorded before runtime work starts.
+relative source/analysis bindings. The existing music editor's protected raw
+captures do not establish that complete lineage/round-trip check. The native
+production context also explicitly describes declared metadata, not executable
+paths or availability proof.
+
+**Input-boundary decision:** add a narrow bounded byte-callback seam to the
+existing source/analysis/model/export validation and score checker as needed.
+Reuse their algorithms and preserve the old filesystem APIs. Original authored
+names select exact admitted bytes; a refused provider is terminal even if a disk
+file exists. Do not rewrite paths, create a filesystem projection/cache engine,
+or duplicate the score validator. Unsupported absolute/outside references refuse
+under the selected profile. Record the precise callback interface and byte/cap
+tests before its first runtime fixture; no production adapter adoption is implied.
 
 ## Two independent content clocks
 
@@ -121,7 +128,7 @@ timebase/rounding declaration must refuse rather than be guessed or normalized.
 ## Limits fixed before execution
 
 The initial supported exercise profile is one instrumental part/voice, at most
-32 notes, one constant 4/4 meter, an explicit pickup shorter than a full measure,
+32 notes, one constant tempo and 4/4 meter, an explicit pickup shorter than a full measure,
 and no expressive-timing overrides or lyric adaptation. Reference audio uses the
 existing 48 kHz mono PCM16 guide and contains at most 10 seconds. Allow up to
 16 ordered occurrences, 64 anchors and 30 seconds of virtual exercise time.
@@ -155,6 +162,7 @@ bytes refuse without automatic restoration, selection, hydration or eviction.
 
 Apply Platform/Audience, Score/Arrangement, Music Reconstruction, Vocal Adaptation,
 Sound and Rights checklists, explicitly as one assistant's technical review.
-The score-context boundary, source provenance and meaning of the repeat sidecar
-must be reviewed before implementing the fixture. No M09 test, role approval,
+The [pre-implementation checklist review](reviews/2026-11-21-m09-lesson-design-review.md)
+records the input-boundary decision, source provenance and repeat-sidecar meaning.
+No M09 test, role approval,
 musical/linguistic accuracy, listening or device gate is claimed here.
