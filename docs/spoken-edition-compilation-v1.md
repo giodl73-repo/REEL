@@ -1,7 +1,8 @@
 # Spoken-edition control compilation (M02)
 
-**Draft:** implementation and fixtures are prepared against M01 PR #379. They
-remain unqualified until M01 merges, this branch rebases and the checks run.
+**Status:** implementation and fixtures pass local checks on merged M01 `f473431`
+(PR #379). Hosted qualification is required before M02 lands. This is control
+compilation, not audio production or authority approval.
 
 ```sh
 reel spoken-edition-compile PRIVATE_EDITION.json --output NEW_PRIVATE_PLAN.json

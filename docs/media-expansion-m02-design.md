@@ -1,10 +1,9 @@
 # M02 compiler design and evidence boundary
 
-**Status:** local draft prepared while M01 PR #379 qualifies, against its exact
-`be9049b` revision. Local preparatory builds/control-only tests may run on this
-stacked draft, with their exact base recorded. Rebase onto merged M01 before
-final qualification or publishing the M02 PR.
-This preserves the phased merge/execution order; it is not an extra phase/PR.
+**Status:** implemented and locally checked on merged M01 `f473431` (PR #379).
+The earlier stacked draft used exact `be9049b`; final merged-base checks pass.
+Hosted qualification and M02 merge remain pending. This is part of M02, not an
+extra phase/PR, and grants no media, authority or project-adoption approval.
 
 ## Resolve existing evidence, without opening media
 

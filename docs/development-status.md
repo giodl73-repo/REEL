@@ -22,7 +22,12 @@ The first implementation slice adds [spoken-edition declaration validation](spok
 modules, speaker cues, language scripts, selected performances and explicit
 handoffs. It reads no referenced media or authority evidence and is not an
 audio-only programme producer. Compilation, production, independent media/text
-checking and retained edition integration remain later slices.
+checking and retained edition integration have separate qualification scopes.
+The [control compiler](spoken-edition-compilation-v1.md) additionally resolves
+selected alignment metadata into sample placements, chapters and consumed-recipe
+identities. It opens no source audio and records media/authority as unverified.
+Audio assembly, independent output/text checks and retained asset integration
+remain later slices.
 
 ## Workflow orchestration
 
