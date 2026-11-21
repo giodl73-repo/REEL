@@ -1,6 +1,36 @@
 use super::*;
 
-fn fixture() -> Prepared {
+#[test]
+fn v4_serialization_uses_supported_controls_and_preserves_legacy_requests() {
+    let mut p = fixture();
+    let body: Value = serde_json::from_slice(&provider_body(&p.request).unwrap()).unwrap();
+    assert_eq!(
+        body["voice_settings"],
+        serde_json::to_value(&p.request.voice_settings).unwrap()
+    );
+    for model in ["eleven_v4", "eleven_v4_turbo"] {
+        p.request.model_id = model.into();
+        p.request.voice_settings.use_speaker_boost = false;
+        let body: Value = serde_json::from_slice(&provider_body(&p.request).unwrap()).unwrap();
+        assert_eq!(body["model_id"], model);
+        assert_eq!(body["text"], p.request.source_text);
+        assert_eq!(
+            body["voice_settings"],
+            json!({"stability":0.5,"similarity_boost":0.7})
+        );
+        assert!(validate(&p.profile, &p.request, &p.authorization).is_ok());
+        p.request.voice_settings.style = 0.2;
+        assert!(validate(&p.profile, &p.request, &p.authorization).is_err());
+        p.request.voice_settings.style = 0.0;
+        p.request.voice_settings.speed = 0.9;
+        assert!(validate(&p.profile, &p.request, &p.authorization).is_err());
+        p.request.voice_settings.speed = 1.0;
+        p.request.voice_settings.use_speaker_boost = true;
+        assert!(validate(&p.profile, &p.request, &p.authorization).is_err());
+    }
+}
+
+pub(super) fn fixture() -> Prepared {
     let request = Request {
         schema: "reel.speech-request.v1".into(),
         provider: "elevenlabs".into(),
@@ -55,7 +85,7 @@ fn fixture() -> Prepared {
         provider_body,
     }
 }
-fn response(text: &str) -> Vec<u8> {
+pub(super) fn response(text: &str) -> Vec<u8> {
     let characters = text.chars().map(|c| c.to_string()).collect::<Vec<_>>();
     let count = characters.len();
     let pcm = (0..4410i16).flat_map(i16::to_le_bytes).collect::<Vec<_>>();

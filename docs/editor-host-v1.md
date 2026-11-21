@@ -10,8 +10,10 @@ default browser; the URL is also printed as startup JSON for manual use. Each
 invocation is independent. Orientation, export, application and repository
 startup never launch it automatically.
 
-The same command supports cel sessions v1–v4, note workshop v1 and lyric-underlay
-workshop v1. Export first with the matching native tool. The host checks the
+The same command supports cel sessions v1–v4, note workshop v1, lyric-underlay
+workshop v1, [screenplay review v1](screenplay-review-v1.md), and
+[voice audition review v1](voice-design-v1.md). Export first
+with the matching native tool. The host checks the
 bundled HTML/JS against its built-in frontend revision, allowing CRLF/LF source
 line endings; a different frontend requires a fresh matching export. Session
 bytes stay exact. Opening an editor does not replace native model validation,

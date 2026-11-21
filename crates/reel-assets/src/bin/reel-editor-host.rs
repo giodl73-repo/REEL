@@ -134,6 +134,18 @@ impl Bundle {
             .ok_or("Missing native editor session schema")?
             .to_owned();
         let (html, script): (&[u8], &[u8]) = match schema.as_str() {
+            "reel.media-review-session.v1" => (
+                include_bytes!("../media_review.html"),
+                include_bytes!("../media_review.js"),
+            ),
+            "reel.voice-audition-session.v1" => (
+                include_bytes!("../../../reel-voice-design/src/review.html"),
+                include_bytes!("../../../reel-voice-design/src/review.js"),
+            ),
+            "reel.screenplay-session.v1" => (
+                include_bytes!("../../../reel-screenplay/src/review.html"),
+                include_bytes!("../../../reel-screenplay/src/review.js"),
+            ),
             "reel.music-note-session.v1" => (
                 include_bytes!("../../../reel-music/src/note_editor.html"),
                 include_bytes!("../../../reel-music/src/note_editor.js"),
@@ -163,6 +175,79 @@ impl Bundle {
             }
         }
         match schema.as_str() {
+            "reel.voice-audition-session.v1" | "reel.media-review-session.v1" => {
+                let generic = schema == "reel.media-review-session.v1";
+                let audios = session[if generic { "items" } else { "audios" }]
+                    .as_array()
+                    .ok_or("Missing audition roster")?;
+                if audios.len() > 64 {
+                    return Err("Audition roster exceeds budget".into());
+                }
+                if !audios.is_empty() {
+                    let folder = root.join("media");
+                    let m = fs::symlink_metadata(&folder)?;
+                    if !m.is_dir() || m.file_type().is_symlink() {
+                        return Err("Audition media directory must be regular".into());
+                    }
+                    #[cfg(windows)]
+                    {
+                        use std::os::windows::fs::MetadataExt;
+                        if m.file_attributes() & 0x400 != 0 {
+                            return Err("Audition media directory cannot be a reparse point".into());
+                        }
+                    }
+                }
+                let mut total = 0;
+                for audio in audios {
+                    let name = audio["src"]
+                        .as_str()
+                        .ok_or("Missing audition audio route")?;
+                    let expected = audio["sha256"].as_str().ok_or("Missing audition hash")?;
+                    let extension = if generic && name.ends_with(".mp4") && audio["kind"] == "video"
+                    {
+                        ("mp4", "video/mp4")
+                    } else if generic && name.ends_with(".m4a") && audio["kind"] == "audio" {
+                        ("m4a", "audio/mp4")
+                    } else if generic && name.ends_with(".png") && audio["kind"] == "image" {
+                        ("png", "image/png")
+                    } else if generic && name.ends_with(".jpg") && audio["kind"] == "image" {
+                        ("jpg", "image/jpeg")
+                    } else if generic && name.ends_with(".jpeg") && audio["kind"] == "image" {
+                        ("jpeg", "image/jpeg")
+                    } else if name.ends_with(".mp3") && (!generic || audio["kind"] == "audio") {
+                        ("mp3", "audio/mpeg")
+                    } else if name.ends_with(".wav") && (!generic || audio["kind"] == "audio") {
+                        ("wav", "audio/wav")
+                    } else {
+                        return Err("Unsupported audition audio".into());
+                    };
+                    if expected.len() != 64
+                        || !expected.bytes().all(|c| c.is_ascii_hexdigit())
+                        || name != format!("media/{expected}.{}", extension.0)
+                    {
+                        return Err("Invalid audition audio route".into());
+                    }
+                    if !assets.contains_key(name) {
+                        let asset = media(
+                            &root,
+                            name,
+                            Some(expected),
+                            extension.1,
+                            MEDIA_LIMIT - total,
+                            deadline,
+                        )?;
+                        if Some(asset.bytes) != audio["bytes"].as_u64() {
+                            return Err("Audition byte count differs".into());
+                        }
+                        total += asset.bytes;
+                        assets.insert(name.into(), asset);
+                    }
+                    if Some(assets[name].bytes) != audio["bytes"].as_u64() {
+                        return Err("Duplicate audition byte count differs".into());
+                    }
+                }
+            }
+            "reel.screenplay-session.v1" => (),
             "reel.music-note-session.v1" | "reel.music-underlay-session.v1" => (),
             "reel.cel-sorter-session.v1"
             | "reel.cel-sorter-session.v2"
@@ -779,6 +864,18 @@ mod tests {
     fn fixture(schema: &str) -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         let (html, js): (&[u8], &[u8]) = match schema {
+            "reel.media-review-session.v1" => (
+                include_bytes!("../media_review.html"),
+                include_bytes!("../media_review.js"),
+            ),
+            "reel.voice-audition-session.v1" => (
+                include_bytes!("../../../reel-voice-design/src/review.html"),
+                include_bytes!("../../../reel-voice-design/src/review.js"),
+            ),
+            "reel.screenplay-session.v1" => (
+                include_bytes!("../../../reel-screenplay/src/review.html"),
+                include_bytes!("../../../reel-screenplay/src/review.js"),
+            ),
             "reel.music-note-session.v1" => (
                 include_bytes!("../../../reel-music/src/note_editor.html"),
                 include_bytes!("../../../reel-music/src/note_editor.js"),
@@ -797,7 +894,7 @@ mod tests {
         fs::write(
             d.path().join("session.json"),
             serde_json::to_vec(
-                &json!({"schema":schema,"media_mode":"controls-only","images":{},"movie":null}),
+                &json!({"schema":schema,"media_mode":"controls-only","images":{},"movie":null,"audios":[]}),
             )
             .unwrap(),
         )
@@ -926,6 +1023,8 @@ mod tests {
     #[test]
     fn only_known_native_frontends_and_explicit_resources_are_hosted() {
         for schema in [
+            "reel.voice-audition-session.v1",
+            "reel.screenplay-session.v1",
             "reel.cel-sorter-session.v1",
             "reel.cel-sorter-session.v2",
             "reel.cel-sorter-session.v3",
@@ -953,6 +1052,66 @@ mod tests {
             vec![b' '; CONTROL_LIMIT as usize + 1],
         )
         .unwrap();
+        assert!(Bundle::open(d.path()).is_err());
+    }
+    #[test]
+    fn audition_audio_requires_exact_routes_hashes_and_duplicate_lengths() {
+        let d = fixture("reel.voice-audition-session.v1");
+        fs::create_dir(d.path().join("media")).unwrap();
+        let bytes = b"synthetic fixture";
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        let route = format!("media/{hash}.mp3");
+        fs::write(d.path().join(&route), bytes).unwrap();
+        let mut value = json!({"schema":"reel.voice-audition-session.v1","audios":[{"src":route,"sha256":hash,"bytes":bytes.len()}]});
+        let save = |value: &Value| {
+            fs::write(
+                d.path().join("session.json"),
+                serde_json::to_vec(value).unwrap(),
+            )
+            .unwrap()
+        };
+        save(&value);
+        assert_eq!(Bundle::open(d.path()).unwrap().assets.len(), 4);
+        let mut duplicate = value["audios"][0].clone();
+        duplicate["bytes"] = json!(1);
+        value["audios"].as_array_mut().unwrap().push(duplicate);
+        save(&value);
+        assert!(Bundle::open(d.path()).is_err());
+        value["audios"].as_array_mut().unwrap().pop();
+        value["audios"][0]["src"] = json!("media/../private.mp3");
+        save(&value);
+        assert!(Bundle::open(d.path()).is_err());
+    }
+    #[test]
+    fn generic_video_review_checks_kind_hash_range_and_duplicate_lengths() {
+        let d = fixture("reel.media-review-session.v1");
+        fs::create_dir(d.path().join("media")).unwrap();
+        let bytes = b"synthetic video";
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        let route = format!("media/{hash}.mp4");
+        fs::write(d.path().join(&route), bytes).unwrap();
+        let mut value = json!({"schema":"reel.media-review-session.v1","items":[{"kind":"video","src":route,"sha256":hash,"bytes":bytes.len()}]});
+        let save = |value: &Value| {
+            fs::write(
+                d.path().join("session.json"),
+                serde_json::to_vec(value).unwrap(),
+            )
+            .unwrap()
+        };
+        save(&value);
+        let bundle = Bundle::open(d.path()).unwrap();
+        assert_eq!(bundle.assets[&route].mime, "video/mp4");
+        assert!(
+            exchange(&bundle, "GET", &route, "Range: bytes=1-3\r\n").starts_with(b"HTTP/1.1 206")
+        );
+        value["items"][0]["kind"] = json!("image");
+        save(&value);
+        assert!(Bundle::open(d.path()).is_err());
+        value["items"][0]["kind"] = json!("video");
+        let mut duplicate = value["items"][0].clone();
+        duplicate["bytes"] = json!(1);
+        value["items"].as_array_mut().unwrap().push(duplicate);
+        save(&value);
         assert!(Bundle::open(d.path()).is_err());
     }
     #[test]

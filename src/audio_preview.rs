@@ -272,6 +272,9 @@ pub fn render_audio_preview(options: &AudioPreviewOptions) -> Result<AudioPrevie
         "aac".to_string(),
         "-b:a".to_string(),
         "192k".to_string(),
+        // Bound the muxer independently of filter EOF (notably padded mixes).
+        "-t".to_string(),
+        format!("{timeline_seconds:.9}"),
         "-movflags".to_string(),
         "+faststart".to_string(),
         adapter.path_argument(&options.output)?,
@@ -1306,6 +1309,12 @@ mod tests {
                 .contains("sidechaincompress=")
         );
         assert!(report.command_arguments.join(" ").contains("-vn"));
+        let limit = report
+            .command_arguments
+            .iter()
+            .position(|arg| arg == "-t")
+            .unwrap();
+        assert_eq!(report.command_arguments[limit + 1], "6.000000000");
         assert!(!output.exists());
         assert!(output.with_extension("audio-artifacts.json").exists());
     }
