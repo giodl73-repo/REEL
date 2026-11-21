@@ -1,7 +1,8 @@
 # CI browser fixture startup budget
 
-**Status:** prepared follow-up for CI PR #369; not yet qualified or merged.
-The active M01 run/branch is unchanged.
+**Status:** locally checked follow-up for CI PR #369, rebased on merged M01
+`f473431`. Fresh full hosted qualification is pending. M01's completed run was
+left intact and passed before its merge.
 
 Run `44828074724`, Windows media job `136605950868`, failed the corrupt-source
 fixture at browser discovery, before reaching its intended resource-integrity
@@ -18,9 +19,10 @@ revised CI fixture profile, not proof of a universal startup SLA or a change to
 production runtime defaults. A corruption acceptance, wrong failure reason,
 foreign-file deletion or overall timeout must still fail.
 
-Rebase PR #369 on merged M01, then run the four actual native browser fixtures
-with explicit enrolled Edge/FFmpeg/FFprobe and one test thread. Re-run the workflow
-structure/shard tests and required hosted qualification. The prior split run's
+The four actual native browser fixtures passed locally with explicit enrolled
+Edge/FFmpeg/FFprobe and one test thread (49.27 seconds after compilation).
+The 11 workflow structure/shard tests and actionlint also passed on this base.
+Fresh required hosted qualification still applies. The prior split run's
 longest successful lane was about 22 minutes, but the 30-minute target remains
 unqualified until a complete fresh run passes. No check may be removed to meet it.
 
