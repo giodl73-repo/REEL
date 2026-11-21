@@ -6,6 +6,9 @@ provider execution or project cutover is claimed by this plan.
 The [role-checklist review](reviews/2026-11-20-spoken-plan-role-review.md)
 records the planning gaps corrected below and the remaining production gates.
 
+The [phased PR plan](media-expansion-pr-plan.md) defines the implementation order,
+bounded scopes, acceptance/rejection cases and checkpoints across all four areas.
+
 REEL's reusable foundation is authored meaning, semantic events, source layers,
 versions and editions. Extend that foundation to additional delivery forms while
 keeping content authority in producing projects and generic asset management in
