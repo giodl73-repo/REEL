@@ -259,7 +259,7 @@ records the applied lenses, findings, corrections and remaining review limits.
 | `crates/reel-assets/` | Existing asset accounting, editors and custody adapters |
 | [`crates/reel-workflow/`](crates/reel-workflow/README.md) | Task contracts, manual exchange and [film metadata sidecars](docs/workflow-film-inspection.md); no production admission |
 | [`crates/reel-publication/`](crates/reel-publication/README.md) | Shared artifact identities and named output contracts |
-| [`crates/reel-workflow-native/`](crates/reel-workflow-native/README.md) | Isolated qualified storage SDK intake; no production runtime command |
+| [`crates/reel-workflow-native/`](crates/reel-workflow-native/README.md) | Exact native inputs, protected manual handoffs and retained-result recovery |
 | `browser/assembly/` | Browser/WASM semantic workbench |
 | `manifests/` | Contracts, templates and synthetic fixtures |
 | `docs/` | [Task guides and reference index](docs/README.md) |

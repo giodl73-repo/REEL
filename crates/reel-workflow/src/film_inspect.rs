@@ -226,7 +226,9 @@ fn semantic<T, E>(result: std::result::Result<T, E>) -> Result<T> {
         code: "film-inspect-source-contract".into(),
     })
 }
-fn controls(request: &Request) -> Vec<&Control> {
+/// Complete named metadata closure for explicit reader adapters. Renderer/media
+/// payload references are preserved, not opened by metadata inspection.
+pub fn controls(request: &Request) -> Vec<&Control> {
     let mut result = vec![
         &request.episode,
         &request.scene,

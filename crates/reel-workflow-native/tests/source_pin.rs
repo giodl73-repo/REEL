@@ -95,7 +95,7 @@ fn lifecycle_sdk_preserves_all_247_exact_sources_and_original_manifest() {
 }
 
 #[test]
-fn original_slot_module_tests_and_license_are_preserved_without_compilation_claim() {
+fn original_slot_module_tests_license_and_compiled_copies_match_qualification() {
     let root = vendor("reel-workflow-lifecycle");
     let raw = checked(
         &root.join("source-pin.json"),
@@ -108,6 +108,14 @@ fn original_slot_module_tests_and_license_are_preserved_without_compilation_clai
     );
     let entries: Vec<Entry> = serde_json::from_value(pin["files"].clone()).unwrap();
     assert_eq!(entries.len(), 2);
+    assert_eq!(
+        fs::read(Path::new(env!("OUT_DIR")).join("slots.rs")).unwrap(),
+        fs::read(root.join("src/tig_job_runner/slots.rs")).unwrap()
+    );
+    assert_eq!(
+        fs::read(Path::new(env!("OUT_DIR")).join("tests.rs")).unwrap(),
+        fs::read(root.join("src/tig_job_runner/slots/tests.rs")).unwrap()
+    );
     checked(
         &root.join("LICENSE"),
         "163a1b56cf59de3caa662b2111a28063e4f810f10d020bc8ee63c34e957e63aa",

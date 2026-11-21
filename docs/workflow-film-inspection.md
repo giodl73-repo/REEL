@@ -10,7 +10,8 @@ The initial adapter supports `reel.scene-authoring.v2` with selected single-take
 cues and committed ordinary JSON/text controls. It reuses `reel-assembly`'s
 materialization, selection and text-trigger rules. Arbitrary legacy scripts,
 segmented takes, raw `.tig` records and annex-backed controls are not interpreted
-by this Git reader. Native record-to-annex resolution belongs in W3a; this adapter
+by this Git reader. The [native workflow adapter](../crates/reel-workflow-native/README.md)
+now supplies task-bound record-to-annex reads for this inspector. The Git adapter
 does not replace that binding with a search for matching bytes. No existing
 project has been adopted through this metadata-only interface.
 
@@ -88,5 +89,5 @@ The tests create disposable local Git repositories and invoke both the API and
 actual CLI. No media payloads exist there. They cover fixed snapshots, dirty-tree
 isolation, language/take/clock checks and stable IDs across redraws with unchanged
 earlier approval subjects. They do not qualify an actual project or episode scale.
-W3a supplies qualified native storage/tool integration; W4 supplies review/issues
+W3a supplies native storage; producer integration remains open. W4 supplies review/issues
 and affected rebuilds.
