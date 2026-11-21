@@ -335,6 +335,8 @@ struct ReviewItem {
     kind: String,
     language: String,
     text: String,
+    #[serde(default)]
+    label: String,
     source: Pin,
 }
 #[derive(Deserialize)]
@@ -379,7 +381,7 @@ fn review(path: &Path, output: &Path) -> Result<()> {
             ensure!(total <= 256 * 1024 * 1024, "Review exceeds audio budget");
             audios.insert(src.clone(), bytes);
         }
-        items.push(json!({"id":item.id,"character":item.character,"kind":item.kind,"language":item.language,"text":item.text,"src":src,"sha256":item.source.sha256,"bytes":item.source.bytes}));
+        items.push(json!({"id":item.id,"character":item.character,"kind":item.kind,"language":item.language,"text":item.text,"label":item.label,"src":src,"sha256":item.source.sha256,"bytes":item.source.bytes}));
     }
     let data = serde_json::to_vec(
         &json!({"schema":"reel.voice-audition-session.v1","title":request.title,"notice":request.notice,"audios":items}),
