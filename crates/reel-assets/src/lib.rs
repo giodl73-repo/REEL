@@ -16,6 +16,7 @@ pub mod references;
 pub mod registry;
 pub mod review_ids;
 pub mod scenes;
+pub mod source_reuse;
 pub mod tier_review;
 pub mod tiering;
 pub mod version_diff;
