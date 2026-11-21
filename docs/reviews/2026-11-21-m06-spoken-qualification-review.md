@@ -44,8 +44,13 @@ versioned Rust/JSON; generated packs are temporary and stay outside Git.
 
 ## Execution and remaining gates
 
-Preparatory test/lint results: pending. Final merged-parent and hosted results:
-pending. Commands are recorded in the qualification contract. Each worktree has
+Preparatory Windows checks on the exact stacked parent passed all three new
+cases in the default-feature media target (14.80 seconds), then 58 distinct
+tests with `tig-history`: 24 media cases (33.07 seconds), four native history
+cases (32.08 seconds), 20 compiler/declaration, nine clock and one existing review
+CLI case. None were ignored. All-target/all-feature Clippy with warnings denied,
+formatting, local links and `git diff --check` passed. Final merged-parent
+and hosted results remain pending. Commands are recorded in the qualification contract. Each worktree has
 its own Cargo target directory; no result from another worktree's executable is
 accepted as evidence.
 
