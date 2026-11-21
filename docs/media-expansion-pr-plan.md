@@ -1,7 +1,8 @@
 # Media expansion: phased PR plan
 
-**Status:** proposed implementation sequence, 2026-11-20. This document records
-work to do; it does not mark any implementation or production gate complete.
+**Status:** active implementation sequence, started 2026-11-20. The progress
+tables link actual revisions and evidence. Future acceptance criteria describe
+required work; they do not themselves establish a passed gate.
 It operationalizes the [format-expansion plan](media-format-expansion.md) and its
 [six role-review findings](reviews/2026-11-20-spoken-plan-role-review.md).
 
@@ -87,8 +88,8 @@ cannot claim or inherit them for real performances or delivery.
 | Phase | PR ID / bounded outcome | Depends on | Status |
 | --- | --- | --- | --- |
 | 0 — map | M00: reuse/gap map and fixture briefs | Current main | Documented in [PR #378](https://github.com/giodl73-repo/REEL/pull/378) |
-| 1 — spoken core | M01: minimal edition/handoff contract | M00 | In progress: [implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m01-contract) |
-| 1 | M02: edition planning and sample-clock compilation | M01 | Planned |
+| 1 — spoken core | M01: minimal edition/handoff contract | M00 | Merged [#379](https://github.com/giodl73-repo/REEL/pull/379), `f473431` |
+| 1 | M02: edition planning and sample-clock compilation | M01 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m02-compiler); local checks pass, hosted qualification pending |
 | 1 | M03: bounded audio-only assembly | M02 | Planned |
 | 1 | M04: independent output check and accessible text | M03 | Planned |
 | 1 | M05: retained editions and selective invalidation | M04 | Planned |
@@ -380,4 +381,5 @@ remains not run; that is not a completed spoken-performance acceptance checkpoin
 | Planning ID | PR / exact revision | Evidence and review | Remaining gate |
 | --- | --- | --- | --- |
 | M00 | [PR #378](https://github.com/giodl73-repo/REEL/pull/378), merged `bee948e` | [Source map and review](media-expansion-m00.md); [fixture/test specification](media-expansion-spoken-fixture.md) | Technical planning complete; no runtime tests or listening performed |
-| M01 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m01-contract), based on `bee948e` | [Contract](spoken-edition-v1.md); [checklist review](reviews/2026-11-20-m01-spoken-contract-review.md) | Focused tests passed; required hosted checks remain; media/authority remain unverified |
+| M01 | [PR #379](https://github.com/giodl73-repo/REEL/pull/379), merged `f473431` | [Contract](spoken-edition-v1.md); [checklist review](reviews/2026-11-20-m01-spoken-contract-review.md) | Full required hosted checks passed; media/authority remain unverified |
+| M02 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m02-compiler), based on merged `13e70df` | [Compiler contract](spoken-edition-compilation-v1.md); [checklist review](reviews/2026-11-20-m02-spoken-compiler-review.md) | Local 36 tests/lint pass; hosted checks and merge pending; media/listening/authority remain unverified |

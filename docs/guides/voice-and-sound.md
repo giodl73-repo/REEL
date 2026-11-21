@@ -48,6 +48,15 @@ Keep voice consent and creative listening decisions with the producing project.
 
 ## Follow the implementation
 
+For reusable executive/technical spoken editions, the
+[declaration contract](../spoken-edition-v1.md) keeps modules, speaker cues and
+language/audience script variants explicit. The
+[control compiler](../spoken-edition-compilation-v1.md) places each selected take
+and its authored handoffs on a language-local sample clock. It produces a private
+plan and checks alignment metadata; it does not assemble audio or verify consent.
+The [phased plan](../media-expansion-pr-plan.md) tracks the remaining producer,
+independent checker and retained-edition work.
+
 | Work | Detailed contract |
 | --- | --- |
 | Capture or execute a speech attempt | [Speech adapter](../tig-speech-generation.md) |
