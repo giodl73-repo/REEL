@@ -1,6 +1,6 @@
 # M04 independent checker: checklist review
 
-**Status:** preparatory work on exact M03 `8cc0652`; final M03 is [PR #381](https://github.com/giodl73-repo/REEL/pull/381).
+**Status:** preparatory checks on updated M03 `df182d1`; final M03 is [PR #381](https://github.com/giodl73-repo/REEL/pull/381).
 Final qualification must be rerun after M03 merges. The
 [checking/access contract](../spoken-edition-check-v1.md) precedes these local
 controlled-signal tests. No merged M04 capability is claimed.
@@ -43,11 +43,11 @@ All new cases are under `checking::` in `spoken_programme_media`:
 
 Earlier shared-target runs are discarded as qualification evidence after
 switching worktrees reused a stale test executable. Fresh verification in
-`F:/tmp/reel-builds/media-m04-isolated`, exclusive to this worktree, passed 20 media
-cases, 20 declaration/compiler, nine clock and six shared PCM/WAVE cases: 55 total,
-none ignored. The media target completed in 54.94 seconds during concurrent cold
-build work. The two affected text cases were rerun after making recognition
-tokens deliberately differ from the canonical script; both passed. All-target/
+`F:/tmp/reel-builds/media-m04-isolated`, exclusive to this worktree, passed 21 media
+cases, 20 declaration/compiler, nine clock and seven shared PCM/WAVE cases: 57 total,
+none ignored. The latest media target completed in 40.11 seconds and includes
+M03's added peak/channel-layout regressions. Recognition tokens deliberately
+differ from the canonical script. All-target/
 all-feature Clippy with warnings denied passed. Formatting, local links and
 `git diff --check` passed. Hosted and merged-parent qualification remain pending.
 
