@@ -16,7 +16,7 @@ These are proposed limits, not implemented promises. Confirm them against existi
 - 48 kHz stereo PCM24 checked programme, 24 fps, at most ten seconds per edition; full audio duration must equal an integer frame count. No implicit padding, trimming, fades or resampling.
 - SVG/control resources at most 64 KiB each; source clock at most its existing 64 KiB; clock evidence at most its existing 1 MiB. Original spoken checks retain their own declared bounds.
 - At most 240 picture frames and 640×360 canvas pixels. The synthetic pixel-oracle fixture uses a much smaller canvas and shorter clock; it makes no readable-device or spoken-performance claim.
-- Existing owned Windows worker: 256 MiB browser / 1 GiB encoder memory, at most eight browser / two encoder processes, 64 MiB workspace, 16 MiB output, 30-second cooperative deadline, provided these satisfy the existing host admission contract. No invocation without explicitly bound programs and held inputs.
+- Reuse the existing qualified Windows fixture envelope: 2 GiB browser / 256 MiB encoder memory, at most 64 browser / four encoder processes, 128 MiB workspace and at most 16 MiB companion output. Each existing worker invocation has a 60-second deadline and 30-second I/O wait; cold hosted Edge startup is already documented in its fixture. Metadata operations retain a separate 30-second cooperative deadline. Do not label the multi-operation package as globally 30 seconds. Finalize an aggregate package deadline before implementation. No invocation without explicitly bound programs and held inputs.
 - Index publication uses the existing owned no-clobber writer and final marker. No production cache, daemon, hydration, census, upload, deletion or player starts.
 
 If a proposed bound conflicts with the current worker, record the conflict and revise this contract before execution. Do not enlarge it silently to pass a fixture.
@@ -50,3 +50,10 @@ The names above are planned, not executed tests. Runtime qualification must expl
 | Rights/Provenance | Keep immutable scopes and private subjects separate from portable counts/flags. No inferred voice, language, performance or release authority. |
 
 Unused score/arrangement and music-reconstruction lenses: no score alteration, transcription, note clock, stem repair or musical arrangement occurs in M10. The lesson score remains its already-checked upstream reference.
+Source-audit correction: the first proposed 256 MiB/eight-process browser and
+30-second render envelope was lower than the existing qualified native fixture.
+Inspection of `src/tig_browser/render/tests.rs::limits` found 2 GiB/64 browser
+processes and a 60-second worker deadline with 30-second I/O wait. The proposal
+above now retains those established bounds rather than inventing an unmeasured
+startup promise. Aggregate two-language operation limits remain explicitly open
+before runtime work; this draft does not claim completed resource qualification.
