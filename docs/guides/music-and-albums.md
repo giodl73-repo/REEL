@@ -9,11 +9,13 @@ an approved score or transcription.
 
 ```mermaid
 flowchart TD
+    accTitle: Recording selection, analysis evidence and musical model drafts
+    accDescr: Lyrics and a musical brief produce recording candidates. A selected recording can enter an album or video. Machine analysis supports an editable model draft requiring review and corrections before score or arrangement candidates.
     lyrics["Lyrics + musical brief"] --> candidates["Recording candidates"]
     candidates --> recording["Selected recording"]
     recording --> album["Ordered album / journey"]
-    recording --> analysis["Measured analysis"]
-    analysis --> model["Editable notes + lyric underlay"]
+    recording --> analysis["Machine-analysis evidence"]
+    analysis --> model["Editable model draft<br/>Review + corrections"]
     model --> score["Score / arrangement candidate"]
     recording --> film["Picture and semantic events"]
     film --> video["Music video"]
@@ -29,6 +31,13 @@ later revision can be compared with the actual earlier performance.
 Note editing and lyric underlay operate on an editable model. Song editions and
 masked repair have different contracts: shortening an existing performance,
 changing a note assignment and generating a new take are different operations.
+
+Analysis and source-separation estimates need review; they are not original
+studio multitracks or authoritative notation. Keep canonical lyrics, performed
+words, recognition evidence and target-language text separate. A musical model
+may need corrections to form, melody, harmony, rhythm or underlay before it can
+guide a useful score. Arrangement proposals make preserved, developed, replaced
+and omitted musical elements explicit; the project retains musical authority.
 
 ## Assemble complete recordings into an album
 

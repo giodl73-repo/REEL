@@ -42,6 +42,8 @@ illustrates the boundary with one replaced picture and an unchanged shared cue:
 
 ```mermaid
 flowchart LR
+    accTitle: A cel revision across project, asset and production layers
+    accDescr: The project selects cel B version two, the asset layer resolves its bytes and REEL compiles a new candidate. An earlier frozen request retains its version-one and runtime pins.
     selected["Project selects cel B v2"] --> bytes["Asset layer<br/>Resolve exact B v2 bytes"]
     bytes --> scene["REEL scene compiler<br/>Changed picture, same cue"]
     scene --> checked["New checked candidate"]

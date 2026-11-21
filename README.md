@@ -43,12 +43,14 @@ checkout's support claim.
 
 An episode assembles an opening, ordered scenes and credits. Within each scene,
 **cues** carry narration or dialogue; **cels** supply pictures and animation;
-**semantic events** say when the picture or sound should change. These are
-separate, connected inputs: one cue can span several cels, and a sound or visual
+**semantic events** declare authored story moments and their picture/sound changes.
+These are separate, connected inputs: one cue can span several cels, and a sound or visual
 effect can continue across cel cuts.
 
 ```mermaid
 flowchart TD
+    accTitle: Episode structure and authored semantic timing
+    accDescr: An episode contains scenes, cues, authored semantic triggers, cels and effect layers. Word alignment supplies performance timing for the authored cel and effect changes.
     episode["Episode<br/>Opening + ordered scenes + credits"]
     scene["Scene"]
     cues["Cues<br/>Text + selected voice takes"]
@@ -58,9 +60,10 @@ flowchart TD
 
     episode --> scene
     scene --> cues
+    scene --> triggers
     scene --> cels
     scene --> effects
-    cues -->|"Word / phrase alignment"| triggers
+    cues -. "Measured phrase timing" .-> triggers
     triggers -. "Change cel" .-> cels
     triggers -. "Start / end effect" .-> effects
 ```
@@ -96,9 +99,10 @@ For example, an author can anchor a story moment to the spoken phrase
 REEL resolves the phrase against the selected recording's measured word timing,
 then compiles the picture and effect intervals onto frame/sample clocks. Spanish
 and English can share the same event intent while entering at different times
-in their own performances. SVG/CSS/JS compositions can supply separately rendered,
-timed visual layers, preserving the clean cel underneath. Music videos can use
-the recording clock directly for events without speech.
+in their own performances. SVG/CSS/JS sources have their own rendering route;
+scene overlays require an explicitly prepared, compatible transparent (alpha)
+layer and any required derivation evidence, preserving the clean cel underneath.
+Music videos can use the recording clock directly for events without speech.
 
 Continue with the [episode and language walkthrough](docs/guides/episodes-and-languages.md)
 or [animation and effects](docs/guides/animation-and-effects.md). Exact contracts:
@@ -109,12 +113,15 @@ or [animation and effects](docs/guides/animation-and-effects.md). Exact contract
 
 ## A comic: pages, panels and editable layers
 
-The comic publication work applies the same explicit-source approach to an
+Comic publication adapters are in active [workflow development](docs/development-status.md).
+Their source model applies the same explicit-source approach to an
 **issue** of ordered **pages**, each with panel geometry, reading order and
 independently editable artwork and lettering:
 
 ```mermaid
 flowchart LR
+    accTitle: Comic source model in workflow development
+    accDescr: An issue orders pages. Separate artwork and editable lettering produce clean art and reading editions. The comic adapters are in active workflow development.
     issue["Comic issue"] --> page["Ordered pages<br/>Panels + reading order"]
     page --> art["Art layers<br/>Backgrounds, characters,<br/>props and effects"]
     page --> lettering["Lettering layers<br/>Balloons, exact text,<br/>fonts and placement"]
@@ -125,10 +132,8 @@ flowchart LR
 
 A balloon or translation can be edited while preserving the underlying art.
 Clean art and reading editions remain distinct outputs, and source layers stay
-available for later edits and recovery. Comic publication/production adapters
-are part of the active [workflow development](docs/development-status.md);
-their qualification scope is tracked in that lane. The
-[comic layers walkthrough](docs/guides/comic-layers.md) explains a lettering
+available for later edits and recovery. Qualification scope is tracked in the
+owning workflow lane. The [comic layers walkthrough](docs/guides/comic-layers.md) explains a lettering
 correction and its source/output relationships.
 
 Across both examples, **[git-asset](https://github.com/giodl73-repo/git-asset)**
@@ -236,6 +241,9 @@ checks. [Formats](formats/), [styles](styles/), [scoring](scoring/) and
 Technical validation, listening/visual review, selection, rights approval and
 release are separate decisions. [Principles and pitfalls](.pitfall/PITFALL.md)
 document the boundaries. Roles are checklists, not invented people or approvals.
+
+The [illustrated documentation role review](docs/reviews/2026-11-20-illustrated-documentation-role-review.md)
+records the applied lenses, findings, corrections and remaining review limits.
 
 ## Repository map
 

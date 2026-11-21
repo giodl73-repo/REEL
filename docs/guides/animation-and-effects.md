@@ -8,6 +8,8 @@ add authored movement. Sound and visual effects remain separate layers.
 
 ```mermaid
 flowchart LR
+    accTitle: One authored event controls picture, Sonic and visual layers
+    accDescr: A door-opening event changes the picture and starts selected sound and a prepared visual effect. The scene composition is checked over active spans and clean boundaries.
     event["Semantic event<br/>Door opens"]
     event --> cel["Picture change<br/>Exterior to doorway"]
     event --> sonic["Sonic<br/>Selected creak"]
@@ -44,10 +46,12 @@ The next event changes the cel while retaining the same effect key. A contiguous
 shared key can describe one continuous overlay across both picture events.
 The selected effect source must cover the complete compiled interval.
 
-SVG/CSS/JS compositions use an explicit frame clock. Supported rendered layers
-can enter the scene through the documented overlay/derivation route; clean art,
-effect source and rendered result retain separate identities. An effect reference
-alone does not prove that its pixels appeared in a movie.
+SVG/CSS/JS compositions use an explicit frame clock. A scene overlay needs an
+explicitly prepared alpha PNG, ordered alpha-PNG sequence or compatible alpha
+video, with the scene's geometry/clock and required derivation evidence. The
+browser movie renderer's output alone does not establish alpha-overlay compatibility.
+Clean art, effect source and rendered result retain separate identities, and the
+composited movie must show the declared effect in its active span.
 
 The [cel editor](../cel-sorter-v1.md) provides supported ordering, hold and
 substitution edits. Its saved draft is reapplied through native validation before

@@ -8,6 +8,8 @@ then enter the scene as separately controlled sound layers.
 
 ```mermaid
 flowchart TD
+    accTitle: Dialogue, music and effects on a measured scene clock
+    accDescr: A selected take provides dialogue and word timing. Authored event timing places Sonic effects, while selected score supplies music. These declared buses form the scene mix and stems.
     text["Cue text + direction"] --> take["Selected voice take"]
     take --> words["Word / phrase alignment"]
     words --> event["Semantic event clock"]

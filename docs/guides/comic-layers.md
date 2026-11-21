@@ -12,6 +12,8 @@ edition, allowing clean art and translated reading editions to coexist.
 
 ```mermaid
 flowchart TD
+    accTitle: Editable comic layers in active workflow development
+    accDescr: An issue orders pages with panel geometry. Background, character, prop and effect layers compose clean art. Independent lettering combines with that art into a reading page or issue PDF.
     issue["Issue: ordered pages"] --> page["Page: panels + reading order"]
     page --> background["Background layer"]
     page --> actors["Character and prop layers"]

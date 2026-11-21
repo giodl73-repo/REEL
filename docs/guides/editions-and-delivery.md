@@ -8,6 +8,8 @@ its own identity and declared relationship to the selected sources.
 
 ```mermaid
 flowchart LR
+    accTitle: Separate language editions and target-specific delivery evidence
+    accDescr: A selected source view produces separate Spanish and English movies with matching captions. Declared delivery targets retain revision-specific evidence.
     work["Selected work / source view"] --> es["Spanish edition"]
     work --> en["English edition"]
     es --> esvideo["Movie + matching captions"]
