@@ -1,0 +1,36 @@
+[package]
+name = "tig-store"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+s3-read = ["dep:ureq"]
+s3-read-fixtures = ["s3-read", "dep:rcgen", "dep:rustls"]
+
+[dependencies]
+tig-core = { path = "../tig-core" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+rusqlite = { version = "=0.41.0", features = ["bundled"] }
+getrandom = "=0.4.3"
+fs2 = "=0.4.3"
+ureq = { version = "=3.5.2", default-features = false, features = ["rustls"], optional = true }
+rcgen = { version = "=0.14.10", default-features = false, features = ["crypto", "ring", "pem"], optional = true }
+rustls = { version = "=0.23.46", default-features = false, features = ["ring", "std"], optional = true }
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+
+[[test]]
+name = "s3_read"
+path = "tests/s3_read.rs"
+required-features = ["s3-read-fixtures"]
+
+[[example]]
+name = "s3_read_probe"
+path = "examples/s3_read_probe.rs"
+required-features = ["s3-read"]
