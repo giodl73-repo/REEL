@@ -4,12 +4,18 @@ use std::{collections::BTreeMap, env, path::Path};
 fn run() -> Result<serde_json::Value> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
+        [command, repository, request, output] if command == "inspect-film" => {
+            let request: film_inspect::Request = manual::read_control(Path::new(request))?;
+            let sidecar = film_inspect::inspect(&request, &mut film_inspect::GitReader {repository: Path::new(repository)})?;
+            film_inspect::write_new(&sidecar, Path::new(output))?;
+            Ok(serde_json::json!({"ok":true,"scope":"private-scene-metadata-inspection","metadata_verified":true,"media_verified":false,"approvals_verified":false,"renderer_qualified":false,"production_adopted":false}))
+        }
         [command, directory] if command == "check-handoff" || command == "cancel-handoff" => {
             let mut journal = handoff::Journal::open(Path::new(directory))?;
             if command == "cancel-handoff" { journal.cancel()?; }
             Ok(serde_json::json!({"ok":true,"scope":"local-journal-only","state":journal.state(),"native_state_verified":false,"native_claims_released":false}))
         }
-        [command] if command == "capabilities" => Ok(serde_json::json!({"manual_exchange":true,"provider_calls":false,"native_storage":false,"producer_execution":false,"media_semantics_verified":false})),
+        [command] if command == "capabilities" => Ok(serde_json::json!({"manual_exchange":true,"film_metadata_inspection":true,"provider_calls":false,"native_storage":false,"producer_execution":false,"media_semantics_verified":false})),
         [command, plan] if command == "check-plan" => {
             let plan = manual::read_control(Path::new(plan))?;
             let count = check_plan(&plan)?.len();
@@ -53,6 +59,7 @@ fn main() {
         println!(
             "reel-workflow capabilities\n\
 reel-workflow check-plan PLAN\n\
+reel-workflow inspect-film REPOSITORY REQUEST NEW_SIDECAR\n\
 reel-workflow export-task PLAN TASK NEW_PACKET\n\
 reel-workflow export-work PLAN TASK ATTEMPT DEPENDENCIES_JSON NEW_DIRECTORY\n\
 reel-workflow check-result PACKET RESULT [FILE_BINDINGS_JSON]\n\
