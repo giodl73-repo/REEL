@@ -400,6 +400,10 @@ jobs:
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
         if: matrix.lane == 'media'
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
+      - name: Qualify spoken music and Sonic layers on both platforms
+        if: matrix.lane == 'media'
+        run: |
+          cargo test --locked --test spoken_programme_media layers:: -- --ignored
       - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux
         if: matrix.lane == 'media' && (runner.os == 'Linux')
         run: cargo test --test sonic_assets_v0318 real_resolved_sonic_asset_renders_dme_stems_and_rechecks -- --ignored --exact

@@ -1,7 +1,8 @@
 # M06 spoken slice: role checklist and evidence map
 
-**Status:** engineering checks on merged M05 `027164f`, PR #383.
-Final local qualification passed; hosted checks remain pending. Spoken review
+**Status:** merged as `cef69f7` in [PR #384](https://github.com/giodl73-repo/REEL/pull/384)
+after full [hosted qualification](https://github.com/giodl73-repo/REEL/actions/runs/44918400598)
+passed in 23 minutes 32 seconds. Spoken review
 remains **awaiting listening evidence**.
 
 One assistant applied the six spoken-plan [role checklists](../../.roles/ROLE.md).
@@ -55,7 +56,8 @@ After rebasing onto merged M05 `027164f`, the complete 58-case regression comman
 passed again, none ignored: native history 29.24 seconds, media 36.87 seconds,
 compiler/declaration 5.80 seconds, clocks 0.01 seconds and review CLI 0.20 seconds.
 All-target/all-feature Clippy with warnings denied, formatting and diff checks
-also passed again. Hosted qualification remains pending. M05's merged tree was
+also passed again. Hosted Windows/Linux qualification subsequently passed on
+exact head `d884463`; the merged tree matches that tested head. M05's merged tree was
 confirmed byte-identical to its tested PR head. Commands are recorded in the
 qualification contract. Each worktree has
 its own Cargo target directory; no result from another worktree's executable is
