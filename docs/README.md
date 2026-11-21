@@ -22,7 +22,8 @@ lists the wider toolset; [use cases](use-cases.md) describe task sequences; the
 
 For proposed work beyond the current delivery routes, see the
 [media format expansion plan](media-format-expansion.md), starting with reusable
-spoken-content modules and audience/language editions.
+spoken-content modules and audience/language editions. Its
+[phased PR sequence](media-expansion-pr-plan.md) defines the implementation gates.
 
 ## Learning paths
 

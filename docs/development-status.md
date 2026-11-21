@@ -14,6 +14,9 @@ executive, language and audience editions. It distinguishes existing foundations
 from proposed applications, includes natural multi-speaker handoffs, and defines
 a bounded first audio-only milestone.
 This is a planning record, not an implemented programme runner or a recording.
+The [phased PR sequence](media-expansion-pr-plan.md) starts with a source-backed
+reuse/gap map, then separates spoken production, companion packages,
+installation playback and interaction into bounded implementation PRs.
 
 ## Workflow orchestration
 
