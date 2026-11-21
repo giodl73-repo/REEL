@@ -56,6 +56,13 @@ The request uses `schema: reel.speech-request.v1`, `provider: elevenlabs`,
 or model is inferred. The tag, if declared, is a leading advisory delivery tag;
 its effect requires listening. A seed does not guarantee deterministic output.
 
+For `eleven_v4` and `eleven_v4_turbo`, the provider body contains only the
+supported `stability` and `similarity_boost` voice settings. The v1 control
+document retains its legacy settings shape, with `style:0`, `speed:1` and
+`use_speaker_boost:false` required as neutral placeholders; these three fields
+are omitted from the provider request. Nonneutral unsupported controls refuse
+rather than silently promising an effect. Older model bodies remain unchanged.
+
 The scope object uses `schema: reel.speech-authorization.v1`, the exact request
 object pin, matching `role_id`, `voice_id`, `language_code`, existing
 `consent_evidence` and `casting_evidence` object pins, explicit boolean
