@@ -657,6 +657,13 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
+        Command::SpokenEditionValidate { edition } => {
+            let document = reel::spoken_programme::load(&edition)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reel::spoken_programme::validate(&document)?)?
+            );
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -2911,6 +2918,8 @@ enum Command {
         #[arg(long)]
         output_pointer: PathBuf,
     },
+    /// Validate an audio-edition declaration without reading media or executing tools.
+    SpokenEditionValidate { edition: PathBuf },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {
         contract: PathBuf,
