@@ -90,6 +90,6 @@ runtime_size=runtime_bytes(SITE)
 if runtime_size>RUNTIME_BUDGET_BYTES:raise SystemExit('Initial runtime exceeds 512 KiB budget')
 inventory={'commit':head,'files':files,'bytes_excluding_inventory':sum(f['bytes'] for f in files),'runtime_bytes':runtime_size,'runtime_files':list(RUNTIME_FILES),'runtime_includes_root_landing':True}
 inventory_bytes=(json.dumps(inventory,indent=2)+'\n').encode('utf-8')
-if inventory['bytes_excluding_inventory']+len(inventory_bytes)+(SITE.parent/'index.html').stat().st_size>SITE_BUDGET_BYTES:raise SystemExit('Complete source/legal site exceeds 8 MiB budget')
+if inventory['bytes_excluding_inventory']+len(inventory_bytes)+(SITE.parent/'index.html').stat().st_size>SITE_BUDGET_BYTES:raise SystemExit(f'Complete source/legal site exceeds {SITE_BUDGET_BYTES // 1024 // 1024} MiB budget')
 (SITE/'inventory.json').write_bytes(inventory_bytes)
 print(json.dumps({'commit':head,'files':len(files)+1,'bytes_excluding_inventory':sum(f['bytes'] for f in files),'packages':len(packages),'rust_notices':len(rust_notices)}))

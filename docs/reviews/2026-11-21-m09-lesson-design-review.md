@@ -89,3 +89,19 @@ is claimed by the retained test byte provider.
 Retained disagreements/limitations: readable notation and repeat usefulness need
 actual musical review; language/voice/listening/device/selection/adoption gates
 remain open. A correct index is only the engineering scope described above.
+
+## Hosted assembly package budget finding
+
+The first M09 assembly build refused its complete source/legal bundle at 8 MiB.
+The current main build did pass this gate (its later Pages deployment failed for
+artifact availability); it is not the same baseline failure. Main's downloaded
+package inventory totals 8,375,358 bytes including inventory and root landing,
+with a 319,155-byte initial runtime. Comparable Git ZIP archives grow by 25,333
+bytes for M09, before the extra source inventory entries.
+
+The complete-package allowance is raised to 10 MiB to retain complete committed
+source, tests, SDK source and legal notices. The 512 KiB initial browser runtime
+cap stays fixed. Packaging and independent artifact verification still enforce
+both limits and exact inventory/provenance subjects; no source or license files
+are excluded to meet the budget. Final hosted package/source replay remains
+required after this change. No workflow run is manually canceled.
