@@ -154,6 +154,10 @@ jobs:
         if: matrix.lane == 'core' && matrix.shard == 2
         run: |
           cargo test --locked --all-features --test spoken_programme_media reading:: -- --ignored --test-threads=1
+      - name: Qualify lesson score bindings, pickups and repeat occurrences
+        if: matrix.lane == 'core' && matrix.shard == 2
+        run: |
+          cargo test --locked --all-features --test spoken_programme_media lesson:: -- --ignored --test-threads=1
       - name: Verify exact native audio recovery without picture inputs
         if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh

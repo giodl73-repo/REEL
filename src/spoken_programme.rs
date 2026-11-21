@@ -12,6 +12,8 @@ pub mod compiler;
 #[cfg(feature = "tig-history")]
 pub mod history;
 pub mod layers;
+#[cfg(feature = "print")]
+pub mod lesson;
 pub mod producer;
 #[cfg(feature = "print")]
 pub mod reading;

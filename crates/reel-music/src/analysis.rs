@@ -1,6 +1,5 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
-    fs,
     path::{Path, PathBuf},
 };
 
@@ -183,17 +182,43 @@ pub struct ValidationReport {
 }
 
 pub fn load(path: &Path) -> Result<AnalysisManifest> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    load_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn load_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<AnalysisManifest> {
+    let bytes = inputs
+        .read(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     serde_yaml::from_slice(&bytes)
         .with_context(|| format!("music analysis is not valid YAML: {}", path.display()))
 }
 
 pub fn validate(path: &Path) -> Result<ValidationReport> {
-    let manifest = load(path)?;
-    validate_loaded(path, &manifest)
+    validate_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
 }
-
-fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<ValidationReport> {
+pub fn validate_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ValidationReport> {
+    let manifest = load_with_inputs(path, inputs)?;
+    validate_loaded(path, &manifest, inputs)
+}
+fn validate_loaded(
+    path: &Path,
+    manifest: &AnalysisManifest,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ValidationReport> {
+    if inputs.is_admitted() && !manifest.imports.is_empty() {
+        bail!("admitted instrumental score profile does not support semantic imports");
+    }
     if manifest.schema != SCHEMA {
         bail!("music analysis schema must be {SCHEMA}");
     }
@@ -205,11 +230,11 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         &manifest.source.decoded_pcm_sha256,
     )?;
     let source_path = source::resolve(path, &manifest.source.manifest);
-    if sha256_path(&source_path)? != manifest.source.manifest_sha256.to_lowercase() {
+    if inputs.sha256(&source_path)? != manifest.source.manifest_sha256.to_lowercase() {
         bail!("source manifest sha256 does not match analysis binding");
     }
-    let source_report = source::validate(&source_path)?;
-    let source_manifest = source::load(&source_path)?;
+    let source_report = source::validate_with_inputs(&source_path, inputs)?;
+    let source_manifest = source::load_with_inputs(&source_path, inputs)?;
     if source_report.contract_sha256 != manifest.source.contract_sha256
         || source_report.decoded_pcm_sha256 != manifest.source.decoded_pcm_sha256
     {
@@ -268,10 +293,10 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
         }
         nonempty("stems[].uncertainty", &stem.uncertainty)?;
         let stem_path = source::resolve(path, &stem.path);
-        if sha256_path(&stem_path)? != stem.sha256.to_lowercase() {
+        if inputs.sha256(&stem_path)? != stem.sha256.to_lowercase() {
             bail!("stem {} sha256 does not match", stem.id);
         }
-        let bytes = fs::metadata(&stem_path)?.len();
+        let bytes = inputs.len(&stem_path)?;
         let expected = stem
             .timebase
             .samples_per_channel
@@ -368,7 +393,7 @@ fn validate_loaded(path: &Path, manifest: &AnalysisManifest) -> Result<Validatio
     Ok(ValidationReport {
         schema: SCHEMA.into(),
         analysis_id: manifest.analysis_id.clone(),
-        manifest_sha256: sha256_path(path)?,
+        manifest_sha256: inputs.sha256(path)?,
         contract_sha256: canonical_sha256(manifest)?,
         source_contract_sha256: source_report.contract_sha256,
         imports: manifest.imports.len(),

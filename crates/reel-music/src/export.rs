@@ -4,10 +4,7 @@ use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use tempfile::NamedTempFile;
 
-use crate::{
-    hash::{canonical_sha256, sha256_path},
-    model,
-};
+use crate::{hash::canonical_sha256, model};
 
 pub const SCHEMA: &str = "reel.music-score-export-plan.v0.1";
 
@@ -79,8 +76,17 @@ pub struct PlanReport {
 }
 
 pub fn build(model_path: &Path) -> Result<ScoreExportPlan> {
-    let report = model::validate(model_path)?;
-    let music = model::load(model_path)?;
+    build_with_inputs(
+        model_path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn build_with_inputs(
+    model_path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ScoreExportPlan> {
+    let report = model::validate_with_inputs(model_path, inputs)?;
+    let music = model::load_with_inputs(model_path, inputs)?;
     if music.musical_timebase.pulses_per_quarter > u16::MAX as u32 {
         bail!("MIDI export requires pulses_per_quarter <= 65535");
     }
@@ -222,25 +228,58 @@ pub fn write(model_path: &Path, output: &Path) -> Result<PlanReport> {
 }
 
 pub fn load(path: &Path) -> Result<ScoreExportPlan> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    load_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn load_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ScoreExportPlan> {
+    let bytes = inputs
+        .read(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     serde_json::from_slice(&bytes)
         .with_context(|| format!("score export plan is not valid JSON: {}", path.display()))
 }
 
 pub fn validate(plan_path: &Path, model_path: &Path) -> Result<PlanReport> {
-    let actual = load(plan_path)?;
-    let expected = build(model_path)?;
+    validate_with_inputs(
+        plan_path,
+        model_path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn validate_with_inputs(
+    plan_path: &Path,
+    model_path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<PlanReport> {
+    let actual = load_with_inputs(plan_path, inputs)?;
+    let expected = build_with_inputs(model_path, inputs)?;
     if actual != expected {
         bail!("score export plan does not match the current validated music model");
     }
-    report(plan_path, &actual)
+    report_with_inputs(plan_path, &actual, inputs)
 }
 
 fn report(path: &Path, plan: &ScoreExportPlan) -> Result<PlanReport> {
+    report_with_inputs(
+        path,
+        plan,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+fn report_with_inputs(
+    path: &Path,
+    plan: &ScoreExportPlan,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<PlanReport> {
     Ok(PlanReport {
         schema: SCHEMA.into(),
         plan: path.display().to_string(),
-        plan_sha256: sha256_path(path)?,
+        plan_sha256: inputs.sha256(path)?,
         plan_contract_sha256: canonical_sha256(plan)?,
         model_contract_sha256: plan.model_contract_sha256.clone(),
         artifacts: plan.artifacts.len(),
