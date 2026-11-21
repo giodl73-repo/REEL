@@ -41,7 +41,7 @@ flowchart LR
     audio --> sc
 ```
 
-Resolve a phrase against the existing word-evidence representation. The binding must select exactly one language/cue/performance/marker occurrence; repeated phrases without explicit disambiguation refuse. Do not infer timing from translated character counts, copy EN timing into ES or trust a receipt's own replacement hashes as the original oracle.
+Resolve a phrase with the existing `reel_assembly::scene_authoring::spoken_phrase_sample` operation against the existing word-evidence representation. The binding must select exactly one language/cue/performance/marker occurrence; repeated phrases without explicit disambiguation refuse. Do not infer timing from translated character counts, copy EN timing into ES or trust a receipt's own replacement hashes as the original oracle.
 
 The first visual profile should use an opaque original SVG with three simple states and two visible changes. No inferred alpha, generative asset work, new compositor, camera grammar or animation engine belongs in M10. Existing SVG frame listeners consume the validated source-clock event. If a later profile supports overlays, require an explicitly compatible alpha source and exact derivation evidence.
 
@@ -72,3 +72,26 @@ This is one assistant applying repository checklists, not independent review.
 - Rights/Provenance: preserve original scopes, held subjects and private identities; do not activate a voice provider, manufacture consent or publish by default.
 
 Open implementation decision: choose the narrow companion API that bridges a recompiled/independently checked spoken package to the existing source-clock/browser adapter, without allowing an arbitrary unverified `CompiledEdition` or self-reported receipt to establish lineage. Document that seam and its trust boundary before runtime work.
+### Candidate seam from source inspection
+
+The independent checker already recompiles `CompiledPlan` from the original
+`CheckRequest` and source inputs, then compares the exact supplied plan bytes
+before checking the PCM. Prefer exposing that internally computed plan through a
+read-only accessor on sealed `CheckedPackage`, rather than accepting a freely
+constructed compiled edition or decoding a receipt as an authority.
+
+A companion preparation operation can retain the original borrowed check request,
+source/candidate providers and exact visual pins. Preparation and reopening must
+run the independent checker, then derive events from its recomputed plan and the
+original pinned alignment. Existing `spoken_phrase_sample` resolves exact
+language-local phrases and repeated occurrences. Convert the resolved source
+entrance through the selected take placement, then emit the existing browser
+source-clock vocabulary bound to the checked edition WAV. Validate the resulting
+clock with the existing adapter before a worker receives it.
+
+The initial exact-PCM profile should require the full selected audio duration to
+fit a whole number of picture frames. Refuse unsupported duration geometry rather
+than silently pad/trim the checked audio. Distinct language editions may have
+different frame counts. Frame/sample rounding is performed once by the existing
+clock adapter. Concrete API, resource caps and executable test names remain a
+pre-implementation obligation; this candidate seam is not implemented evidence.
