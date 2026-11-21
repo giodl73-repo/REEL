@@ -6,6 +6,15 @@ for the main source's production areas and each linked contract for exact suppor
 Source availability, an installed runtime and adoption by a producing project
 are separate states.
 
+## Media format expansion plan
+
+The [format-expansion plan](media-format-expansion.md) records the proposed next
+direction: reusable semantic spoken-content modules assembled into technical,
+executive, language and audience editions. It distinguishes existing foundations
+from proposed applications, includes natural multi-speaker handoffs, and defines
+a bounded first audio-only milestone.
+This is a planning record, not an implemented programme runner or a recording.
+
 ## Workflow orchestration
 
 As observed on 2026-11-20, workflow development is active in a separate local
