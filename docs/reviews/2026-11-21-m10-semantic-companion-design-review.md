@@ -1,6 +1,6 @@
 # M10 semantic companion: pre-implementation review
 
-Status: design only; M09 PR #394 must qualify and merge before an M10 PR. This is one assistant applying `.roles` checklists, not independent review or creative approval. The [contract draft](../semantic-visual-companion-v1.md) records source inspection and the hand-derived EN/ES example.
+Status: design only, based on merged M09 PR #394 (`b95a6c2`). M10 runtime implementation and qualification remain open. This is one assistant applying `.roles` checklists, not independent review or creative approval. The [contract draft](../semantic-visual-companion-v1.md) records source inspection and the hand-derived EN/ES example.
 
 ## Scoped API decision
 

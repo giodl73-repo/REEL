@@ -1,9 +1,9 @@
 # M09 lesson: source audit, checklist and qualification record
 
-Status: implementation under qualification, on merged M08 `d48c427` / PR #391.
+Status: M09 engineering qualification passed; PR #394 merged as `b95a6c2`.
 The lesson and admitted-reader fixtures are public synthetic data; no production
-assets or musical approval have been produced. Full M09 qualification remains
-required. This is one assistant applying the repository's role
+assets or musical approval have been produced. Actual musical, listening,
+authority and device acceptance remain unperformed. This is one assistant applying the repository's role
 checklists; it is not independent review or authorization.
 
 The [lesson contract](../lesson-rehearsal-v1.md) fixes the hand-derived pickup,
@@ -82,7 +82,7 @@ Formatting, actionlint, diff whitespace and local links in changed Markdown pass
 The all-feature lesson rerun passed all five cases in 166.93 seconds, with no
 ignored tests in the explicit run. All five existing reading regressions passed
 in 140.76 seconds. In total, 82 distinct local tests passed; the five lesson cases
-were also repeated under all features. Required hosted checks remain pending.
+were also repeated under all features. Final hosted evidence is recorded below.
 No native asset custody or project adoption
 is claimed by the retained test byte provider.
 
@@ -119,3 +119,24 @@ Existing reading qualification also passed (Linux 75.90s, Windows 64.36s).
 The separate assembly build failed at the old complete-package cap. The final
 head containing the documented 10 MiB allowance still requires a fresh complete
 hosted cycle and assembly/source-replay qualification before merge.
+
+## Final qualification and merge
+
+[PR #394](https://github.com/giodl73-repo/REEL/pull/394) merged as
+`b95a6c226dfc4f40882fcc918066c1d36dda7892`. Its tree was verified identical to
+final tested head `550dffe178450cb8d7d23bd08b7e63641aa9afad`, on current base
+`298fea5ae6ef44cc3d97b17ffcd33413526ad6a2`.
+
+Final [Rust/FFmpeg CI 44947459345](https://github.com/giodl73-repo/REEL/actions/runs/44947459345)
+passed in 23m34s. The explicit five-case lesson suites passed with zero ignored
+cases on Linux (54.55s, job 136977957572) and Windows (54.36s, job 136977957634).
+All required Rust/FFmpeg gates and existing native/media lanes passed.
+[Assembly qualification 44947459480](https://github.com/giodl73-repo/REEL/actions/runs/44947459480)
+passed in 5m52s, including browser delivery, independent source rebuilding outside
+Git and transferred-artifact verification. Its browser assertion now pins the
+10 MiB complete-source allowance and unchanged 512 KiB runtime cap.
+
+This final record supersedes the earlier pending qualification checkpoints.
+Actual musical/linguistic review, listening, authority, device acceptance and
+project adoption remain separate and unperformed. No cache/voice/project-media
+operation or public media release was performed for this work.

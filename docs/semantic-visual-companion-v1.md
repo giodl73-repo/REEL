@@ -1,6 +1,9 @@
 # Semantic visual companion: M10 contract draft
 
-**Status:** source audit and test design only. M09 PR [#394](https://github.com/giodl73-repo/REEL/pull/394) is under hosted qualification. No M10 implementation, picture render, speech recording or human review is claimed here.
+**Status:** source audit and test design only, based on merged M09 [#394](https://github.com/giodl73-repo/REEL/pull/394), `b95a6c2`. No M10 implementation, picture render, speech recording or human review is claimed here.
+
+The [role/test review](reviews/2026-11-21-m10-semantic-companion-design-review.md)
+maps proposed bounds and executable expectations to C01–C07.
 
 A companion connects the same authored event intent to language-specific measured phrases, then to an existing SVG/browser composition. An audio edition remains useful and independently producible when no companion is requested.
 
@@ -31,6 +34,8 @@ This is a hand-derived **test-design oracle**, not measured speech. At 48 kHz an
 
 ```mermaid
 flowchart LR
+    accTitle: Independent language clocks drive shared visual intent
+    accDescr: The same two authored events resolve through exact English and Spanish phrase bindings into different sample and frame positions. Existing checked audio and text access remain independent of the visual companion.
     intent["Authored events<br/>follow-rhythm · begin-again"] --> en["English phrase bindings<br/>exact selected take + alignment"]
     intent --> es["Spanish phrase bindings<br/>its own take + alignment"]
     en --> ec["Checked EN programme clock<br/>sample anchors → frame 24 / 48"]
