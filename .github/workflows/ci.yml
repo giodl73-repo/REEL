@@ -150,6 +150,10 @@ jobs:
       - name: Run ordinary test shard
         if: matrix.lane == 'core'
         run: node .github/scripts/run-test-shard.cjs ${{ matrix.shard }}
+      - name: Qualify narrated reading and checked mixed-audio bindings
+        if: matrix.lane == 'core' && matrix.shard == 2
+        run: |
+          cargo test --locked --all-features --test spoken_programme_media reading:: -- --ignored --test-threads=1
       - name: Verify exact native audio recovery without picture inputs
         if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh

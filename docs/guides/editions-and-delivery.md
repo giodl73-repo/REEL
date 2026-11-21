@@ -37,6 +37,21 @@ Clean and captioned variants are separate outputs when requested. A songbook,
 manuscript or bilingual collection uses its own print contract and supported
 source formats; media registration alone does not create an edition.
 
+## Reading follows the wording and its own audio clock
+
+A narrated reading can connect the same opening, detail and closing chapters
+across original parallel text, audio and print. In the engineering example,
+English ends at 10.6 seconds and Spanish at 12.3 seconds. Both point to print
+chapter pages 2–4 after a separate cover; print pagination does not stretch or
+shorten the audio. Each cue names its exact source byte span, and every chapter
+keeps its actual sample interval.
+
+Changing the Spanish detail creates new source/audio bindings. Keep the earlier
+reading package with its original retained providers so it can still be checked.
+Authored reading text stays separate from word-recognition evidence and listening
+review. See the [illustrated reading contract](../narrated-reading-v1.md) for the
+bindings, limits and current engineering qualification status.
+
 ## Delivery is another relationship
 
 Rendering a movie, selecting it for release, copying it to a destination and
@@ -52,6 +67,7 @@ checkpoint rather than the target's perpetual current state.
 | Build edition-matched episode captions | [Episode captions](../episode-captions-v1.md) |
 | Check readability and picture geometry | [Accessibility](../caption-accessibility-v0.2.8.md), [caption-safe layout](../caption-safe-picture-layout-v0.2.48.md), [speaker presentation](../speaker-caption-presentation-v0.2.9.md) |
 | Assemble supported PDFs | [Native print collections](../native-print-collections.md) |
+| Bind authored wording, audio chapters and print pages | [Narrated reading editions](../narrated-reading-v1.md) |
 | Export an editorial interchange | [OpenTimelineIO](../otio-export-v0.2.40.md) |
 | Track selected revisions and target evidence | [Delivery use case](../use-cases.md#track-a-delivery-over-time), [history host](../tig-history.md), [delivery observation](../tig-delivery-observation.md) |
 | Recheck retained movie/source correspondence | [Retained delivery checker](../tig-retained-delivery-check.md) |
