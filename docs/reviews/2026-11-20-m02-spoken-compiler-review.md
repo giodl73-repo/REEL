@@ -1,7 +1,8 @@
 # M02 spoken compiler: checklist review
 
-**Status:** local merged-base review on M01 `f473431`, after PR #379 passed its
-required full hosted qualification and merged. M02 hosted checks remain pending.
+**Status:** local merged-base review on `13e70df`, including M01 (#379) and
+CI optimization (#369), after both passed required hosted checks and merged.
+M02 hosted checks remain pending.
 **Method:** one assistant applying Editor, Sound, Vocal Adaptation, Rights and
 Story checklists from [.roles](../../.roles/ROLE.md), plus Platform/Audience for
 the private-plan/portable-output boundary. No independent panel, audio audition,
