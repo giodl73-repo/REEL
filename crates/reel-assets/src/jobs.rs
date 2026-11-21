@@ -18,6 +18,7 @@ mod adapters;
 mod salvage;
 pub use salvage::{Salvage, salvage_admitted};
 mod workspace_snapshot;
+pub use workspace_snapshot::{WorkspaceDirectory, open_workspace_directory};
 pub use workspace_snapshot::{WorkspaceEntry, WorkspaceSnapshot, snapshot_owned_workspace};
 /// Explicit trusted-job deadlines remain finite; legacy requests default to one hour.
 pub const MAX_STEP_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;

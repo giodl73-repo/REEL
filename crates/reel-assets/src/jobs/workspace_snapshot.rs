@@ -25,6 +25,67 @@ pub struct WorkspaceSnapshot {
     pub root: WorkspaceEntry,
     pub entries: BTreeMap<String, WorkspaceEntry>,
 }
+
+/// Namespace/identity guard for one explicitly named existing scratch directory.
+/// No cache setup, workspace adoption, payload access or removal authority.
+pub struct WorkspaceDirectory {
+    path: PathBuf,
+    identity: String,
+    _guards: Vec<File>,
+}
+impl WorkspaceDirectory {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+    pub fn identity(&self) -> &str {
+        &self.identity
+    }
+}
+pub fn open_workspace_directory(path: &Path) -> Result<WorkspaceDirectory> {
+    if !cfg!(windows) {
+        return Err("Workspace namespace guards require qualified Windows scope".into());
+    }
+    if !path.is_absolute()
+        || path.components().any(|c| {
+            matches!(
+                c,
+                std::path::Component::ParentDir | std::path::Component::CurDir
+            )
+        })
+    {
+        return Err("Explicit absolute ordinary workspace directory required".into());
+    }
+    let mut guards = Vec::new();
+    for directory in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let mut options = OpenOptions::new();
+        options.read(true);
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            // Attributes + backup/open-reparse. Permit child creation and hard
+            // linking, exclude ancestor rename/delete while the guard is held.
+            options
+                .access_mode(0x80)
+                .share_mode(3)
+                .custom_flags(0x0220_0000);
+        }
+        let file = options.open(directory)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_dir() || lifecycle::is_reparse(&metadata) {
+            return Err("Workspace reparse/foreign namespace refused".into());
+        }
+        guards.push(file);
+    }
+    let observed = entry(path)?;
+    if !observed.directory {
+        return Err("Workspace must be a directory".into());
+    }
+    Ok(WorkspaceDirectory {
+        path: path.canonicalize()?,
+        identity: observed.identity,
+        _guards: guards,
+    })
+}
 impl WorkspaceSnapshot {
     pub fn is_survivor_of(&self, original: &Self) -> bool {
         self.root.same_survivor(&original.root)

@@ -1,6 +1,12 @@
 # Film-first workflow landing plan
 
 Status: reviewed implementation plan, not a production-readiness declaration.
+Source landing: [W1 #386](https://github.com/giodl73-repo/REEL/pull/386),
+[W2 #388](https://github.com/giodl73-repo/REEL/pull/388), and
+[W3a SDK intake #389](https://github.com/giodl73-repo/REEL/pull/389) are merged.
+The native lifecycle slice adds protected manual work and retained close/recovery.
+W3a's producer execution and episode-scale gates remain open; no source merge
+adopts an actual project or production profile.
 The [role review](reviews/workflow-pr-plan-review.md) records findings and their
 disposition. Roles are author-applied checklists, not independent reviewers.
 
@@ -11,7 +17,7 @@ owned-profile adoption and rollback check passes.
 
 ## Pull request sequence
 
-These are planned changes, not opened implementation PRs. Each implementation PR
+This sequence defines acceptance beyond the source landings above. Each implementation PR
 must identify its dependencies, exact supported behavior, validation and limits.
 Extract changes from the integration branch onto current main; do not submit the
 entire integration branch or infer merge readiness from its aggregate test count.
