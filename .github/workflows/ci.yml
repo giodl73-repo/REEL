@@ -133,6 +133,11 @@ jobs:
         run: python -B tools/test_original_song_repair_provider.py
       - run: cargo clippy --all-targets --all-features -- -D warnings
         if: matrix.lane == 'core' && matrix.shard == 0
+      - name: Check workflow contracts and manual exchange
+        if: matrix.lane == 'core' && matrix.shard == 0
+        run: |
+          cargo clippy -p reel-publication -p reel-workflow --all-targets --locked -- -D warnings
+          cargo test -p reel-publication -p reel-workflow --all-targets --locked
       - name: Run ordinary test shard
         if: matrix.lane == 'core'
         run: node .github/scripts/run-test-shard.cjs ${{ matrix.shard }}
