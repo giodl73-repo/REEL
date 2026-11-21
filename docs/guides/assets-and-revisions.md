@@ -11,6 +11,8 @@ compile/check a new result. A project chooses its admitted runtimes and stores.
 
 ```mermaid
 flowchart LR
+    accTitle: Stable cel identity with earlier and current frozen jobs
+    accDescr: Cel B retains a logical identity across selected versions. Earlier and new scene jobs consume their own picture version and the unchanged voice take, producing separately retained movie identities.
     id["Cel B: stable logical ID"] --> old["Earlier selected bytes"]
     id --> next["New selected bytes"]
     old --> frozen["Earlier frozen scene job"]

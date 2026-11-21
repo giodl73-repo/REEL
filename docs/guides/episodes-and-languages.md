@@ -8,6 +8,8 @@ and cels have independent identities; a new cue does not require a new cel.
 
 ```mermaid
 flowchart TD
+    accTitle: An episode with independent English and Spanish clocks
+    accDescr: Ordered scenes share cue and event intent and selected cels, while each language uses its own text, take and word timing to produce its scene edition.
     episode["Episode"] --> opening["Opening / titles"]
     episode --> scenes["Ordered scenes"]
     episode --> credits["Credits"]
@@ -33,8 +35,9 @@ illustrative, not measurements from recordings:
 | Door opens; enter doorway cel | "the door opened" / ~2.7 s | "se abrió la puerta" / ~3.2 s |
 | Grandmother smiles; enter close-up | "She smiled" / ~6.3 s | "Ella sonrió" / ~7.0 s |
 
-The author names the event and each language's trigger phrase. Word alignment
-against the exact selected take supplies its actual entrance. Repeated phrases
+The author names the event, its intended picture/sound changes and each
+language's trigger phrase. Word alignment against the exact selected take
+supplies its actual entrance. Repeated phrases
 need an explicit occurrence. The compiler turns those measured samples into
 picture spans; it does not infer a creative cut from translated word counts.
 
@@ -46,7 +49,8 @@ picture spans; it does not infer a creative cut from translated word counts.
 4. Assemble checked scenes with the declared opening, presentations and credits.
 5. Check the complete edition, then review and select it in the producing project.
 
-Changing the Spanish performance requires new Spanish timing. The shared cel
+Changing the Spanish performance requires checking its alignment and consuming
+timing against that exact selected take. The shared cel
 can remain selected for both editions. Changing a cel used by both languages
 affects both consuming scenes. An opening change affects the episode composition
 without automatically changing every narrative scene.

@@ -72,3 +72,6 @@ guides by topic. Existing contract filenames and links remain stable.
 for setup and the referenced contracts for exact behavior. Generated media,
 machine profiles, cache inventories and operational receipts stay in the
 producing project's asset system, not in these public docs.
+
+The [illustrated documentation role review](reviews/2026-11-20-illustrated-documentation-role-review.md)
+records the README/guide review, technical claim corrections and review boundaries.
