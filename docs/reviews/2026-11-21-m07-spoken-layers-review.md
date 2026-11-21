@@ -72,7 +72,12 @@ Commands and exact numeric limits are in the
 [layer contract](../spoken-edition-layers-v1.md); the additional cap check was
 `cargo test --locked --lib media_runtime::tests::bounded_observation_keeps_declared_byte_cap -j2 -- --exact`.
 Local documentation links and actionlint 1.7.12 passed.
-Required hosted qualification remains pending.
+Required hosted qualification passed on exact head `6ee8262` in
+[CI 44933453094](https://github.com/giodl73-repo/REEL/actions/runs/44933453094),
+21 minutes 7 seconds total. Both hosted media lanes executed the four new real
+runtime cases. [PR #387](https://github.com/giodl73-repo/REEL/pull/387) merged as
+`1db7679`; the merged tree matches the qualified head exactly. This closes M07's
+engineering gate without closing the separate decisions below.
 
 Listening for intelligibility and naturalness, actual voice/text/music rights,
 creative selection, publication, native retained mix packaging and producing

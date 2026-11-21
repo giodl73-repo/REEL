@@ -141,6 +141,7 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 - [Native album video and bilingual reading pages](NATIVE-ALBUM-VIDEO.md)
 - [Native decoded media comparison](native-media-parity.md)
 - [Private native print collections](native-print-collections.md)
+- [Narrated reading editions and chapter navigation](narrated-reading-v1.md)
 - [Native short editions](NATIVE-SONG-EDITION.md)
 - [Original-song masked materialization](original-song-masked-repair.md)
 - [Bounded provider execution from original song evidence](original-song-repair-provider.md)

@@ -152,7 +152,7 @@ fn read(path: &Path, max: u64) -> Result<Vec<u8>> {
     ensure!(raw.len() as u64 <= max, "input grew beyond bound");
     Ok(raw)
 }
-fn capture(pin: &Pin, base: &Path) -> Result<Vec<u8>> {
+fn validate_pin(pin: &Pin) -> Result<()> {
     ensure!(
         pin.sha256.len() == 64
             && pin
@@ -165,6 +165,10 @@ fn capture(pin: &Pin, base: &Path) -> Result<Vec<u8>> {
         pin.bytes > 0 && pin.bytes <= 32 * 1024 * 1024,
         "invalid source byte bound"
     );
+    Ok(())
+}
+fn capture(pin: &Pin, base: &Path) -> Result<Vec<u8>> {
+    validate_pin(pin)?;
     let path = if pin.path.is_absolute() {
         pin.path.clone()
     } else {
@@ -193,7 +197,19 @@ fn capture(pin: &Pin, base: &Path) -> Result<Vec<u8>> {
 }
 fn prepare(path: &Path) -> Result<Packet> {
     let raw = read(path, 65_536)?;
-    let request: Request = serde_json::from_slice(&raw).context("invalid print request")?;
+    let base = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."))
+        .canonicalize()?;
+    prepare_with_inputs(&raw, |pin| capture(pin, &base))
+}
+fn prepare_with_inputs(
+    raw: &[u8],
+    mut input: impl FnMut(&Pin) -> Result<Vec<u8>>,
+) -> Result<Packet> {
+    ensure!(raw.len() <= 65_536, "print request exceeds bound");
+    let request: Request = serde_json::from_slice(raw).context("invalid print request")?;
     ensure!(
         request.schema == SCHEMA && request.private_only,
         "explicit private print request required"
@@ -222,11 +238,6 @@ fn prepare(path: &Path) -> Result<Packet> {
             "duplicate or invalid entry id"
         );
     }
-    let base = path
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."))
-        .canonicalize()?;
     let pins: Vec<_> = request
         .fonts
         .iter()
@@ -242,7 +253,19 @@ fn prepare(path: &Path) -> Result<Packet> {
     // Read each declared source once. Rendering never reopens a mutable path.
     let captured: Vec<_> = pins
         .iter()
-        .map(|p| capture(p, &base))
+        .map(|p| {
+            validate_pin(p)?;
+            let raw = input(p)?;
+            ensure!(
+                raw.len() as u64 == p.bytes,
+                "captured source byte count differs"
+            );
+            ensure!(
+                object(&raw).sha256 == p.sha256,
+                "captured source hash differs"
+            );
+            Ok(raw)
+        })
         .collect::<Result<_>>()?;
     let mut fonts = pages::Fonts::new(&request.body_font, &captured[..request.fonts.len()])?;
     let mut produced = pages::text(
@@ -335,7 +358,7 @@ fn prepare(path: &Path) -> Result<Packet> {
     );
     let receipt = Receipt {
         schema: "reel.print-collection-receipt.v1".into(),
-        request: object(&raw),
+        request: object(raw),
         inputs: pins.into_iter().cloned().collect(),
         outputs: files
             .iter()
@@ -357,7 +380,7 @@ fn prepare(path: &Path) -> Result<Packet> {
     files.insert("receipt.json".into(), receipt_raw);
     Ok(Packet { receipt, files })
 }
-pub fn render(request: &Path, output: &Path) -> Result<Receipt> {
+fn validate_output(output: &Path) -> Result<()> {
     ensure!(
         output.is_absolute()
             && !output
@@ -380,7 +403,9 @@ pub fn render(request: &Path, output: &Path) -> Result<Receipt> {
             "ordinary output ancestors required"
         );
     }
-    let packet = prepare(request)?;
+    Ok(())
+}
+fn write_packet(packet: Packet, output: &Path) -> Result<Receipt> {
     // Atomic name reservation refuses concurrent writers even for an empty dir.
     // IO failure leaves only owned incomplete staging; no receipt is published.
     fs::create_dir(output)?;
@@ -401,6 +426,10 @@ pub fn render(request: &Path, output: &Path) -> Result<Receipt> {
         .open(output.join("receipt.json"))?
         .write_all(&packet.files["receipt.json"])?;
     Ok(packet.receipt)
+}
+pub fn render(request: &Path, output: &Path) -> Result<Receipt> {
+    validate_output(output)?;
+    write_packet(prepare(request)?, output)
 }
 pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
     let packet = prepare(request)?;
@@ -427,4 +456,47 @@ pub fn check(request: &Path, output: &Path) -> Result<Receipt> {
 /// Exact packet sizing without reserving an output directory or writing files.
 pub fn plan(request: &Path) -> Result<Receipt> {
     Ok(prepare(request)?.receipt)
+}
+
+/// Exact original request and consumer-owned bytes; no filesystem fallback.
+/// Every returned source is checked again against its declared complete pin.
+pub fn plan_with_inputs(
+    request: &[u8],
+    input: impl FnMut(&Pin) -> Result<Vec<u8>>,
+) -> Result<Receipt> {
+    Ok(prepare_with_inputs(request, input)?.receipt)
+}
+
+pub fn render_with_inputs(
+    request: &[u8],
+    input: impl FnMut(&Pin) -> Result<Vec<u8>>,
+    output: &Path,
+) -> Result<Receipt> {
+    validate_output(output)?;
+    write_packet(prepare_with_inputs(request, input)?, output)
+}
+
+/// Check a declared immutable packet namespace. This does not census an asset
+/// store or claim that an unrelated filesystem directory contains no other files.
+/// The legacy filesystem check still rejects extra physical directory entries.
+pub fn check_with_inputs(
+    request: &[u8],
+    input: impl FnMut(&Pin) -> Result<Vec<u8>>,
+    outputs: &BTreeMap<String, Object>,
+    mut output: impl FnMut(&str, &Object) -> Result<Vec<u8>>,
+) -> Result<Receipt> {
+    let packet = prepare_with_inputs(request, input)?;
+    ensure!(
+        outputs.keys().eq(packet.files.keys()),
+        "print packet namespace differs"
+    );
+    for (name, expected) in &packet.files {
+        let declared = &outputs[name];
+        ensure!(*declared == object(expected), "print packet object differs");
+        ensure!(
+            output(name, declared)? == *expected,
+            "print packet bytes differ"
+        );
+    }
+    Ok(packet.receipt)
 }
