@@ -14,7 +14,7 @@ impl Drop for Owned {
         let _ = self.0.wait();
     }
 }
-pub(super) fn run<T: Send + 'static>(
+pub(crate) fn run<T: Send + 'static>(
     command: &mut Command,
     deadline: Instant,
     consume: impl FnOnce(ChildStdout) -> Result<T> + Send + 'static,

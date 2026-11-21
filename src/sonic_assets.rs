@@ -277,6 +277,19 @@ pub fn resolve(
     catalog: &Loaded<Catalog>,
     request: &Loaded<Request>,
 ) -> Result<(Resolution, ResolutionReceipt)> {
+    resolve_with_paths(catalog, request, |variant| {
+        resolve_locator(&catalog.path, &variant.locator)
+    })
+}
+
+/// Explicit consumer-owned paths; no catalog-relative or ambient fallback.
+/// The caller keeps any native input guards alive through this synchronous call.
+/// Existing authority, complete-byte and measured-geometry checks still apply.
+pub fn resolve_with_paths(
+    catalog: &Loaded<Catalog>,
+    request: &Loaded<Request>,
+    mut path: impl FnMut(&Variant) -> Result<PathBuf>,
+) -> Result<(Resolution, ResolutionReceipt)> {
     validate_catalog(catalog)?;
     validate_request(request)?;
     let assets = index_assets(&catalog.value)?;
@@ -323,7 +336,7 @@ pub fn resolve(
         };
         validate_authority(asset, &request.value, mode)?;
         validate_binding(binding, variant)?;
-        let resolved_path = resolve_locator(&catalog.path, &variant.locator)?;
+        let resolved_path = path(variant)?;
         let bytes = fs::metadata(&resolved_path)?.len();
         if bytes != variant.bytes || production::sha256_path(&resolved_path)? != variant.sha256 {
             bail!(
