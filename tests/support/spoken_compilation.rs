@@ -1,7 +1,7 @@
 use std::{collections::BTreeMap, cell::RefCell, path::{Path, PathBuf}};
 use anyhow::{Context, Result};
 use reel::{scene_delivery::{FileRef, InputFiles}, spoken_programme::{self, Document, PerformanceKind,
-    compiler::{self, CompiledPlan, CompilerIdentity}}};
+    compiler::{self, CompiledPlan, CompilerIdentity, CompilationProfile}}};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
@@ -83,7 +83,7 @@ impl Fixture {
     }
 
     fn compile(&self) -> Result<CompiledPlan> {
-        compiler::compile(&self.document, &self.metadata, &self.runtime)
+        compiler::compile(&self.document, &self.metadata, &self.runtime, CompilationProfile::Engineering)
     }
 
     fn recipes(&self) -> BTreeMap<String,String> {
@@ -129,6 +129,29 @@ fn lexical_metadata_is_not_audio_proof_and_keeps_language_local_positions() {
         assert!(e.word_evidence.iter().all(|w| w.end_sample <= e.duration_samples));
         assert!(e.cues.iter().all(|c| c.observed_text.is_some()));
     }
+    assert!(!plan.media_verified && !plan.authority_verified);
+}
+
+#[test]
+fn explicit_spoken_profile_supports_reference_brief_without_retiming() {
+    let mut f = Fixture::lexical();
+    let p = &mut f.document.performances[1];
+    p.duration_samples = 576000; p.source.sha256 = hash(b"long-recording-clock-test");
+    p.protected[0].end_sample = 571200;
+    p.protected[1].start_sample = 571200; p.protected[1].end_sample = 576000;
+    let mut evidence = f.evidence(1);
+    evidence["source"] = serde_json::to_value(&f.document.performances[1].source).unwrap();
+    evidence["duration_samples"] = json!(576000);
+    evidence["observation"]["timing"]["cue_end_sample"] = json!(576000);
+    evidence["observation"]["timing"]["selected_take_sha256"] = json!(f.document.performances[1].source.sha256);
+    f.replace(1,&evidence);
+    f.document.editions[1].selections[1].takes[0].end_sample = 576000;
+    assert!(f.compile().unwrap_err().to_string().contains("duration exceeds"));
+    let plan = compiler::compile(&f.document,&f.metadata,&f.runtime,CompilationProfile::Spoken).unwrap();
+    let technical = plan.editions.iter().find(|e| e.recipe.edition_id == "en-technical").unwrap();
+    assert_eq!(technical.duration_samples,892800);
+    assert_eq!(technical.cues[1].source_end_sample,576000);
+    assert!(matches!(technical.recipe.compilation_profile,CompilationProfile::Spoken));
     assert!(!plan.media_verified && !plan.authority_verified);
 }
 
@@ -228,6 +251,21 @@ fn spanish_detail_change_preserves_other_consumed_recipes() {
     for (id,recipe) in before { assert_eq!(recipe == after[&id], id != "es-technical", "{id}"); }
 }
 
+#[test]
+fn additional_edition_scope_does_not_invalidate_existing_recipes() {
+    let mut f = Fixture::engineering();
+    let before = f.recipes();
+    let mut additional = f.document.editions[0].clone();
+    additional.id = "en-additional".into(); additional.audience = "board".into();
+    for p in f.document.performances.iter_mut().filter(|p| p.language == "en") {
+        p.scope.edition_ids.push(additional.id.clone());
+    }
+    f.document.editions.push(additional);
+    let after = f.recipes();
+    assert_eq!(after.len(),5);
+    for (id,recipe) in before { assert_eq!(recipe,after[&id],"{id}"); }
+}
+
 struct ControlsOnly { bytes:BTreeMap<PathBuf,Vec<u8>>, reads:RefCell<Vec<PathBuf>> }
 impl InputFiles for ControlsOnly {
     fn verified_path(&self, _: &FileRef) -> Result<PathBuf> { anyhow::bail!("source media must not open") }
@@ -242,7 +280,7 @@ fn metadata_budgets_refuse_before_input_reads_or_plan_allocation() {
     let mut f = Fixture::engineering();
     let provider = ControlsOnly { bytes:BTreeMap::new(), reads:RefCell::new(vec![]) };
     f.document.performances[0].alignment.bytes = spoken_programme::MAX_DECLARATION_BYTES as u64+1;
-    let error = compiler::compile_with_inputs(&f.document,&provider,&f.runtime).unwrap_err().to_string();
+    let error = compiler::compile_with_inputs(&f.document,&provider,&f.runtime,CompilationProfile::Engineering).unwrap_err().to_string();
     assert!(error.contains("budget")); assert!(provider.reads.borrow().is_empty());
     let mut f = Fixture::engineering();
     f.metadata.get_mut("en-opening").unwrap().resize(spoken_programme::MAX_DECLARATION_BYTES+1,b' ');
@@ -257,7 +295,7 @@ fn input_port_reads_only_selected_metadata_without_media() {
     f.document.performances.push(unused);
     let provider = ControlsOnly { bytes:f.document.performances.iter().filter_map(|p|
         f.metadata.get(&p.id).map(|bytes| (p.alignment.path.clone(),bytes.clone()))).collect(), reads:RefCell::new(vec![]) };
-    assert!(compiler::compile_with_inputs(&f.document,&provider,&f.runtime).is_ok());
+    assert!(compiler::compile_with_inputs(&f.document,&provider,&f.runtime,CompilationProfile::Engineering).is_ok());
     assert_eq!(provider.reads.borrow().len(),6);
     assert!(!provider.reads.borrow().iter().any(|p| p == Path::new("never-read.json")));
 }

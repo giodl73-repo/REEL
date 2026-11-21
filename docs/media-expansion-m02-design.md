@@ -90,8 +90,13 @@ Recheck protected intervals in selected source coordinates before placement.
 
 Produce per-edition ordered cue placements, module chapters, marker placements,
 gaps/overlaps, total sample count and exact consumed-source identities. Compile
-the four independent goldens from M00. Reject output beyond the 720,000-sample
-fixture profile and arithmetic overflow before creating a plan destination.
+the four independent goldens from M00. Reject output beyond the explicitly chosen
+profile and arithmetic overflow before creating a plan destination. The default
+engineering profile caps output at 720,000 samples; the explicit spoken profile
+allows 1,440,000 to cover M00's 30-second spoken brief. It is not inferred from
+source kind/language. The profile is consumed in recipe identity; M03 enforces
+16/32 MiB decoded-input budgets respectively, plus 64 MiB output, 128 MiB workspace
+and a 30-second operation timeout. Individual M01 takes remain at most 15 seconds.
 Text positions derive from actual selected intervals; no English timing fallback.
 Keep exact observed text on each cue separately from positioned `word_evidence`.
 Native recognizer spelling/punctuation is evidence, never an automatic transcript
@@ -105,10 +110,16 @@ aggregate source-document identity may be retained separately for provenance;
 changing it must not automatically invalidate an unchanged consumed recipe.
 Use canonical typed serialization and explicit runtime/contract identity, not
 filesystem order, physical machine paths, wall-clock timestamps or floating point.
-Canonicalize set-valued dependency/required-module/scope lists before recipe
-hashing; preserve authored cue, selection and join order. Reordering global
+Canonicalize set-valued dependency/required-module lists before recipe hashing;
+project reuse scope to the actual consuming edition, retaining its evidence pin
+and speaker/language/operation kind. Other permitted edition IDs are not consumed.
+Preserve authored cue, selection and join order. Reordering global
 declaration registries or set-valued lists must not change an edition's consumed
 recipe. Changing a selected script, take, join or authority-evidence pin must.
+Adding an edition and extending the same scoped allowlist must leave existing
+recipes unchanged when their source/evidence/requirements remain exact. The
+recipe's performance is an explicit consumed projection, not the full original
+declaration record; the aggregate declaration identity is retained separately.
 
 ## Runtime and report boundaries
 

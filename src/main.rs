@@ -657,8 +657,8 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
-        Command::SpokenEditionCompile { edition, output } => {
-            let report = reel::spoken_programme::compiler::compile_file(&edition, &output)?;
+        Command::SpokenEditionCompile { edition, output, profile } => {
+            let report = reel::spoken_programme::compiler::compile_file(&edition, &output, profile)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::SpokenEditionValidate { edition } => {
@@ -2929,6 +2929,8 @@ enum Command {
         edition: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
+        profile: reel::spoken_programme::compiler::CompilationProfile,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {

@@ -12,7 +12,26 @@ pub const ALIGNMENT_SCHEMA: &str = "reel.spoken-alignment.v1";
 pub const PLAN_SCHEMA: &str = "reel.spoken-edition-plan.v1";
 const MAX_METADATA: u64 = 4 * 1024 * 1024;
 const MAX_PLAN: usize = 16 * 1024 * 1024;
-const MAX_SAMPLES: u64 = 720_000;
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, clap::ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum CompilationProfile {
+    Engineering,
+    Spoken,
+}
+
+impl CompilationProfile {
+    pub fn max_samples(self) -> u64 {
+        match self { Self::Engineering => 720_000, Self::Spoken => 1_440_000 }
+    }
+
+    pub fn max_input_pcm_bytes(self) -> u64 {
+        match self { Self::Engineering => 16 * 1024 * 1024, Self::Spoken => 32 * 1024 * 1024 }
+    }
+
+    pub fn max_output_bytes(self) -> u64 { 64 * 1024 * 1024 }
+    pub fn max_workspace_bytes(self) -> u64 { 128 * 1024 * 1024 }
+    pub fn timeout_seconds(self) -> u64 { 30 }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -75,6 +94,7 @@ pub struct ConsumedRecipe {
     pub required_modules: Vec<String>,
     pub sample_rate: u32,
     pub output_profile: &'static str,
+    pub compilation_profile: CompilationProfile,
     pub cues: Vec<ConsumedCue>,
     pub joins: Vec<Join>,
 }
@@ -231,7 +251,7 @@ fn check_alignment(p: &Performance, script: &Script, evidence: &AlignmentEvidenc
 }
 
 /// Verify exact selected control bytes, then compile. This function has no IO ports.
-pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compiler: &CompilerIdentity) -> Result<CompiledPlan> {
+pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compiler: &CompilerIdentity, profile: CompilationProfile) -> Result<CompiledPlan> {
     validate(document)?;
     let declaration_bytes = serde_json::to_vec(document)?;
     require(declaration_bytes.len() <= MAX_DECLARATION_BYTES, "spoken declaration exceeds budget")?;
@@ -281,7 +301,7 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
                 }
                 let start = cursor;
                 cursor = start.checked_add(take.end_sample - take.start_sample).context("spoken placement arithmetic overflow")?;
-                require(cursor <= MAX_SAMPLES, "spoken edition duration exceeds profile")?;
+                require(cursor <= profile.max_samples(), "spoken edition duration exceeds profile")?;
                 chapter_start.get_or_insert(start);
                 let shift = |a: u64, b: u64| -> Result<(u64,u64)> {
                     require(a >= take.start_sample && b <= take.end_sample && a < b,
@@ -317,7 +337,8 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
                 spend_derived(&mut derived_bytes, &placed)?;
                 cues.push(placed);
                 let mut requirements = module.requires.clone(); requirements.sort();
-                let mut performance = p.clone(); performance.scope.edition_ids.sort();
+                // Consume this edition's authorization predicate, not other consumers' IDs.
+                let mut performance = p.clone(); performance.scope.edition_ids = vec![edition.id.clone()];
                 let script = cue.scripts.iter().find(|s| s.id == p.script_id).context("spoken selected script missing")?;
                 consumed.push(ConsumedCue { module_id:module.id.clone(), required_modules:requirements,
                     cue_id:cue.id.clone(), speaker_id:cue.speaker_id.clone(), script:script.clone(),
@@ -330,6 +351,7 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
             document_id:document.id.clone(),
             edition_id:edition.id.clone(), language:edition.language.clone(), audience:edition.audience.clone(),
             required_modules:requirements, sample_rate:document.sample_rate, output_profile:"wav-pcm24-stereo-48000",
+            compilation_profile:profile,
             cues:consumed, joins:edition.joins.clone() };
         Ok(CompiledEdition { recipe_sha256:canonical_hash(&recipe)?, recipe, duration_samples:cursor,
             cues, chapters, word_evidence:words, markers })
@@ -343,7 +365,7 @@ pub fn compile(document: &Document, metadata: &BTreeMap<String, Vec<u8>>, compil
 }
 
 /// Read only named alignment metadata; unrelated provider objects are never enumerated.
-pub fn compile_with_inputs(document: &Document, inputs: &(impl InputFiles + ?Sized), compiler: &CompilerIdentity) -> Result<CompiledPlan> {
+pub fn compile_with_inputs(document: &Document, inputs: &(impl InputFiles + ?Sized), compiler: &CompilerIdentity, profile: CompilationProfile) -> Result<CompiledPlan> {
     validate(document)?;
     let selected = selected_ids(document);
     let mut declared_bytes = 0u64;
@@ -359,10 +381,10 @@ pub fn compile_with_inputs(document: &Document, inputs: &(impl InputFiles + ?Siz
         require(bytes.len() <= MAX_DECLARATION_BYTES, "spoken alignment metadata exceeds budget")?;
         metadata.insert(p.id.clone(), bytes);
     }
-    compile(document, &metadata, compiler)
+    compile(document, &metadata, compiler, profile)
 }
 
-pub fn compile_file(declaration: &Path, output: &Path) -> Result<CompilationSummary> {
+pub fn compile_file(declaration: &Path, output: &Path, profile: CompilationProfile) -> Result<CompilationSummary> {
     let document = load(declaration)?;
     let executable = std::env::current_exe().map_err(|_| anyhow::anyhow!("spoken compiler executable unavailable"))?;
     let compiler = CompilerIdentity {
@@ -370,7 +392,7 @@ pub fn compile_file(declaration: &Path, output: &Path) -> Result<CompilationSumm
         bytes:std::fs::metadata(&executable).map_err(|_| anyhow::anyhow!("spoken compiler size unavailable"))?.len(),
     };
     let root = declaration.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    let plan = compile_with_inputs(&document, root, &compiler)?;
+    let plan = compile_with_inputs(&document, root, &compiler, profile)?;
     let bytes = serde_json::to_vec_pretty(&plan)?;
     require(bytes.len() <= MAX_PLAN, "spoken compiled plan exceeds budget")?;
     let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));

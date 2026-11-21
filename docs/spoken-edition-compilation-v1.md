@@ -5,6 +5,7 @@ remain unqualified until M01 merges, this branch rebases and the checks run.
 
 ```sh
 reel spoken-edition-compile PRIVATE_EDITION.json --output NEW_PRIVATE_PLAN.json
+reel spoken-edition-compile PRIVATE_EDITION.json --profile spoken --output NEW_PRIVATE_SPOKEN_PLAN.json
 ```
 
 The [declaration](spoken-edition-v1.md) selects modules, language/audience script
@@ -60,7 +61,10 @@ retain protected regions and every consuming word/marker interval. No stretching
 resampling, language fallback, picture clock or filename-derived ordering occurs.
 
 Unused script/performance variants and global registry ordering are excluded from
-an edition's consumed recipe. Set-valued requirements/scope IDs are canonicalized;
+an edition's consumed recipe. Set-valued requirements are canonicalized; scope is
+projected to the actual consumer while preserving its evidence and role/language.
+Expanding an allowlist for a new edition does not invalidate unchanged consumers.
+The recipe's performance is a consumed projection, not the original full record;
 authored cue/module/join order is preserved. Changing a Spanish detail performance
 therefore changes its consuming technical recipe, while the other three retain
 their identities under the same compiler. A changed compiler identity is a new
@@ -76,8 +80,15 @@ metadata map must match that selected key set exactly.
 
 Bounds are 256 KiB per declaration/envelope, 128 selected envelopes, 4 MiB total
 alignment metadata, 1,024 words/markers per envelope, 8 MiB derived position/text
-metadata, 16 MiB final plan and 720,000 samples per edition at 48,000 Hz. Core
-media input/output/scratch execution budgets still belong to M03. Invalid input
+metadata, 16 MiB final plan at 48,000 Hz. The explicit `engineering` profile
+(CLI default) caps editions at 720,000 samples/15 seconds; `spoken` allows
+1,440,000/30 seconds to cover the M00 spoken brief without retiming. Profile
+choice enters each consumed recipe and is never inferred from language or
+observation kind. Neither profile proves an editorial target duration is met.
+
+M03 must enforce the selected profile's decoded input budget (16 MiB engineering,
+32 MiB spoken), 64 MiB total output, 128 MiB workspace and 30-second operation
+timeout. Individual declared takes retain M01's 15-second bound. Invalid input
 or an exhausted control budget creates no final plan. Publication uses a new
 destination with no-clobber atomic staging; it never replaces an existing plan.
 
