@@ -134,6 +134,10 @@ impl Bundle {
             .ok_or("Missing native editor session schema")?
             .to_owned();
         let (html, script): (&[u8], &[u8]) = match schema.as_str() {
+            "reel.media-review-session.v1" => (
+                include_bytes!("../media_review.html"),
+                include_bytes!("../media_review.js"),
+            ),
             "reel.voice-audition-session.v1" => (
                 include_bytes!("../../../reel-voice-design/src/review.html"),
                 include_bytes!("../../../reel-voice-design/src/review.js"),
@@ -171,8 +175,9 @@ impl Bundle {
             }
         }
         match schema.as_str() {
-            "reel.voice-audition-session.v1" => {
-                let audios = session["audios"]
+            "reel.voice-audition-session.v1" | "reel.media-review-session.v1" => {
+                let generic = schema == "reel.media-review-session.v1";
+                let audios = session[if generic { "items" } else { "audios" }]
                     .as_array()
                     .ok_or("Missing audition roster")?;
                 if audios.len() > 64 {
@@ -198,9 +203,20 @@ impl Bundle {
                         .as_str()
                         .ok_or("Missing audition audio route")?;
                     let expected = audio["sha256"].as_str().ok_or("Missing audition hash")?;
-                    let extension = if name.ends_with(".mp3") {
+                    let extension = if generic && name.ends_with(".mp4") && audio["kind"] == "video"
+                    {
+                        ("mp4", "video/mp4")
+                    } else if generic && name.ends_with(".m4a") && audio["kind"] == "audio" {
+                        ("m4a", "audio/mp4")
+                    } else if generic && name.ends_with(".png") && audio["kind"] == "image" {
+                        ("png", "image/png")
+                    } else if generic && name.ends_with(".jpg") && audio["kind"] == "image" {
+                        ("jpg", "image/jpeg")
+                    } else if generic && name.ends_with(".jpeg") && audio["kind"] == "image" {
+                        ("jpeg", "image/jpeg")
+                    } else if name.ends_with(".mp3") && (!generic || audio["kind"] == "audio") {
                         ("mp3", "audio/mpeg")
-                    } else if name.ends_with(".wav") {
+                    } else if name.ends_with(".wav") && (!generic || audio["kind"] == "audio") {
                         ("wav", "audio/wav")
                     } else {
                         return Err("Unsupported audition audio".into());
@@ -848,6 +864,10 @@ mod tests {
     fn fixture(schema: &str) -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         let (html, js): (&[u8], &[u8]) = match schema {
+            "reel.media-review-session.v1" => (
+                include_bytes!("../media_review.html"),
+                include_bytes!("../media_review.js"),
+            ),
             "reel.voice-audition-session.v1" => (
                 include_bytes!("../../../reel-voice-design/src/review.html"),
                 include_bytes!("../../../reel-voice-design/src/review.js"),
@@ -1059,6 +1079,38 @@ mod tests {
         assert!(Bundle::open(d.path()).is_err());
         value["audios"].as_array_mut().unwrap().pop();
         value["audios"][0]["src"] = json!("media/../private.mp3");
+        save(&value);
+        assert!(Bundle::open(d.path()).is_err());
+    }
+    #[test]
+    fn generic_video_review_checks_kind_hash_range_and_duplicate_lengths() {
+        let d = fixture("reel.media-review-session.v1");
+        fs::create_dir(d.path().join("media")).unwrap();
+        let bytes = b"synthetic video";
+        let hash = format!("{:x}", Sha256::digest(bytes));
+        let route = format!("media/{hash}.mp4");
+        fs::write(d.path().join(&route), bytes).unwrap();
+        let mut value = json!({"schema":"reel.media-review-session.v1","items":[{"kind":"video","src":route,"sha256":hash,"bytes":bytes.len()}]});
+        let save = |value: &Value| {
+            fs::write(
+                d.path().join("session.json"),
+                serde_json::to_vec(value).unwrap(),
+            )
+            .unwrap()
+        };
+        save(&value);
+        let bundle = Bundle::open(d.path()).unwrap();
+        assert_eq!(bundle.assets[&route].mime, "video/mp4");
+        assert!(
+            exchange(&bundle, "GET", &route, "Range: bytes=1-3\r\n").starts_with(b"HTTP/1.1 206")
+        );
+        value["items"][0]["kind"] = json!("image");
+        save(&value);
+        assert!(Bundle::open(d.path()).is_err());
+        value["items"][0]["kind"] = json!("video");
+        let mut duplicate = value["items"][0].clone();
+        duplicate["bytes"] = json!(1);
+        value["items"].as_array_mut().unwrap().push(duplicate);
         save(&value);
         assert!(Bundle::open(d.path()).is_err());
     }
