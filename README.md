@@ -32,6 +32,7 @@ decisions; REEL supplies reusable contracts, compilers, renderers and checks.
 | Make a continuous album or album video | [Album mastering](docs/NATIVE-ALBUM-MASTER.md) and [album video](docs/NATIVE-ALBUM-VIDEO.md) |
 | Produce a songbook, manuscript or bilingual PDF | [Native print collections](docs/native-print-collections.md) |
 | Analyze bilingual screenplay dialogue and review ensemble pivots locally | [Screenplay review](docs/screenplay-review-v1.md) |
+| Design original synthetic voice candidates and compare private auditions | [Voice design and audition review](docs/voice-design-v1.md) |
 | Track output revisions delivered to different targets | [Delivery history workflow](docs/use-cases.md#track-a-delivery-over-time) |
 | Check storage, dependencies and candidate evictions | [Asset-management workflow](docs/asset-manager-workflow-v1.md) and [Tig boundaries](docs/architecture.md#reel-and-tig) |
 | Inspect a semantic dependency graph in a browser | [WASM workbench](https://giodl73-repo.github.io/REEL/assembly/) |
