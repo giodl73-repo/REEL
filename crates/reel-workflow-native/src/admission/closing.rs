@@ -26,6 +26,7 @@ impl Prepared {
         target: &Target,
         operation: &Key,
         action: Action,
+        source: &NativeProfile,
     ) -> Result<Outcome> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
@@ -135,6 +136,12 @@ impl Prepared {
             limits(),
             apply,
             |stage| {
+                if stage == slots::Stage::HandoffAdopted {
+                    // Reconcile original handoff first, then reopen actual
+                    // retained bytes before admitting any source clear. Read
+                    // gates drop here; durable retained coverage remains.
+                    drop(crate::retention::outputs(source, result)?);
+                }
                 if action == Action::Stage && stage == slots::Stage::HandoffStaged {
                     Err(Staged.into())
                 } else {

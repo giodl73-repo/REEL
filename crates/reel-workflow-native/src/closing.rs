@@ -102,14 +102,16 @@ pub fn run(request: &Request, action: Action) -> Result<Outcome> {
     // Actual retained bytes must reopen, not merely a supplied acknowledgement.
     // Drop non-reentrant read/fence guards before the SDK's ordered close locks;
     // durable retained claims remain and the SDK rechecks coverage before clear.
-    drop(retention::verify(
-        &request.packet,
-        &request.source,
-        &request.admission,
-        &request.receipt,
-        &request.result,
-        &request.acknowledgement,
-    )?);
+    if action != Action::Recover {
+        drop(retention::verify(
+            &request.packet,
+            &request.source,
+            &request.admission,
+            &request.receipt,
+            &request.result,
+            &request.acknowledgement,
+        )?);
+    }
     admission::Prepared::open(
         &request.packet,
         &request.source,
@@ -123,5 +125,6 @@ pub fn run(request: &Request, action: Action) -> Result<Outcome> {
         &request.acknowledgement.target,
         &request.operation,
         action,
+        &request.source,
     )
 }

@@ -2062,6 +2062,35 @@ fn native_retained_close_recovers_original_staged_handoff_and_preserves_history(
         "--apply".into(),
     ]);
     assert_eq!(staged["original_clear_complete"], false);
+    // Model a real crash in the original handoff's native Prepare, not only a
+    // stopped CLI reply. Recovery must finish THAT WorkRef before source clear.
+    {
+        use tig_store::{
+            metadata::MetadataStore,
+            source_claims::protection::{self, Index, work},
+        };
+        let outcome: closing::Outcome =
+            serde_json::from_slice(&fs::read(case.temp.path().join("staged.json")).unwrap())
+                .unwrap();
+        let mut nodes =
+            MetadataStore::open(&case.profile.metadata_root, &outcome.metadata_checkpoint).unwrap();
+        let mut index = Index::open(&case.profile.index_root, &outcome.index_checkpoint).unwrap();
+        let record = work::read(&mut index, outcome.handoff.as_ref().unwrap(), &nodes).unwrap();
+        let mut interrupted = false;
+        assert!(
+            index
+                .update_hook(&record.update, &mut nodes, |stage| {
+                    if stage == protection::Stage::Prepared {
+                        interrupted = true;
+                        Err(protection::Error::Unknown)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err()
+        );
+        assert!(interrupted);
+    }
     let recovered = call(vec![
         "recover-close".into(),
         request_path.clone().into(),

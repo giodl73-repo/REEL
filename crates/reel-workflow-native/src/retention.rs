@@ -76,7 +76,10 @@ fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<
     }
     Ok(())
 }
-fn outputs(source: &NativeProfile, result: &ReturnedResult) -> Result<Vec<reader::VerifiedRead>> {
+pub(crate) fn outputs(
+    source: &NativeProfile,
+    result: &ReturnedResult,
+) -> Result<Vec<reader::VerifiedRead>> {
     if result.artifacts.len() > 32
         || result
             .artifacts
