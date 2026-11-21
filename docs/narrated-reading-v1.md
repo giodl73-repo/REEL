@@ -47,6 +47,20 @@ declared bytes. Checking an earlier contract does not execute an older binary.
 
 ## Existing interfaces and the narrow print seam
 
+The Rust API is `spoken_programme::reading`, enabled with `--features print`.
+This phase adds no CLI command. A host supplies explicit `assets`, `dialogue`,
+`access` and `print` providers, plus any selected M07 prepared mixes by edition ID.
+
+| API | Result |
+| --- | --- |
+| `prepare(request, inputs, timeout)` | Read-only independent checks and a sealed expected index; no output directory |
+| `produce(prepared, new_directory, control)` | Revalidate original bindings; publish ordinal text files and the final private index |
+| `check(prepared, directory, timeout)` | Revalidate original bindings and compare the complete actual packet |
+
+Retained input guards belong to the host and remain borrowed through these calls.
+To check an old package after reopening, prepare its original request with the
+original retained providers first; an index's own rewritten hashes are no oracle.
+
 The spoken compiler and M04 checker validate the parent and actual access files.
 The selected source wording is read from manuscript bytes, not substituted from
 recognition evidence or engineering-signal transcript labels. A layered selection
@@ -93,8 +107,11 @@ edition. The original declaration is capped at 256 KiB; print request at 64 KiB,
 each selected text at 256 KiB, other control files at 4 MiB, original producer at
 64 MiB, and declared print input/output at 32 MiB/32 pages. Reading package output
 is at most 4 MiB and execution uses the existing cooperative 30-second controls;
-at most 4096 distinct consumed bindings total 256 MiB, with no individual binding
-larger than 64 MiB. These are bounded operation dependencies, not a cache inventory.
+the four reading-provider namespaces have at most 4096 distinct consumed bindings
+totaling 256 MiB, with no individual binding larger than 64 MiB. Selected M07
+checks additionally retain their own [source/runtime limits](spoken-edition-layers-v1.md#clock-bounds-and-independent-checks);
+the reading limit does not redefine the borrowed FFmpeg runtime's admitted pin.
+These are bounded operation dependencies, not a cache inventory.
 Trusted synchronous I/O must return. No model, provider, production render,
 cache initialization, daemon, upload or automatic eviction occurs.
 

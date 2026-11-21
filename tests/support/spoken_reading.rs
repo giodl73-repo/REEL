@@ -65,6 +65,16 @@ impl ReadingFixture {
             f.signals[4][5000] += 1;
             f.sync();
         }
+        // The reading fixture consumes technical EN/ES only. Do not produce and
+        // recheck unrelated executive parents while an older version is retained.
+        // M07 integration below separately retains the original four-edition parent.
+        f.document.editions.retain(|e| e.id.ends_with("-technical"));
+        for performance in &mut f.document.performances {
+            performance
+                .scope
+                .edition_ids
+                .retain(|id| id.ends_with("-technical"));
+        }
         Self::from_fixture(f)
     }
     fn from_fixture(f: Fixture) -> Self {
@@ -267,7 +277,7 @@ fn publish(prepared: &reading::Prepared<'_>, output: &Path) -> Result<reading::S
 }
 
 #[test]
-#[ignore = "bounded native media/font fixture; explicitly invoked in both media lanes"]
+#[ignore = "bounded native media/font fixture; explicitly invoked on both hosted operating systems"]
 fn bilingual_source_order_clocks_pages_and_authored_text() {
     let f = ReadingFixture::new(false);
     let prepared = f.prepare().unwrap();
@@ -324,7 +334,7 @@ fn bilingual_source_order_clocks_pages_and_authored_text() {
 }
 
 #[test]
-#[ignore = "bounded native media/font fixture; explicitly invoked in both media lanes"]
+#[ignore = "bounded native media/font fixture; explicitly invoked on both hosted operating systems"]
 fn stale_language_recipe_order_spans_and_missing_mix_refuse() {
     let f = ReadingFixture::new(false);
     let mut cases = Vec::new();
@@ -404,7 +414,7 @@ fn stale_language_recipe_order_spans_and_missing_mix_refuse() {
 }
 
 #[test]
-#[ignore = "bounded native media/font fixture; explicitly invoked in both media lanes"]
+#[ignore = "bounded native media/font fixture; explicitly invoked on both hosted operating systems"]
 fn earlier_package_reopens_with_retained_sources_after_v2() {
     let old = ReadingFixture::new(false);
     let old_prepared = old.prepare().unwrap();
@@ -446,7 +456,7 @@ fn earlier_package_reopens_with_retained_sources_after_v2() {
 }
 
 #[test]
-#[ignore = "bounded native media/font fixture; explicitly invoked in both media lanes"]
+#[ignore = "bounded native media/font fixture; explicitly invoked on both hosted operating systems"]
 fn rehashed_false_print_audio_and_dangling_visual_refuse() {
     let f = ReadingFixture::new(false);
     let print_receipt_path = f.print.join("receipt.json");
@@ -508,7 +518,7 @@ fn rehashed_false_print_audio_and_dangling_visual_refuse() {
 }
 
 #[test]
-#[ignore = "requires pinned FFmpeg; explicitly invoked in both media lanes"]
+#[ignore = "requires pinned FFmpeg; explicitly invoked on both hosted operating systems"]
 fn checked_layered_audio_keeps_reading_clock_and_refuses_false_parent() {
     use reel::spoken_programme::layers as api;
     let (f, sources, runtime) = super::layers::fixture();

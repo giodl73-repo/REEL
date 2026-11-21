@@ -67,8 +67,40 @@ sealed-parent pattern and does not accept a package's rewritten hashes as proof.
 The next five-case explicit run passed: 5 passed, 0 failed, 0 ignored, 137.45
 seconds total, retaining each artifact fixture's original 60-second limit.
 Subsequent changes add exact chapter-clock assertions and explicit negative
-diagnostic checks. Final all-feature rerun, regressions, lint and hosted
-qualification are pending.
+diagnostic checks. The first all-feature run exposed a retained-version fixture
+doing four-edition parent work while retaining v1; it exceeded the same 60-second
+outer limit. The reading fixture now authors exactly its two consumed technical
+parents, EN and ES. The separate M07 integration retains the complete four-edition
+parent. No execution limit or required behavior was relaxed.
+
+The corrected explicit **all-feature** reading run passed all five cases in
+135.27 seconds, none ignored in that invocation. All original fixture limits held.
+The focused existing regressions passed 64 distinct cases: 20 declarations,
+24 media/checker cases, four retained-history cases, nine semantic-clock cases,
+six Sonic cases and one review CLI case. One existing tamper fixture hit its
+60-second limit in the parallel run (60.35 seconds overall); rerunning that exact
+unchanged case alone passed in 29.18 seconds. The other 63 cases passed without
+that timing failure. No original regression was edited or its limit increased.
+The native print crate passed seven tests: two new admitted-input cases and five
+existing collection cases. This is **76 distinct locally passing tests**, not a
+claim that every required hosted runtime case has run locally.
+
+Print-crate all-target Clippy passed with warnings denied. Root all-target,
+all-feature Clippy passed before the final fixture adjustment; its final rerun,
+formatting, links/actionlint and hosted qualification remain to be recorded.
+
+The principal commands are:
+
+```sh
+cargo test --locked --all-features --test spoken_programme_media reading:: -- --ignored --test-threads=1
+cargo test --locked -p reel-print --all-targets
+cargo clippy --locked -p reel-print --all-targets -- -D warnings
+cargo clippy --locked --all-targets --all-features -- -D warnings
+```
+
+The legacy Sonic real-render case and four M07 runtime cases retain their
+separate explicit hosted invocations; ordinary-run ignores do not close them.
+M07's merge and M08's current-head hosted checks are still required.
 
 Every operation retains a cooperative maximum 30-second deadline; source/text,
 print, producer and package limits are fixed in the contract. Trusted synchronous
