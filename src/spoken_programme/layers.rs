@@ -151,7 +151,7 @@ fn checked_control<T: serde::de::DeserializeOwned>(
 pub struct Runtime {
     reference: FileRef,
     path: PathBuf,
-    _guard: Option<crate::media_runtime::BoundTool>,
+    protection: Option<crate::media_runtime::BoundTool>,
 }
 pub fn bind_runtime(inputs: &dyn InputFiles, file: &FileRef) -> Result<Runtime> {
     require(
@@ -187,16 +187,19 @@ pub fn bind_runtime(inputs: &dyn InputFiles, file: &FileRef) -> Result<Runtime> 
     let value = Runtime {
         reference: file.clone(),
         path,
-        _guard: guard,
+        protection: guard,
     };
     value.verify()?;
     Ok(value)
 }
 impl Runtime {
     fn verify(&self) -> Result<()> {
-        if self._guard.is_none() {
-            let identity = crate::media_runtime::ByteIdentity::observe_file(&self.path)
-                .map_err(|_| anyhow::anyhow!("spoken layer cooperative runtime unavailable"))?;
+        if self.protection.is_none() {
+            let identity = crate::media_runtime::ByteIdentity::observe_file_bounded(
+                &self.path,
+                self.reference.bytes,
+            )
+            .map_err(|_| anyhow::anyhow!("spoken layer cooperative runtime unavailable"))?;
             require(
                 identity.sha256 == self.reference.sha256 && identity.bytes == self.reference.bytes,
                 "spoken layer runtime differs",
@@ -756,7 +759,7 @@ pub fn produce(
         require(limit.len() <= 65536, "spoken layer stdout budget exceeded")
     })
     .map_err(|_| anyhow::anyhow!("spoken layer renderer failed or timed out"))?;
-    let outputs = verify_pcm(&fresh, stage.path(), &mut tick)?;
+    let outputs = verify_pcm(fresh, stage.path(), &mut tick)?;
     revalidate(prepared)?;
     let receipt = Receipt {
         schema: RECEIPT_SCHEMA.into(),
@@ -824,7 +827,7 @@ pub fn check(prepared: &Prepared<'_>, candidate: &Path, timeout: Duration) -> Re
             && !receipt.release_authorized,
         "spoken layer receipt original binding differs",
     )?;
-    let outputs = verify_pcm(&fresh, candidate, &mut tick)?;
+    let outputs = verify_pcm(fresh, candidate, &mut tick)?;
     require(
         serde_json::to_value(outputs)? == serde_json::to_value(receipt.outputs)?,
         "spoken layer output pins differ",

@@ -189,7 +189,7 @@ fn real_four_edition_layers_follow_native_clocks_and_independent_pcm() {
                 layers: &files,
             },
             &request,
-            &runtime,
+            runtime,
         )
         .unwrap();
         assert_eq!(prepared.effect_start_sample(), start);
@@ -248,7 +248,7 @@ fn revised_bed_changes_mix_without_changing_dialogue_and_tamper_refuses() {
         dialogue_candidate: &dialogue,
         layers: &files,
     };
-    let old = api::prepare(inputs, &before, &runtime).unwrap();
+    let old = api::prepare(inputs, &before, runtime).unwrap();
     let old_identity = old.identity().to_owned();
     let old_dialogue = old.dialogue().clone();
     let original_output = f.temp.path().join("v1");
@@ -270,7 +270,7 @@ fn revised_bed_changes_mix_without_changing_dialogue_and_tamper_refuses() {
         "catalog-v2.json",
         &serde_json::to_vec(&catalog).unwrap(),
     );
-    let new = api::prepare(inputs, &after, &runtime).unwrap();
+    let new = api::prepare(inputs, &after, runtime).unwrap();
     assert_ne!(old_identity, new.identity());
     assert_eq!(
         serde_json::to_value(old_dialogue).unwrap(),
@@ -392,7 +392,7 @@ fn stale_scope_overlap_gain_tail_and_clock_refuse_before_writes() {
             _ => bad.intent.effect_start.performance_id = "es-closing".into(),
         }
         sync_request(&files, &mut bad);
-        assert!(api::prepare(inputs, &bad, &runtime).is_err());
+        assert!(api::prepare(inputs, &bad, runtime).is_err());
     }
     let mut no_scope = baseline.clone();
     let mut catalog: serde_json::Value =
@@ -405,11 +405,11 @@ fn stale_scope_overlap_gain_tail_and_clock_refuse_before_writes() {
         &serde_json::to_vec(&catalog).unwrap(),
     );
     sync_request(&files, &mut no_scope);
-    assert!(api::prepare(inputs, &no_scope, &runtime).is_err());
+    assert!(api::prepare(inputs, &no_scope, runtime).is_err());
     // Restore exact consumer request after negative mutations.
     let mut baseline = baseline;
     sync_request(&files, &mut baseline);
-    let valid = api::prepare(inputs, &baseline, &runtime).unwrap();
+    let valid = api::prepare(inputs, &baseline, runtime).unwrap();
     let output = f.temp.path().join("refused");
     assert!(api::produce(&valid, &output, Duration::ZERO, || Ok(())).is_err());
     assert!(!output.exists());

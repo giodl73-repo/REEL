@@ -1,6 +1,7 @@
 # Spoken programme engineering qualification
 
-**Status:** M06 engineering scope on merged M05 `027164f`, [PR #383](https://github.com/giodl73-repo/REEL/pull/383).
+**Status:** M06 merged as `cef69f7` in [PR #384](https://github.com/giodl73-repo/REEL/pull/384)
+after required hosted checks passed, based on merged M05 `027164f`.
 Final local and hosted results are recorded in the [review](reviews/2026-11-21-m06-spoken-qualification-review.md).
 The spoken checkpoint is **awaiting listening
 evidence**: no approved voice profiles or actual EN/ES recordings have been

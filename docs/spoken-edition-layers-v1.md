@@ -1,13 +1,17 @@
 # Music and Sonic effects on a spoken edition
 
-**Status:** M07 preparatory work on M06 PR #384, exact head `d884463`.
-Final qualification requires merged M06. This adds no music generation,
+**Status:** M07 implementation on merged M06 `cef69f7`, [PR #384](https://github.com/giodl73-repo/REEL/pull/384).
+Qualification is recorded in the [checklist review](reviews/2026-11-21-m07-spoken-layers-review.md).
+This adds no music generation,
 separation, arrangement, pictures, automatic source selection or release.
 
 ## Reuse and boundary
 
-M04 independently checks the original spoken candidate. Its dialogue WAV stays
-immutable. Existing `sonic_assets::resolve` governs exact bed/effect selection;
+M04 independently checks the original spoken candidate during preparation. Its
+sealed parent witness and dialogue WAV stay immutable. Each subsequent produce
+or check rereads the actual consumed D/M/E bytes and exact Sonic control pins;
+it does not recheck unrelated parent editions. Existing `sonic_assets::resolve`
+governs exact bed/effect selection;
 the adapter supplies explicit verified input paths rather than discovering a
 cache or falling back to catalog-relative files. Existing `audio_mix::compile`
 owns event gains, hold automation, fades and D/M/E stems. The existing bounded
@@ -17,6 +21,9 @@ engine is introduced.
 An in-memory audio projection supplies only audio fields to that existing mixer;
 it is not serialized or represented as a valid picture-production manifest.
 There are no placeholder scenes, shots or image reads.
+
+The v1 adapter consumes parent packages checked under the current REEL producer
+identity. M05 retains the original older contexts independently.
 
 ## Versioned request
 
@@ -52,7 +59,10 @@ This adapter declares the existing mixer's **one-millisecond** event clock:
 48 kHz stereo PCM24 only, and every placement, duration, fade and duck boundary
 must be an exact multiple of 48 samples. Reject finer anchors; do not round them.
 Input audio is explicitly framed into 48-sample blocks before existing hold
-automation so its frame evaluation uses that same clock. This does not claim
+automation, with floating format established before an integer `1/1000`
+timebase. This prevents floating timestamp undershoot from delaying a boundary
+by one block. The duck window obeys `0 < start < end < bed_length`.
+This does not claim
 sample-granular automation support for arbitrary inputs.
 
 At most 720,000 output samples, 16 MiB distinct source WAV bytes, two selected
@@ -60,7 +70,12 @@ Sonic sources, 256 KiB each catalog/request, 64 MiB final output and 128 MiB
 workspace. Execution has a 30-second deadline, narrowed by the caller; zero
 refuses before writes/spawn. Use a declared absolute FFmpeg executable with its
 exact FileRef pin (at most 256 MiB). Runtime pinning is not a complete environment
-or sandbox claim. Child exit/reaping precedes source guard release. No downloads,
+or sandbox claim. `bind_runtime` reuses the existing `BoundTool` guard on Windows;
+other platforms recheck a declared cooperative runtime without claiming native
+protection. Enrollment happens before the bounded media fixture; its exact-byte
+read is separately capped. The 30-second execution checks are cooperative around
+trusted synchronous I/O; only the subprocess is actively killed/reaped at its
+deadline. Child exit/reaping precedes source guard release. No downloads,
 cache initialization, hydration, daemons or production media are used by tests.
 
 Four lossless WAVs are published: dialogue, music, effects and mix. Private
@@ -104,3 +119,15 @@ overrun; timeout, interruption and no overwrite. A real FFmpeg qualification mus
 run explicitly on Windows and Linux; an absent runtime is not a passing skip.
 Run core/clock/native regressions, all-feature lint, formatting and diff checks.
 Sound, Editor and Rights are required checklist lenses. Listening remains open.
+
+```powershell
+cargo test --locked --test spoken_programme_media layers:: -j2 -- --ignored
+cargo test --locked --features tig-history --test spoken_programme_history --test spoken_programme_media --test spoken_programme --test cue_relative --test audio_event_clocks --test v0213_cli --test sonic_assets_v0318 -j2
+cargo clippy --all-targets --all-features --locked -j2 -- -D warnings
+cargo fmt --all -- --check
+git diff --check
+```
+
+The four external-runtime cases are intentionally ignored by ordinary unit runs
+and explicitly invoked by **both** CI media lanes. An ignored listing is not
+qualification; the explicit command must execute all four successfully.

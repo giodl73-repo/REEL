@@ -80,6 +80,13 @@ clock; both executive editions keep their earlier bytes. The example shows exact
 cue/gap/chapter intervals and a separately authored reordered version. These are
 engineering signals; real speech and natural handoffs still need listening.
 
+The [spoken music/effects adapter](../spoken-edition-layers-v1.md) retains that
+checked dialogue as D, adds an explicitly ducked bed as M and anchors a selected
+Sonic effect as E. For the executive signal example, the closing effect begins
+at 3.35 seconds in EN and 4.05 seconds in ES. Its independent check reopens all
+four WAVs and evaluates the declared mix; it does not grant listening approval.
+The contract states its one-millisecond clock and current qualification status.
+
 | Work | Detailed contract |
 | --- | --- |
 | Capture or execute a speech attempt | [Speech adapter](../tig-speech-generation.md) |
