@@ -50,7 +50,8 @@ impl ProcessingPolicy {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct TakeEvidence {
     pub performance_id: String,
     pub source: FileRef,
@@ -59,7 +60,8 @@ pub struct TakeEvidence {
     pub processing: CueProcessing,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProducedEdition {
     pub edition_id: String,
     pub compiled_recipe_sha256: String,
@@ -70,9 +72,10 @@ pub struct ProducedEdition {
     pub takes: Vec<TakeEvidence>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProductionReceipt {
-    pub schema: &'static str,
+    pub schema: String,
     pub producer: CompilerIdentity,
     pub declaration_semantics_sha256: String,
     pub compilation_profile: CompilationProfile,
@@ -82,7 +85,7 @@ pub struct ProductionReceipt {
     pub independent_check_passed: bool,
     pub native_admission_verified: bool,
     pub authority_verified: bool,
-    pub publication: &'static str,
+    pub publication: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,7 +132,11 @@ pub fn parse_processing(bytes: &[u8]) -> Result<ProcessingPolicy> {
         .map_err(|_| anyhow::anyhow!("spoken processing is not strict JSON"))
 }
 
-fn operation(policy: &ProcessingPolicy, edition: &str, performance: &str) -> CueProcessing {
+pub(crate) fn operation(
+    policy: &ProcessingPolicy,
+    edition: &str,
+    performance: &str,
+) -> CueProcessing {
     policy
         .operations
         .iter()
@@ -147,7 +154,10 @@ fn operation(policy: &ProcessingPolicy, edition: &str, performance: &str) -> Cue
         })
 }
 
-fn validate_processing(policy: &ProcessingPolicy, plan: &compiler::CompiledPlan) -> Result<()> {
+pub(crate) fn validate_processing(
+    policy: &ProcessingPolicy,
+    plan: &compiler::CompiledPlan,
+) -> Result<()> {
     require(
         policy.schema == PROCESSING_SCHEMA && policy.operations.len() <= 1024,
         "spoken processing schema or count invalid",
@@ -200,7 +210,7 @@ fn source_key(source: &FileRef) -> (PathBuf, String, u64) {
     (source.path.clone(), source.sha256.clone(), source.bytes)
 }
 
-fn read_source(
+pub(crate) fn read_source(
     inputs: &(impl InputFiles + ?Sized),
     reference: &FileRef,
     check: &mut impl FnMut() -> Result<()>,
@@ -266,10 +276,23 @@ fn wave_bytes(pcm: &[u8]) -> Result<Vec<u8>> {
 
 /// Candidate files are not usable without the final receipt. Failure retires only
 /// the exact files created here; unrelated files in a reserved directory survive.
-struct OutputOwner {
+pub(crate) struct OutputOwner {
     root: PathBuf,
     names: Vec<PathBuf>,
     complete: bool,
+}
+impl OutputOwner {
+    pub(crate) fn reserve(root: &Path) -> Result<Self> {
+        fs::create_dir(root).map_err(|_| anyhow::anyhow!("spoken output unavailable or exists"))?;
+        Ok(Self {
+            root: root.into(),
+            names: vec![],
+            complete: false,
+        })
+    }
+    pub(crate) fn finish(mut self) {
+        self.complete = true;
+    }
 }
 impl Drop for OutputOwner {
     fn drop(&mut self) {
@@ -282,7 +305,7 @@ impl Drop for OutputOwner {
     }
 }
 
-fn persist_file(
+pub(crate) fn persist_file(
     owner: &mut OutputOwner,
     name: &str,
     bytes: &[u8],
@@ -502,7 +525,7 @@ pub fn produce_controlled(
         });
     }
     let receipt = ProductionReceipt {
-        schema: RECEIPT_SCHEMA,
+        schema: RECEIPT_SCHEMA.into(),
         producer: runtime,
         declaration_semantics_sha256: plan.declaration_semantics_sha256,
         compilation_profile: profile,
@@ -512,7 +535,7 @@ pub fn produce_controlled(
         independent_check_passed: false,
         native_admission_verified: false,
         authority_verified: false,
-        publication: "not-authorized-by-tool",
+        publication: "not-authorized-by-tool".into(),
     };
     let bytes = serde_json::to_vec_pretty(&receipt)?;
     require(
@@ -525,7 +548,7 @@ pub fn produce_controlled(
     Ok(receipt)
 }
 
-fn bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
+pub(crate) fn bounded(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let mut bytes = vec![];
     File::open(path)
         .map_err(|_| anyhow::anyhow!("spoken control unavailable"))?
