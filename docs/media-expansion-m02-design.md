@@ -160,3 +160,35 @@ Planning starts no media/provider process and performs no storage promotion.
 Review with Editor, Sound, Vocal Adaptation and Rights checklists; use Story for
 the limits of dependency/lexical checks. Record actual commands/results and any
 unresolved finding before marking M02 technically checked.
+
+## M03 handoff: inspected reuse and remaining controls
+
+- `browser_composition::pcm_window::transform` already streams exact stereo
+  PCM24 with integer linear envelopes and signed division toward zero. Its
+  production availability is currently Windows/Tig-gated. Share sample-only
+  validation/streaming without changing existing video frame-duration checks;
+  audio assembly must not manufacture picture inputs or frame constraints.
+- `song_edition::wave::decode` already validates bounded RIFF layout but returns
+  floating-point samples. Factor reusable header/data-range validation so M03
+  can borrow raw PCM24 bytes for neutral identity proof. Preserve old decoder
+  behavior and its format/truncation/duplicate-chunk refusal coverage.
+- Require the explicit source declaration when producing a compiled plan. Reopen
+  its exact controls, compare the canonical declaration identity and rederive
+  the plan under the admitted/current runtime. Serialized plan fields alone are
+  not execution authority. Historical runtime replay remains M05 work.
+- M03 needs a versioned, explicit processing policy for any gain/fade operation;
+  M01/M02 currently declare source spans, pauses and overlaps, not arbitrary
+  processing. Bind the consumed processing slice into execution identity and
+  retain an explicit identity/no-processing case. Protect word/breath/tail regions
+  and reject clipping; do not introduce automatic normalization or resampling.
+- Input-container identity and selected/processed/output PCM identities remain
+  separate. Recheck the complete declared source duration, including unselected
+  suffixes, and account for encoded inputs, decode buffers, outputs and staging
+  before execution. Use the selected engineering/spoken profile's resource limits.
+- Publish no usable final candidate until structural/media checks pass. Refuse
+  existing destinations, use only owned staging names, and verify failure/timeout
+  cleanup without deleting unrelated files. Output names must not be derived
+  directly from arbitrary module/edition IDs.
+
+These are implementation constraints for the next PR, not claims that M03 is
+implemented, tested, admitted or adopted.
