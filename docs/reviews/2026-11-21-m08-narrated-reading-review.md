@@ -1,7 +1,11 @@
 # M08 narrated reading: checklist and qualification record
 
 Status: implementation in an isolated worktree; qualification in progress.
-M07 must merge before final qualification/merge of this phase. The complete
+M07 merged as `1db7679d26229984c4d57389544ea9883f08bb24` in
+[#387](https://github.com/giodl73-repo/REEL/pull/387), after
+[CI 44933453094](https://github.com/giodl73-repo/REEL/actions/runs/44933453094)
+passed in 21 minutes 7 seconds. M08 is being qualified on that merged dependency.
+The complete
 [M08 contract](../narrated-reading-v1.md) fixes scope and limits.
 
 This is one assistant applying the repository's [role checklists](../../.roles/ROLE.md),
@@ -91,8 +95,8 @@ separating the authored request and generated index schema IDs. The focused
 bilingual test then passed in 17.41 seconds, asserting both wire IDs and refusal
 to use an index schema for a request. This rechecks the final serialization
 change without repeating unrelated media work. Formatting, changed-document
-links, actionlint 1.7.12 and diff checks passed. Hosted qualification remains
-pending until the M07 prerequisite merges.
+links, actionlint 1.7.12 and diff checks passed. M08 current-head hosted
+qualification remains pending.
 
 The principal commands are:
 
@@ -105,7 +109,7 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 
 The legacy Sonic real-render case and four M07 runtime cases retain their
 separate explicit hosted invocations; ordinary-run ignores do not close them.
-M07's merge and M08's current-head hosted checks are still required.
+M08's current-head hosted checks are still required; the M07 merge is recorded above.
 
 Every operation retains a cooperative maximum 30-second deadline; source/text,
 print, producer and package limits are fixed in the contract. Trusted synchronous

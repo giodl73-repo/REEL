@@ -1,7 +1,8 @@
 # Narrated reading editions
 
-**Status:** M08 implementation under engineering qualification, dependent on
-M07 PR #387. Its prerequisite merge is required before final M08 qualification.
+**Status:** M08 implementation under engineering qualification, built on merged
+[M07 #387](https://github.com/giodl73-repo/REEL/pull/387), `1db7679`.
+M08 current-head hosted qualification remains required.
 This is an authored index over admitted assets, not EPUB/store integration or a
 new storage, publishing, narration or print-rendering engine.
 
@@ -116,8 +117,9 @@ totaling 256 MiB, with no individual binding larger than 64 MiB. Selected M07
 checks additionally retain their own [source/runtime limits](spoken-edition-layers-v1.md#clock-bounds-and-independent-checks);
 the reading limit does not redefine the borrowed FFmpeg runtime's admitted pin.
 These are bounded operation dependencies, not a cache inventory.
-Trusted synchronous I/O must return. No model, provider, production render,
-cache initialization, daemon, upload or automatic eviction occurs.
+Trusted synchronous I/O must return. The reading engine requests source reads and
+packet checks; it does not request model/voice generation, cache initialization
+or hydration, daemon startup, uploads or eviction.
 
 The initial engineering example uses the existing three source chapters and
 English/Spanish technical editions:
