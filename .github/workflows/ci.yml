@@ -68,10 +68,47 @@ jobs:
   rust-tests:
     needs: changes
     if: needs.changes.outputs.docs_only == 'false'
+    timeout-minutes: 28
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            lane: core
+            shard: 0
+          - os: ubuntu-latest
+            lane: core
+            shard: 1
+          - os: ubuntu-latest
+            lane: core
+            shard: 2
+          - os: ubuntu-latest
+            lane: media
+            shard: 0
+          - os: windows-latest
+            lane: core
+            shard: 0
+          - os: windows-latest
+            lane: core
+            shard: 1
+          - os: windows-latest
+            lane: core
+            shard: 2
+          - os: windows-latest
+            lane: media
+            shard: 0
+          - os: windows-latest
+            lane: native-source
+            shard: 0
+          - os: windows-latest
+            lane: native-retained
+            shard: 0
+          - os: windows-latest
+            lane: native-episodes-a
+            shard: 0
+          - os: windows-latest
+            lane: native-episodes-b
+            shard: 0
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
@@ -83,16 +120,24 @@ jobs:
         with:
           version: "8.1"
           token: ${{ github.token }}
+      - name: Verify shared media runtimes
+        run: |
+          node -e "for (const program of ['ffmpeg', 'ffprobe']) require('node:child_process').execFileSync(program, ['-version'], { stdio: 'inherit' });"
       - uses: Swatinem/rust-cache@v2
         with:
           prefix-key: nodebug-v1-rust
       - run: cargo fmt --all -- --check
+        if: matrix.lane == 'core' && matrix.shard == 0
       - name: Verify shared original-song backend context guards without models
+        if: matrix.lane == 'media'
         run: python -B tools/test_original_song_repair_provider.py
       - run: cargo clippy --all-targets --all-features -- -D warnings
-      - run: cargo test --all-targets --all-features --no-fail-fast
+        if: matrix.lane == 'core' && matrix.shard == 0
+      - name: Run ordinary test shard
+        if: matrix.lane == 'core'
+        run: node .github/scripts/run-test-shard.cjs ${{ matrix.shard }}
       - name: Verify exact native audio recovery without picture inputs
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh
         run: |
           $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
@@ -100,7 +145,7 @@ jobs:
           cargo test --all-features --lib tig_scene_audio_recovery::tests::native_recovery_keeps_dialogue_distinct_from_mix_and_refuses_stale_sources --locked -- --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify explicit Tig audio runtime without ambient tools
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh
         run: |
           $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
@@ -108,7 +153,7 @@ jobs:
           cargo test --all-features --test tig_inputs native_tig_cli_audio_uses_explicit_runtime_and_refuses_wrong_host --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify contained original-song repair with synthetic audio
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh
         run: |
           $pythonProgram = (Get-Command python -ErrorAction Stop).Source
@@ -117,12 +162,14 @@ jobs:
           cargo test --all-features --lib song_edition::repair::provider::tests::explicit_python_child_obeys_native_input_guards_and_materializes_synthetic_audio --locked -- --ignored --exact --test-threads=1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify native full-recording album joins and retained packet checks
+        if: matrix.lane == 'media'
         shell: pwsh
         run: |
           $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
           cargo test --all-features --lib music_album::tests::real_ffmpeg_complete_tail_gap_recheck_tamper_and_timeout --locked -- --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify bilingual album video packets, fonts and phrase pages
+        if: matrix.lane == 'media'
         shell: pwsh
         run: |
           $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
@@ -138,11 +185,13 @@ jobs:
           cargo test --all-features --lib music_album::video::tests::real_bilingual_video_preserves_audio_chapters_and_phrase_pages --locked -- --exact --nocapture
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify bounded large picture controls preserve native frames and clocks
+        if: matrix.lane == 'media'
         run: cargo test --all-features --lib scene_delivery::picture_control::tests::native_file_controls_preserve_frames_clocks_and_large_picture_jobs --locked -- --ignored --exact
       - name: Verify RGBA overlays preserve all unselected RGB and YUV frames
+        if: matrix.lane == 'media'
         run: cargo test --all-features --lib scene_delivery::timed_overlay_end_frame_tests::rgba_still_overlay_preserves_all_outside_rgb_and_yuv_frames --locked -- --ignored --exact
       - name: Verify bounded native SVG streaming and owned failure cleanup
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh
         run: |
           $browserProgram = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
@@ -154,42 +203,53 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           cargo test --all-features --test tig_inputs managed_browser_cli_renders_retains_and_proposes_with_source_offline --locked -- --ignored --test-threads=1
       - name: Check shared authoring and camera contracts
+        if: matrix.lane == 'media'
         run: cargo test -p reel-assembly --all-targets --locked
       - name: Check native music contracts and note proposal tooling
+        if: matrix.lane == 'media'
         run: |
           cargo clippy -p reel-music --all-targets --locked -- -D warnings
           cargo test -p reel-music --all-targets --locked
       - name: Check native print collections and immutable page preservation
+        if: matrix.lane == 'media'
         run: |
           cargo clippy -p reel-print --all-targets --locked -- -D warnings
           cargo test -p reel-print --all-targets --locked
       - name: Check shared asset custody and accounting on synthetic caches
+        if: matrix.lane == 'media'
         run: |
           cargo clippy -p reel-assets --all-targets --locked -- -D warnings
           cargo test -p reel-assets --all-targets --locked
       - name: Check offline cache review interactions
+        if: matrix.lane == 'media'
         run: node --test crates/reel-assets/tests/tier_review_ui.test.cjs crates/reel-assets/tests/reference_review_ui.test.cjs crates/reel-assets/tests/cel_sorter_ui.test.cjs crates/reel-assets/tests/cel_sorter_dom.test.cjs crates/reel-assets/tests/cel_insertion_ui.test.cjs crates/reel-assets/tests/cel_effects_ui.test.cjs crates/reel-assets/tests/cel_profile_ui.test.cjs
       - name: Check offline native note editing interactions
+        if: matrix.lane == 'media'
         run: node --test crates/reel-music/tests/note_editor_ui.test.cjs crates/reel-music/tests/underlay_editor_ui.test.cjs
       - name: Verify compiled scene delivery samples, stems, frames and tamper rejection
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery real_delivery_preserves_sample_offset_stems_frames_and_rejects_tamper -- --ignored --exact
       - name: Verify native recording-clock delivery without narration
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery real_recording_clock_delivery_without_narration --locked -- --ignored --exact
       - name: Verify injected scene inputs preserve pictures and PCM through independent checks
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery real_mapped_input_provider_matches_local_pixels_and_pcm_and_rejects_stale_pins -- --ignored --exact
       - name: Verify borrowed presentation inputs and outputs through episode conform
+        if: matrix.lane == 'media'
         run: cargo test --all-features --test presentation_adopt selected_native_opening_preserves_exact_bytes_and_rechecks_timing --locked -- --exact
       - name: Verify native media comparison catches content, color, clock and length changes
+        if: matrix.lane == 'media'
         run: cargo test --test media_parity native_media_parity_detects_content_color_clock_and_length_changes --locked -- --ignored --exact
       - name: Build pinned Tig authoring handoff CLI
-        if: runner.os == 'Windows'
+        if: startsWith(matrix.lane, 'native-') && (runner.os == 'Windows')
         shell: pwsh
         run: |
           cargo build --locked --manifest-path vendor/tig/Cargo.toml -p tig-git --bin tig-propose --target-dir target/tig-tools
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Value "REEL_TEST_TIG_PROPOSE=$env:GITHUB_WORKSPACE/target/tig-tools/debug/tig-propose.exe"
       - name: Verify native Tig source guards, versions and archived-source rendering
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-source' && (runner.os == 'Windows')
         run: |
           cargo test --all-features --test tig_inputs delivery_template::context::render::guarded_delivery_candidate_uses_existing_claim_and_publication_contracts --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -210,7 +270,7 @@ jobs:
           cargo test --all-features --test tig_inputs language_scope::projected_jobs::compiled_cli_plans_renders_and_hands_off_records_with_source_git_offline --locked -- --ignored --exact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build qualified original producer for retained-version fixture
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-retained' && (runner.os == 'Windows')
         shell: pwsh
         env:
           CARGO_PROFILE_DEV_DEBUG: "0"
@@ -233,39 +293,39 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -LiteralPath $env:GITHUB_ENV -Encoding utf8 -Value "REEL_TEST_TIG_ORIGINAL_PRODUCER=$retainedTargetRoot/debug/reel-tig-job.exe"
       - name: Verify original producer and new checker keep source currency and claims distinct
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-retained' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs language_scope::projected_jobs::retained_producer_and_new_checker_preserve_claim_and_source_currency --locked -- --ignored --exact
       - name: Verify component-only jobs, retained evidence and owner cleanup
         # Component-only jobs must retain their evidence and release temporary
         # owners without claiming that an episode movie was assembled.
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::verify_ --locked -- --ignored --test-threads=1
       - name: Verify synthetic episode edit, delivery, parallel publication and verified cache eviction
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::fake_episode_runs_v1_then_rebuilds_only_the_changed_scene --locked -- --ignored --exact
       - name: Verify protected Tig scene outputs without the render directory
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::cached_scene_bundle_rechecks_without_render_directory_and_rejects_bad_bytes --locked -- --ignored --exact
       - name: Verify changed scene controls rebuild the parent without an old movie
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::current_scene_controls::sparse_scene_edit_compiles_parent_without_manual_conform_or_old_movie --locked -- --ignored --exact
       - name: Verify independent retained scene ownership without source checkout
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::scene_reference::retained_scene_matches_without_history_and_with_independent_owners --locked -- --ignored --exact
       - name: Verify retained scene proofs assemble a current owned parent with old jobs offline
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::verified_scene_owners_assemble_current_parent_and_survive_independent_withdrawal --locked -- --ignored --exact
       - name: Verify bounded episode CLI and complete temporary-owner handoff
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_movie --locked -- --ignored --exact
       - name: Verify mixed scene and presentation episode CLI with original renders offline
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-b' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::mixed_episode_cli_checks_opening_scenes_and_credits_with_complete_owned_handoff --locked -- --ignored --exact
       - name: Verify repeated native episode at the unchanged source identity guard
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-b' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::completed_native_episode_reuses_retired_components_at_full_source_guard --locked -- --ignored --exact --test-threads=1
       - name: Verify browser opening and still credits through owned episode assembly
-        if: runner.os == 'Windows'
+        if: matrix.lane == 'native-episodes-b' && (runner.os == 'Windows')
         shell: pwsh
         run: |
           $env:REEL_TEST_BROWSER = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
@@ -273,56 +333,77 @@ jobs:
           $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
           cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::browser_mixed_episode_cli_checks_fresh_opening_and_owned_assembly --locked -- --ignored --exact
       - name: Verify explicit mono duplication preserves source level and rejects stereo
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery duplicate_mono_preserves_source_level_and_rejects_stereo -- --ignored --exact
       - name: Verify independent native audio matches full-scene stems and rejects stale evidence
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery audio_only_matches_full_scene_and_rejects_tamper_stale_job_and_overwrite -- --ignored --exact
       - name: Verify explicit selected Sonic channel and placement compatibility
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery explicit_sonic_mono_and_placement_match_historical_mix_without_changing_pictures_or_dialogue -- --ignored --exact
       - name: Verify signed PCM rails preserve sources and reject overload before publication
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery signed_pcm_rails_preserve_exact_sources_and_reject_overload_before_publication -- --ignored --exact
       - name: Verify episode consumption, boundaries and controlled scene comparisons
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery real_episode_consumption_boundaries_and_controlled_review -- --ignored --exact
       - name: Verify compact lossless episodes preserve every frame and PCM24 sample
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery compact_lossless_episode_preserves_content_and_rejects_lossy_or_retimed_masters -- --ignored --exact
       - name: Verify native cadence rejects a frozen moving interval
+        if: matrix.lane == 'media'
         run: cargo test --lib motioncraft_cadence::tests::native_metrics_reject_a_frozen_moving_interval -- --ignored --exact
       - name: Verify portable matched Motioncraft comparisons
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery matched_motioncraft_package_rehydrates_and_rejects_tamper -- --ignored --exact
       - name: Verify frozen layer expectations independently of camera holds
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery layer_cadence_rejects_frozen_effect_and_accepts_declared_hold -- --ignored --exact
       - name: Verify moving alpha layers and final occlusion
+        if: matrix.lane == 'media'
         run: cargo test --lib motioncraft_layers::tests::moving_alpha_layer_and_final_occlusion_are_measured_independently -- --ignored --exact
       - name: Verify hidden motion and transparent regions remain unqualified
+        if: matrix.lane == 'media'
         run: cargo test --lib motioncraft_layers::tests::hidden_motion_cannot_borrow_visibility_from_a_static_region -- --ignored --exact
       - name: Verify ASS temporal response, occlusion and independent effect motion
+        if: matrix.lane == 'media'
         run: cargo test --lib motioncraft_layers::tests::ass_response_proves_visible_motion_and_rejects_hidden_or_wrong_composition -- --ignored --exact
       - name: Verify ASS reading states retain rational native timestamps
+        if: matrix.lane == 'media'
         run: cargo test --lib motioncraft_layers::tests::ass_state_holds_keep_native_timestamps_after_interval_trim -- --ignored --exact
       - name: Verify native focal camera and pan execution
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery focal_and_pan_camera_render_real_pixels_and_preserve_native_audio -- --ignored --exact
       - name: Verify phased camera cadence and reduced motion on both platforms
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery phased_camera_renders_real_hold_push_and_reduced_motion_without_audio_drift -- --ignored --exact
       - name: Verify reserved caption geometry with phased cameras on both platforms
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery reserved_caption_band_survives_real_phased_camera_in_both_profiles -- --ignored --exact
       - name: Verify explicit poem and portrait picture viewports on both platforms
+        if: matrix.lane == 'media'
         run: cargo test --test scene_delivery explicit_picture_viewport_contains_native_camera_and_preserves_audio -- --ignored --exact
       - name: Exercise synthetic dialogue/stem graph through FFmpeg
+        if: matrix.lane == 'media'
         run: cargo test --lib audio_preview::tests::real_dialogue_ducking_stems_recombine_and_recheck -- --ignored --exact
       - name: Exercise governed synthetic sonic resolution through D/M/E rendering on Linux
-        if: runner.os == 'Linux'
+        if: matrix.lane == 'media' && (runner.os == 'Linux')
         run: cargo test --test sonic_assets_v0318 real_resolved_sonic_asset_renders_dme_stems_and_rechecks -- --ignored --exact
       - name: Exercise synthetic music repair through FFmpeg and materializer on Linux
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.lane == 'media' && (matrix.os == 'ubuntu-latest')
         run: cargo test --test music_repair_render_cli_v027 real_ffmpeg_cut_render_is_exact_and_rechecks_retained_evidence -- --ignored --exact
       - name: Validate untimed production fixture
+        if: matrix.lane == 'media'
         run: cargo run --quiet -- validate manifests/fixtures/two-speaker-untimed/planning.yaml --output json
       - name: Validate v0.2.1 composition contracts
+        if: matrix.lane == 'media'
         run: |
           cargo run --quiet -- series-validate manifests/templates/episodic-series.yaml --output json
           cargo run --quiet -- series-coverage manifests/templates/episodic-series.yaml --output json
           cargo run --quiet -- series-review-queue manifests/templates/episodic-series.yaml --output json
           cargo run --quiet -- continuity-validate manifests/fixtures/shared-continuity/registry.yaml --output json
       - name: Verify v0.2.14 caption, audio, review, and slate-layout preflights
+        if: matrix.lane == 'media'
         run: |
           cargo run --quiet -- caption-check manifests/fixtures/vertical-sound-off/captions.srt --output json
           cargo test --test v029_cli speaker_caption_policies_preserve_srt_and_timing_at_both_aspects -- --exact
