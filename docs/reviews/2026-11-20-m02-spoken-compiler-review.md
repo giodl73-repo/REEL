@@ -1,6 +1,7 @@
 # M02 spoken compiler: draft checklist review
 
-**Status:** static draft review; qualification waits for merged M01 and a rebase.
+**Status:** draft review; local preparatory checks may run against exact M01
+`be9049b`, while final qualification waits for merged M01 and a rebase.
 **Method:** one assistant applying Editor, Sound, Vocal Adaptation, Rights and
 Story checklists from [.roles](../../.roles/ROLE.md), plus Platform/Audience for
 the private-plan/portable-output boundary. No independent panel, audio audition,
@@ -21,7 +22,8 @@ adding a new word-clock grammar. Its envelope adds exact observation, marker
 binding and selected-declaration correspondence. Compiler identity is explicit;
 source audio/authority payloads and native storage/runtime admission are not read.
 
-Qualification commands, once M01 merges and the branch rebases:
+Preparatory commands may run on the recorded stacked base; final qualification
+must confirm the merged-base revision after M01 merges and the branch rebases:
 
 ```sh
 cargo test --locked --test spoken_programme --test cue_relative --test audio_event_clocks --test episode_captions
@@ -30,7 +32,11 @@ cargo fmt --all -- --check
 git diff --check
 ```
 
-No result is recorded as passed here. Required hosted checks, actual test output,
-private/public evidence separation and unresolved findings must be recorded before
-M02 is marked technically checked. This review introduces no media execution,
+Preparatory Windows `cargo test --locked --test spoken_programme` passed all
+20 tests on the stacked draft based on M01 `be9049b` (nine declaration/CLI cases
+and eleven compilation cases). This is not merged-base or hosted qualification.
+Preparatory all-target/all-feature Clippy also passed with warnings denied.
+Required hosted checks, the final merged-base revision, private/public evidence
+separation and unresolved findings must be recorded before M02 is marked
+technically checked. This review introduces no media execution,
 cache initialization, hydration, provider use, production selection or adoption.

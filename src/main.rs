@@ -657,8 +657,13 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
-        Command::SpokenEditionCompile { edition, output, profile } => {
-            let report = reel::spoken_programme::compiler::compile_file(&edition, &output, profile)?;
+        Command::SpokenEditionCompile {
+            edition,
+            output,
+            profile,
+        } => {
+            let report =
+                reel::spoken_programme::compiler::compile_file(&edition, &output, profile)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::SpokenEditionValidate { edition } => {

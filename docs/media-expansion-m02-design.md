@@ -1,8 +1,9 @@
 # M02 compiler design and evidence boundary
 
 **Status:** local draft prepared while M01 PR #379 qualifies, against its exact
-`be9049b` revision. Draft code may be prepared without executing or qualifying it.
-Rebase onto merged M01 before running qualification or publishing the M02 PR.
+`be9049b` revision. Local preparatory builds/control-only tests may run on this
+stacked draft, with their exact base recorded. Rebase onto merged M01 before
+final qualification or publishing the M02 PR.
 This preserves the phased merge/execution order; it is not an extra phase/PR.
 
 ## Resolve existing evidence, without opening media
