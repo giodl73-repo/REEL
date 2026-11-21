@@ -138,6 +138,15 @@ jobs:
         run: |
           cargo clippy -p reel-publication -p reel-workflow --all-targets --locked -- -D warnings
           cargo test -p reel-publication -p reel-workflow --all-targets --locked
+      - name: Check isolated workflow SDK intake
+        if: matrix.lane == 'core' && matrix.shard == 0
+        env:
+          CARGO_TARGET_DIR: target/workflow-native
+        run: |
+          cargo fmt --manifest-path crates/reel-workflow-native/Cargo.toml -- --check
+          cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked
+          cargo test --manifest-path vendor/git-asset-capacity/Cargo.toml -p git-asset-store --test metadata_capacity --locked
       - name: Run ordinary test shard
         if: matrix.lane == 'core'
         run: node .github/scripts/run-test-shard.cjs ${{ matrix.shard }}
