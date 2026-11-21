@@ -657,6 +657,22 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
+        Command::SpokenEditionProduce {
+            plan,
+            declaration,
+            asset_root,
+            processing,
+            output,
+        } => {
+            let report = reel::spoken_programme::producer::produce_file(
+                &declaration,
+                &plan,
+                processing.as_deref(),
+                &asset_root,
+                &output,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::SpokenEditionCompile {
             edition,
             output,
@@ -2929,6 +2945,18 @@ enum Command {
     },
     /// Validate an audio-edition declaration without reading media or executing tools.
     SpokenEditionValidate { edition: PathBuf },
+    /// Assemble a new private lossless spoken candidate from current exact controls.
+    SpokenEditionProduce {
+        plan: PathBuf,
+        #[arg(long)]
+        declaration: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        processing: Option<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+    },
     /// Compile selected spoken control evidence into a new private sample plan.
     SpokenEditionCompile {
         edition: PathBuf,

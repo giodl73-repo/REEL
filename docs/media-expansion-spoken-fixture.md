@@ -102,8 +102,10 @@ M10. Sample intervals remain authoritative; frame rounding does not retime audio
   variants and 16 editions. Fixture-specific caps: six baseline takes, four
   editions, at most 15 seconds/720,000 samples per output, 16 MiB total input PCM,
   64 MiB final packages and 128 MiB peak scratch. Budget checks precede execution.
-- Timeout is 30 seconds per fixture producer/checker operation, with a 60-second
-  outer test timeout. Repeat with an intentionally tiny cap to prove refusal.
+- Cooperative timeout is 30 seconds per fixture producer/checker operation,
+  with a measured 60-second outer fixture budget checked when the test completes.
+  Trusted synchronous test I/O must return; this is not a process sandbox for a
+  hung operating-system call. Repeat with an intentionally tiny cap to prove refusal.
   No overwrite; new destination only. Failure cannot leave a usable final package.
 - The baseline output is lossless WAV PCM24; decoded PCM sample tolerance is
   exactly zero. Container headers may differ; verify container and decoded

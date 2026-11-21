@@ -54,8 +54,12 @@ language/audience script variants explicit. The
 [control compiler](../spoken-edition-compilation-v1.md) places each selected take
 and its authored handoffs on a language-local sample clock. It produces a private
 plan and checks alignment metadata; it does not assemble audio or verify consent.
-The [phased plan](../media-expansion-pr-plan.md) tracks the remaining producer,
-independent checker and retained-edition work.
+The [bounded candidate producer](../spoken-edition-production-v1.md), currently
+an M03 engineering draft, reuses exact PCM windows to assemble selected takes
+with explicit pauses, overlap and processing. Its final local receipt closes a
+candidate package; independent checking and authority remain separate.
+The [phased plan](../media-expansion-pr-plan.md) tracks merged scope and the
+remaining independent checker and retained-edition work.
 
 | Work | Detailed contract |
 | --- | --- |
