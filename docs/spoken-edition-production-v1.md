@@ -67,6 +67,9 @@ use a wider integer accumulator and must meet the final profile peak limit.
 Only complete, bounded RIFF WAVE sources containing exact stereo 48,000 Hz
 signed PCM24 are accepted. The producer reuses REEL's bounded WAVE parser and
 PCM-window implementation; no external decoder, encoder or provider is launched.
+Ordinary two-channel PCM implies left/right; an extensible WAVE must explicitly
+declare the left/right mask (3). Unspecified or different masks are rejected,
+so two channels are never silently relabeled as a different stereo layout.
 This narrows the first producer to lossless native PCM. Other container/rate/
 channel/codec conversion is rejected rather than silently normalized. Existing
 song decoding and picture-bound scene production retain their contracts.
@@ -86,7 +89,8 @@ not opened or granted by this producer.
 | Absolute output sample peak | 4,194,303 | 7,476,354 |
 | Operation deadline | 30 seconds | 30 seconds |
 
-The spoken peak is a conservative integer ceiling below −1 dBFS; it is not a
+The spoken peak is `floor(2^23 × 10^(-1/20))`, using REEL's existing signed PCM24
+normalization by 2^23. It is a conservative integer ceiling below −1 dBFS, not a
 loudness, true-peak or intelligibility qualification. Metadata retains M02's
 limits; plan and local receipt are each capped at 16 MiB, policy at 256 KiB.
 The workspace bound covers staged/final files, not a process RSS guarantee.

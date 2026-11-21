@@ -19,6 +19,7 @@ struct Layout {
     bits: u16,
     rate: u32,
     channels: u16,
+    channel_mask: Option<u32>,
     data_range: std::ops::Range<usize>,
 }
 
@@ -54,6 +55,7 @@ fn layout(raw: &[u8]) -> Result<Layout> {
                     bail!("duplicate or truncated WAVE format")
                 }
                 let mut tag = u16le(chunk, 0);
+                let mut channel_mask = None;
                 let channels = u16le(chunk, 2);
                 let rate = u32le(chunk, 4);
                 let bits = u16le(chunk, 14);
@@ -69,6 +71,7 @@ fn layout(raw: &[u8]) -> Result<Layout> {
                         bail!("unsupported extensible WAVE format");
                     }
                     tag = u16le(chunk, 24);
+                    channel_mask = Some(u32le(chunk, 20));
                 }
                 if !(1..=2).contains(&channels)
                     || !(8000..=96000).contains(&rate)
@@ -78,7 +81,7 @@ fn layout(raw: &[u8]) -> Result<Layout> {
                 {
                     bail!("unsupported WAVE clock or PCM format");
                 }
-                format = Some((tag, channels, rate, bits));
+                format = Some((tag, channels, rate, bits, channel_mask));
             }
             b"data" => {
                 if data.is_some() {
@@ -93,7 +96,7 @@ fn layout(raw: &[u8]) -> Result<Layout> {
             .checked_add(size % 2)
             .ok_or_else(|| anyhow::anyhow!("WAVE padding overflow"))?;
     }
-    let (tag, channels, rate, bits) =
+    let (tag, channels, rate, bits, channel_mask) =
         format.ok_or_else(|| anyhow::anyhow!("WAVE format missing"))?;
     let data = data.ok_or_else(|| anyhow::anyhow!("WAVE data missing"))?;
     let width = usize::from(bits / 8);
@@ -109,6 +112,7 @@ fn layout(raw: &[u8]) -> Result<Layout> {
         bits,
         rate,
         channels,
+        channel_mask,
         data_range: data_range.ok_or_else(|| anyhow::anyhow!("WAVE data range missing"))?,
     })
 }
@@ -116,7 +120,9 @@ fn layout(raw: &[u8]) -> Result<Layout> {
 /// Borrow exact normalized source bytes using the same bounded RIFF validation.
 pub(crate) fn pcm24(raw: &[u8]) -> Result<&[u8]> {
     let value = layout(raw)?;
-    if (value.tag, value.bits, value.rate, value.channels) != (1, 24, 48_000, 2) {
+    if (value.tag, value.bits, value.rate, value.channels) != (1, 24, 48_000, 2)
+        || value.channel_mask.is_some_and(|mask| mask != 3)
+    {
         bail!("source requires exact 48kHz stereo PCM24 WAVE");
     }
     Ok(&raw[value.data_range])
@@ -129,6 +135,7 @@ pub(super) fn decode(raw: &[u8]) -> Result<Wave> {
         rate,
         channels,
         data_range,
+        ..
     } = layout(raw)?;
     let data = &raw[data_range.clone()];
     let width = usize::from(bits / 8);
@@ -203,6 +210,34 @@ pub(super) fn encode(samples: &[f32], rate: u32, channels: u16) -> Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn exact_pcm24_extensible_requires_left_right_channel_mask() {
+        let mut raw = b"RIFF".to_vec();
+        raw.extend(66u32.to_le_bytes());
+        raw.extend(b"WAVEfmt ");
+        raw.extend(40u32.to_le_bytes());
+        raw.extend(0xfffeu16.to_le_bytes());
+        raw.extend(2u16.to_le_bytes());
+        raw.extend(48000u32.to_le_bytes());
+        raw.extend(288000u32.to_le_bytes());
+        raw.extend(6u16.to_le_bytes());
+        raw.extend(24u16.to_le_bytes());
+        raw.extend(22u16.to_le_bytes());
+        raw.extend(24u16.to_le_bytes());
+        raw.extend(3u32.to_le_bytes());
+        raw.extend([1, 0, 0, 0, 0, 0, 16, 0, 128, 0, 0, 170, 0, 56, 155, 113]);
+        raw.extend(b"data");
+        raw.extend(6u32.to_le_bytes());
+        raw.extend([7, 0, 0, 249, 255, 255]);
+        assert_eq!(pcm24(&raw).unwrap(), [7, 0, 0, 249, 255, 255]);
+        for mask in [0u32, 1, 12] {
+            raw[40..44].copy_from_slice(&mask.to_le_bytes());
+            assert!(pcm24(&raw).is_err());
+            // The existing broad song decoder retains its prior acceptance;
+            // only the new exact stereo borrow path rejects unspecified/remapped channels.
+            assert!(decode(&raw).is_ok());
+        }
+    }
     #[test]
     fn float_bits_round_trip_and_container_damage_refuses() {
         let samples = [-0.0, 0.0, -1.0, 0.5, 1.0, -0.125];

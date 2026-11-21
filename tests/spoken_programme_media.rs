@@ -56,10 +56,23 @@ struct Fixture {
     temp: tempfile::TempDir,
     document: Document,
     signals: Vec<Vec<i32>>,
+    started: std::time::Instant,
+}
+
+impl Drop for Fixture {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            assert!(
+                self.started.elapsed() <= std::time::Duration::from_secs(60),
+                "spoken fixture exceeded its measured 60-second outer budget"
+            );
+        }
+    }
 }
 
 impl Fixture {
     fn new() -> Self {
+        let started = std::time::Instant::now();
         let document =
             serde_json::from_str(include_str!("fixtures/spoken-programme/four-editions.json"))
                 .unwrap();
@@ -67,6 +80,7 @@ impl Fixture {
             temp: tempfile::tempdir().unwrap(),
             document,
             signals: vec![],
+            started,
         };
         for (k, p) in f.document.performances.iter().enumerate() {
             let mut values = Vec::new();
@@ -367,6 +381,50 @@ fn peak_limit_is_inclusive_and_one_sample_above_refuses() {
     .unwrap_err();
     assert!(format!("{error:#}").contains("exceeds peak profile"));
     assert!(!second.exists());
+    assert!(f.output().join("receipt.json").exists());
+}
+
+#[test]
+fn spoken_peak_rounds_down_to_the_at_most_minus_one_dbfs_boundary() {
+    let mut f = Fixture::new();
+    f.signals[0][6000] = 7_476_354;
+    f.sync();
+    let runtime = producer::current_runtime().unwrap();
+    let make_plan = |f: &Fixture| {
+        serde_json::to_vec_pretty(
+            &compiler::compile_with_inputs(
+                &f.document,
+                f.temp.path(),
+                &runtime,
+                CompilationProfile::Spoken,
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    };
+    producer::produce(
+        &f.document,
+        &make_plan(&f),
+        &ProcessingPolicy::identity(),
+        f.temp.path(),
+        &f.output(),
+        || Ok(()),
+    )
+    .unwrap();
+    f.signals[0][6000] = 7_476_355;
+    f.sync();
+    let refused = f.temp.path().join("over-spoken-peak");
+    let error = producer::produce(
+        &f.document,
+        &make_plan(&f),
+        &ProcessingPolicy::identity(),
+        f.temp.path(),
+        &refused,
+        || Ok(()),
+    )
+    .unwrap_err();
+    assert!(format!("{error:#}").contains("exceeds peak profile"));
+    assert!(!refused.exists());
     assert!(f.output().join("receipt.json").exists());
 }
 
