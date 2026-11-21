@@ -94,11 +94,11 @@ These input descriptions do not expand executable workflow capacity. This slice
 retains a 1 GiB protected envelope/retained aggregation scope, 128 MiB response
 scope, 512 MiB staging scope, 512 resource objects, 128 changed paths per phase
 and 16 total actors. Admission conservatively preflights response/close paths
-before effects, counting unknown output hashes separately. Close/retention also
-check actual target state. Declared response counts/bytes, the native reader's
+before effects, counting unknown output hashes separately. Declared response
+counts/bytes, the native reader's
 per-object allowance and combined input/output envelope with metadata reserve
-must fit before acceptance; oversized responses cannot strand a newly started
-provider operation at ingestion. Close/retention additionally
+must fit before acceptance; incompatible declarations refuse before protected
+work is accepted. Close/retention additionally
 check actual target state. The 64 MiB legacy reader bound is not a universal film
 limit. Large native metadata can be inspected while an unqualified large job is
 refused before admission/production. Controls remain bounded to 1 MiB, with the
