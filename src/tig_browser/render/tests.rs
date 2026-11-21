@@ -182,7 +182,9 @@ fn limits() -> Limits {
             max_frames: 6,
             max_canvas_pixels: 64,
             max_elapsed_ms: 60000,
-            max_io_wait_ms: 15000,
+            // Cold hosted Edge discovery can exceed 15s before resource serving starts.
+            // This is fixture startup/IO budget, not a corruption or overall-timeout waiver.
+            max_io_wait_ms: 30000,
         },
         max_workspace_bytes: 128 * 1024 * 1024,
         max_output_bytes: 1024 * 1024,

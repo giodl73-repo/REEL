@@ -46,6 +46,9 @@ names, executable arguments and the smallest relevant runnable examples.
 Repository-required hosted checks still apply to the PR; a docs edit does not
 authorize bypassing them. No new test harness is needed merely to mirror prose.
 
+See [CI scope and timing](ci.md) for the documentation fast path, parallel
+qualification groups and the 30-minute PR target.
+
 ## Review and land
 
 Apply the relevant [role checklists](../.roles/ROLE.md) and

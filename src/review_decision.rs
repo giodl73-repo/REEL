@@ -363,7 +363,7 @@ fn validate_input(input: &ReviewFindingInput) -> Result<()> {
     }
     if !matches!(
         input.target_kind.as_str(),
-        "video" | "artifact-report" | "animatic-receipt" | "comparison-receipt"
+        "video" | "artifact-report" | "animatic-receipt" | "comparison-receipt" | "spoken-edition"
     ) {
         bail!("unsupported review target kind {}", input.target_kind);
     }
@@ -396,7 +396,7 @@ fn validate_input(input: &ReviewFindingInput) -> Result<()> {
     Ok(())
 }
 
-fn validate_record(record: &ReviewDecisionRecord) -> Result<()> {
+pub(crate) fn validate_record(record: &ReviewDecisionRecord) -> Result<()> {
     if record.schema != DECISION_SCHEMA
         || !is_sha256(&record.source_finding_sha256)
         || !is_sha256(&record.target_sha256)
@@ -410,7 +410,11 @@ fn validate_record(record: &ReviewDecisionRecord) -> Result<()> {
         || record.claims.approval
         || !matches!(
             record.target_kind.as_str(),
-            "video" | "artifact-report" | "animatic-receipt" | "comparison-receipt"
+            "video"
+                | "artifact-report"
+                | "animatic-receipt"
+                | "comparison-receipt"
+                | "spoken-edition"
         )
         || !matches!(record.authority.as_str(), "advisory" | "final")
     {
@@ -460,6 +464,7 @@ fn validate_target_kind(path: &Path, kind: &str) -> Result<()> {
         ),
         "animatic-receipt" => schema == "reel.animatic-receipt.v0.1",
         "comparison-receipt" => schema == "reel.comparison-receipt.v0.1",
+        "spoken-edition" => schema == "reel.spoken-review-target.v1",
         _ => false,
     };
     if !valid {

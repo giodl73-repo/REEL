@@ -1,6 +1,10 @@
 # Capability and adoption roadmap
 
-Checkpoint: 2026-11-07. This is a source/adoption map, not a release promise or a
+Historical checkpoint: 2026-11-07. PR states below describe that checkpoint;
+consult [development status](development-status.md) for active workflow work and
+verify current PR states before relying on them.
+
+This is a source/adoption map, not a release promise or a
 report on any private project's readiness. See [use cases](use-cases.md) for
 workflow choices and [architecture](architecture.md) for ownership boundaries.
 

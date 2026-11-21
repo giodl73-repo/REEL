@@ -2,7 +2,12 @@
 
 `review-record` creates a strict private `reel.review-decision.v0.1` JSON file
 from an exact local video, artifact report, animatic receipt, or comparison
-receipt plus a strict finding YAML:
+receipt plus a strict finding YAML.
+
+The additive `spoken-edition` target accepts an exact
+`reel.spoken-review-target.v1` artifact from the [native spoken adapter](spoken-edition-history-v1.md).
+It binds edition recipes, runtime, WAV and accessible text. Matching the binding
+does not authenticate a reviewer or grant listening approval, consent or release.
 
 ```yaml
 schema: reel.review-finding.v0.1

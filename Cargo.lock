@@ -1462,29 +1462,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "reel-screenplay"
+name = "reel-publication"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "regex",
  "serde",
- "serde_json",
- "sha2 0.11.0",
- "tempfile",
 ]
 
 [[package]]
-name = "reel-voice-design"
+name = "reel-workflow"
 version = "0.1.0"
 dependencies = [
- "anyhow",
- "base64 0.22.1",
+ "reel-publication",
  "serde",
  "serde_json",
  "sha2 0.11.0",
  "tempfile",
- "ureq",
- "zeroize",
 ]
 
 [[package]]
@@ -2633,3 +2625,30 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "reel-screenplay"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+
+[[package]]
+name = "reel-voice-design"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "ureq",
+ "zeroize",
+]

@@ -76,6 +76,7 @@ pub mod song_edition;
 pub mod sonic_assets;
 #[cfg(feature = "speech-provider")]
 pub mod speech_generation;
+pub mod spoken_programme;
 pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;
