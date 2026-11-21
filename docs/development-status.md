@@ -18,6 +18,12 @@ The [phased PR sequence](media-expansion-pr-plan.md) starts with a source-backed
 reuse/gap map, then separates spoken production, companion packages,
 installation playback and interaction into bounded implementation PRs.
 
+The first implementation slice adds [spoken-edition declaration validation](spoken-edition-v1.md):
+modules, speaker cues, language scripts, selected performances and explicit
+handoffs. It reads no referenced media or authority evidence and is not an
+audio-only programme producer. Compilation, production, independent media/text
+checking and retained edition integration remain later slices.
+
 ## Workflow orchestration
 
 As observed on 2026-11-20, workflow development is active in a separate local
