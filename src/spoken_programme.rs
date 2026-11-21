@@ -9,6 +9,8 @@ use crate::{cue_relative::CueMarker, scene_delivery::FileRef};
 
 pub mod checker;
 pub mod compiler;
+#[cfg(feature = "tig-history")]
+pub mod history;
 pub mod producer;
 
 pub const SCHEMA: &str = "reel.spoken-edition.v1";
