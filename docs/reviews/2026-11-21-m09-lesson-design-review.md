@@ -1,8 +1,8 @@
 # M09 lesson: source audit and pre-implementation checklist
 
-Status: preparatory design only, on M08 head `aee988c` / PR #391. No M09 runtime,
-assets, musical approval or tests have been produced. M08 must merge before final
-M09 qualification. This is one assistant applying the repository's role
+Status: preparatory design only, on merged M08 `d48c427` / PR #391. No M09 runtime,
+assets, musical approval or tests have been produced. M09 implementation and its
+own qualification remain required. This is one assistant applying the repository's role
 checklists; it is not independent review or authorization.
 
 The [lesson contract](../lesson-rehearsal-v1.md) fixes the hand-derived pickup,

@@ -1,8 +1,8 @@
 # Source-bound lesson and rehearsal package
 
-**Status:** preparatory M09 contract on exact stacked M08 head
-`aee988c6f7eb2bb71581288c482eef81cf61e455`, [PR #391](https://github.com/giodl73-repo/REEL/pull/391).
-M08 must merge before final M09 qualification or merge. No M09 runtime or fixture
+**Status:** preparatory M09 contract on merged M08
+`d48c42722bf33e2868653872c2fe5b5939f83796`, [PR #391](https://github.com/giodl73-repo/REEL/pull/391).
+Its required CI passed in 22 minutes 33 seconds. No M09 runtime or fixture
 has been produced. This draft fixes the intended example and records the source
 interfaces and gaps before implementation.
 

@@ -97,8 +97,8 @@ cannot claim or inherit them for real performances or delivery.
 | 1 | M05: retained editions and selective invalidation | M04 | Merged [#383](https://github.com/giodl73-repo/REEL/pull/383), `027164f`; required hosted checks passed ([CI](https://github.com/giodl73-repo/REEL/actions/runs/44916089006)) |
 | 1 checkpoint | M06: spoken fixture qualification and multi-cue coverage | M05 | Merged [#384](https://github.com/giodl73-repo/REEL/pull/384), `cef69f7`; required hosted checks passed; spoken checkpoint awaiting listening evidence |
 | 2 — companion formats | M07: declared music/Sonic layers | M06 | Merged [#387](https://github.com/giodl73-repo/REEL/pull/387), `1db7679`; required [CI](https://github.com/giodl73-repo/REEL/actions/runs/44933453094) passed in 21m07s; [layer contract](spoken-edition-layers-v1.md) |
-| 2 | M08: narrated reading package | M07 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m08-reading); 76 distinct local tests pass; [reading contract](narrated-reading-v1.md), [checklist/test map](reviews/2026-11-21-m08-narrated-reading-review.md). Merged-parent hosted qualification pending |
-| 2 | M09: lesson/rehearsal package | M08 | Planned |
+| 2 | M08: narrated reading package | M07 | Merged [#391](https://github.com/giodl73-repo/REEL/pull/391), `d48c427`; required [CI](https://github.com/giodl73-repo/REEL/actions/runs/44935951265) passed in 22m33s; [reading contract](narrated-reading-v1.md), [checklist/test map](reviews/2026-11-21-m08-narrated-reading-review.md) |
+| 2 | M09: lesson/rehearsal package | M08 | Preparatory [contract](lesson-rehearsal-v1.md) and [source/role review](reviews/2026-11-21-m09-lesson-design-review.md); admitted score-input seam and runtime proof remain to implement |
 | 2 checkpoint | M10: semantic visual companion | M09 | Planned |
 | 3 — installations | M11: installation playback contract | M10 | Planned |
 | 3 checkpoint | M12: single-device offline player | M11 | Planned |
