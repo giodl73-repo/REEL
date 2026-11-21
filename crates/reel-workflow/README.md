@@ -5,6 +5,10 @@ results, bounded streaming byte checks and a local manual prompt/result loop.
 It is the first code slice of the [workflow PR plan](../../docs/workflow-pr-plan.md).
 It is not a production film runtime or an adoption of any existing production.
 
+The [existing-film inspection adapter](../../docs/workflow-film-inspection.md)
+adds read-only sidecars for pinned native v2 scene metadata. It reuses
+`reel-assembly`, with no native SDK or media-renderer dependency.
+
 Run the synthetic example from the repository root:
 
 ```text
