@@ -30,7 +30,7 @@ fn v4_serialization_uses_supported_controls_and_preserves_legacy_requests() {
     }
 }
 
-fn fixture() -> Prepared {
+pub(super) fn fixture() -> Prepared {
     let request = Request {
         schema: "reel.speech-request.v1".into(),
         provider: "elevenlabs".into(),
@@ -85,7 +85,7 @@ fn fixture() -> Prepared {
         provider_body,
     }
 }
-fn response(text: &str) -> Vec<u8> {
+pub(super) fn response(text: &str) -> Vec<u8> {
     let characters = text.chars().map(|c| c.to_string()).collect::<Vec<_>>();
     let count = characters.len();
     let pcm = (0..4410i16).flat_map(i16::to_le_bytes).collect::<Vec<_>>();

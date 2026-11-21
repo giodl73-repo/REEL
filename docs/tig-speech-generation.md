@@ -9,7 +9,20 @@ production assets. Build with `cargo build --locked --features speech-provider
 reel-tig-speech inspect PROFILE
 reel-tig-speech capture PROFILE RESPONSE_SHA256 RESPONSE_BYTES NEW_ABSOLUTE_OUTPUT
 reel-tig-speech execute PROFILE NEW_ABSOLUTE_OUTPUT
+reel-tig-speech cut PROFILE SPEC NEW_ABSOLUTE_OUTPUT
 ```
+
+`cut` extracts exact PCM samples from an approved canonical mono PCM16/44100
+audition, with no provider call. A `reel.speech-cut.v1` specification pins the
+wave, raw alignment and exact owner approval, then supplies segments with safe
+IDs, half-open source character ranges and expected text. Role, language, model,
+source text and wave must match the approval subject. Every selected timestamp
+must fit the source PCM. A qualified prefix can be extracted when a later,
+unselected endpoint is invalid; the receipt keeps that global failure explicit.
+Derived alignment endpoints use the native sample grid (floor starts, ceil ends,
+less than one sample of quantization). Original PCM and alignment remain intact.
+Outputs contain clip WAVs, checked relative alignments and a source-bound receipt;
+technical qualification does not approve the edit or authorize public release.
 
 Inspection verifies existing objects without reading credentials, writing an
 attempt or contacting a provider. Capture imports an existing exact response;

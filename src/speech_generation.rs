@@ -14,6 +14,9 @@ use tig_core::Object;
 use tig_store::existing::{ByteSource, Profile as ByteProfile, ReadCache, RequiredProtection};
 use zeroize::Zeroizing;
 
+mod cut;
+pub use cut::cut;
+
 const CONTROL_MAX: u64 = 65_536;
 const RESPONSE_MAX: u64 = 16 * 1024 * 1024;
 const RATE: u64 = 44_100;
