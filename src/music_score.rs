@@ -8,7 +8,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use reel_music::{
     export::{self, ScoreExportPlan},
-    hash::{canonical_sha256, sha256_path},
+    hash::canonical_sha256,
     model::{LyricLayerKind, MusicModel, PartRole},
 };
 use serde::{Deserialize, Serialize};
@@ -285,18 +285,35 @@ pub fn check(
     model_path: &Path,
     output_dir: &Path,
 ) -> Result<ExportReport> {
-    export::validate(plan_path, model_path)?;
-    let bytes = fs::read(receipt_path)
+    check_with_inputs(
+        receipt_path,
+        plan_path,
+        model_path,
+        output_dir,
+        &mut reel_music::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn check_with_inputs(
+    receipt_path: &Path,
+    plan_path: &Path,
+    model_path: &Path,
+    output_dir: &Path,
+    inputs: &mut reel_music::validation_inputs::ValidationInputs<'_>,
+) -> Result<ExportReport> {
+    export::validate_with_inputs(plan_path, model_path, inputs)?;
+    let bytes = inputs
+        .read(receipt_path)
         .with_context(|| format!("failed to read {}", receipt_path.display()))?;
     let actual: ExportReceipt = serde_json::from_slice(&bytes)
         .with_context(|| format!("invalid score export receipt: {}", receipt_path.display()))?;
-    let plan = export::load(plan_path)?;
-    let model = reel_music::model::load(model_path)?;
-    let expected = build_receipt(plan_path, model_path, output_dir, &plan, &model)?;
+    let plan = export::load_with_inputs(plan_path, inputs)?;
+    let model = reel_music::model::load_with_inputs(model_path, inputs)?;
+    let expected =
+        build_receipt_with_inputs(plan_path, model_path, output_dir, &plan, &model, inputs)?;
     if actual != expected {
         bail!("score export receipt or exported artifacts do not match current inputs");
     }
-    report(output_dir, &actual)
+    report_with_inputs(output_dir, &actual, inputs)
 }
 
 fn build_receipt(
@@ -306,18 +323,38 @@ fn build_receipt(
     plan: &ScoreExportPlan,
     model: &MusicModel,
 ) -> Result<ExportReceipt> {
+    build_receipt_with_inputs(
+        plan_path,
+        model_path,
+        output_dir,
+        plan,
+        model,
+        &mut reel_music::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+fn build_receipt_with_inputs(
+    plan_path: &Path,
+    model_path: &Path,
+    output_dir: &Path,
+    plan: &ScoreExportPlan,
+    model: &MusicModel,
+    inputs: &mut reel_music::validation_inputs::ValidationInputs<'_>,
+) -> Result<ExportReceipt> {
     let expected = snapshot(model);
     let midi_path = output_dir.join("score.mid");
     let xml_path = output_dir.join("score.musicxml");
     let wav_path = output_dir.join("rehearsal-guide.wav");
-    let midi_snapshot = parse_midi(&fs::read(&midi_path)?)?;
-    let xml_snapshot = parse_musicxml(&fs::read_to_string(&xml_path)?)?;
+    let midi_snapshot = parse_midi(&inputs.read(&midi_path)?)?;
+    let xml_snapshot = parse_musicxml(&inputs.text(&xml_path)?)?;
     let midi_comparison = compare(&expected, &midi_snapshot);
     let xml_comparison = compare(&expected, &xml_snapshot);
     if !midi_comparison.passed || !xml_comparison.passed {
         bail!("score export failed independent round-trip comparison");
     }
-    let guide = inspect_wav(&fs::read(&wav_path)?, expected_guide_samples(model, plan)?)?;
+    let guide = inspect_wav(
+        &inputs.read(&wav_path)?,
+        expected_guide_samples(model, plan)?,
+    )?;
     if !guide.passed {
         bail!("rehearsal guide WAV validation failed");
     }
@@ -328,7 +365,7 @@ fn build_receipt(
         .collect::<BTreeMap<_, _>>();
     let lead_sheet = if let Some(sheet) = &model.lead_sheet {
         let path = output_dir.join("lead-sheet.svg");
-        let actual = fs::read_to_string(&path)?;
+        let actual = inputs.text(&path)?;
         let expected_svg = write_lead_sheet_svg(model_path, model)?;
         let melody = model
             .parts
@@ -352,7 +389,7 @@ fn build_receipt(
     };
     let piano_vocal_score = if let Some(score) = &model.piano_vocal_score {
         let path = output_dir.join("piano-vocal.musicxml");
-        let actual = fs::read_to_string(&path)?;
+        let actual = inputs.text(&path)?;
         let expected_xml = write_piano_vocal_musicxml(model_path, model)?;
         let measures = measure_spans(model, score.pickup_ticks)?.len();
         let part = |id: &str| {
@@ -385,7 +422,7 @@ fn build_receipt(
         None
     };
     let instrumental_score = if let Some(score) = &model.instrumental_score {
-        let actual = fs::read_to_string(output_dir.join("instrumental-score.musicxml"))?;
+        let actual = inputs.text(&output_dir.join("instrumental-score.musicxml"))?;
         let expected_xml = write_instrumental_musicxml(model)?;
         let fragments = verify_instrumental_fragments(&actual, model)?;
         let comparison = InstrumentalScoreComparison {
@@ -430,8 +467,8 @@ fn build_receipt(
         artifacts.push(ArtifactReceipt {
             kind: kind.into(),
             filename: filename.into(),
-            sha256: sha256_path(&path)?,
-            bytes: fs::metadata(&path)?.len(),
+            sha256: inputs.sha256(&path)?,
+            bytes: inputs.len(&path)?,
             adapter: request.adapter.clone(),
             adapter_version: request.adapter_version.clone(),
         });
@@ -455,9 +492,9 @@ fn build_receipt(
     Ok(ExportReceipt {
         schema: RECEIPT_SCHEMA.into(),
         export_id: plan.export_id.clone(),
-        plan_sha256: sha256_path(plan_path)?,
+        plan_sha256: inputs.sha256(plan_path)?,
         plan_contract_sha256: canonical_sha256(plan)?,
-        model_manifest_sha256: sha256_path(model_path)?,
+        model_manifest_sha256: inputs.sha256(model_path)?,
         model_contract_sha256: canonical_sha256(model)?,
         artifacts,
         round_trip: RoundTripReceipt {
@@ -475,12 +512,23 @@ fn build_receipt(
 }
 
 fn report(output_dir: &Path, receipt: &ExportReceipt) -> Result<ExportReport> {
+    report_with_inputs(
+        output_dir,
+        receipt,
+        &mut reel_music::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+fn report_with_inputs(
+    output_dir: &Path,
+    receipt: &ExportReceipt,
+    inputs: &mut reel_music::validation_inputs::ValidationInputs<'_>,
+) -> Result<ExportReport> {
     let receipt_path = output_dir.join("receipt.json");
     Ok(ExportReport {
         schema: RECEIPT_SCHEMA.into(),
         output_dir: output_dir.display().to_string(),
         receipt: receipt_path.display().to_string(),
-        receipt_sha256: sha256_path(&receipt_path)?,
+        receipt_sha256: inputs.sha256(&receipt_path)?,
         artifacts: receipt.artifacts.len(),
         midi_round_trip: receipt.round_trip.midi.passed,
         musicxml_round_trip: receipt.round_trip.musicxml.passed,
@@ -1996,7 +2044,7 @@ fn selected_part(model: &MusicModel) -> &reel_music::model::Part {
         .unwrap_or(&model.parts[0])
 }
 
-fn tick_to_sample(tick: u64, model: &MusicModel, sample_rate: u32) -> Result<u64> {
+pub(crate) fn tick_to_sample(tick: u64, model: &MusicModel, sample_rate: u32) -> Result<u64> {
     let mut weighted_ticks = 0u128;
     for (index, tempo) in model.tempo_map.iter().enumerate() {
         if tick <= tempo.tick {

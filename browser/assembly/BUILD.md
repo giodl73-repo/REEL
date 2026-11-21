@@ -20,7 +20,11 @@ The static package stages explicit runtime, source, legal and provenance files
 only. Native test requests, CLI executables, Cargo metadata, screenshots and logs
 stay outside the served tree. Exact Git source and served inventory are checked
 before and after artifact transfer; the initial runtime budget is 512 KiB and the complete source/legal site budget
-is 8 MiB. Source replay uses
+is 10 MiB. The complete archive includes the repository's committed SDK source;
+its size grows independently of the 512 KiB initial runtime. M09's source/tests
+crossed the former 8 MiB complete-package cap after main reached 8,375,358 bytes;
+the runtime was 319,155 bytes. Both limits remain enforced by packaging and
+independent artifact verification. Source replay uses
 an extraction path with spaces outside every Git checkout and verifies first-party
 manifest containment. Cross-directory binary identity is not claimed; native and
 WASM results must agree exactly. Original production CI remains separate.

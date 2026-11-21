@@ -336,17 +336,47 @@ pub struct ValidationReport {
 }
 
 pub fn load(path: &Path) -> Result<MusicModel> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    load_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn load_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<MusicModel> {
+    let bytes = inputs
+        .read(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     serde_yaml::from_slice(&bytes)
         .with_context(|| format!("music model is not valid YAML: {}", path.display()))
 }
 
 pub fn validate(path: &Path) -> Result<ValidationReport> {
-    let model = load(path)?;
-    validate_loaded(path, &model)
+    validate_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
 }
-
-fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> {
+pub fn validate_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ValidationReport> {
+    let model = load_with_inputs(path, inputs)?;
+    validate_loaded(path, &model, inputs)
+}
+fn validate_loaded(
+    path: &Path,
+    model: &MusicModel,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ValidationReport> {
+    if inputs.is_admitted()
+        && (!model.lyric_layers.is_empty()
+            || model.lead_sheet.is_some()
+            || model.piano_vocal_score.is_some())
+    {
+        bail!("admitted instrumental score profile does not support lyric or vocal layouts");
+    }
     if model.schema != SCHEMA {
         bail!("music model schema must be {SCHEMA}");
     }
@@ -356,13 +386,13 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
         bail!("duration_ticks must be positive");
     }
     model.musical_timebase.validate()?;
-    let source_path = validate_source_binding(path, &model.source)?;
-    let source_report = source::validate(&source_path)?;
-    let source_manifest = source::load(&source_path)?;
+    let source_path = validate_source_binding(path, &model.source, inputs)?;
+    let source_report = source::validate_with_inputs(&source_path, inputs)?;
+    let source_manifest = source::load_with_inputs(&source_path, inputs)?;
     if model.musical_timebase != source_manifest.musical_timebase {
         bail!("model musical_timebase must match the immutable source timebase");
     }
-    let evidence = validate_analysis_bindings(path, model, &source_report.contract_sha256)?;
+    let evidence = validate_analysis_bindings(path, model, &source_report.contract_sha256, inputs)?;
     let mut human_corrected = 0;
 
     validate_point_maps(model, &evidence, &mut human_corrected)?;
@@ -383,7 +413,7 @@ fn validate_loaded(path: &Path, model: &MusicModel) -> Result<ValidationReport> 
     Ok(ValidationReport {
         schema: SCHEMA.into(),
         model_id: model.model_id.clone(),
-        manifest_sha256: sha256_path(path)?,
+        manifest_sha256: inputs.sha256(path)?,
         contract_sha256: canonical_sha256(model)?,
         source_contract_sha256: source_report.contract_sha256,
         analysis_contract_sha256s: model
@@ -626,15 +656,19 @@ fn validate_instrumental_score(model: &MusicModel) -> Result<()> {
     Ok(())
 }
 
-fn validate_source_binding(path: &Path, binding: &SourceBinding) -> Result<PathBuf> {
+fn validate_source_binding(
+    path: &Path,
+    binding: &SourceBinding,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<PathBuf> {
     validate_sha256("source.manifest_sha256", &binding.manifest_sha256)?;
     validate_sha256("source.contract_sha256", &binding.contract_sha256)?;
     validate_sha256("source.decoded_pcm_sha256", &binding.decoded_pcm_sha256)?;
     let source_path = source::resolve(path, &binding.manifest);
-    if sha256_path(&source_path)? != binding.manifest_sha256.to_lowercase() {
+    if inputs.sha256(&source_path)? != binding.manifest_sha256.to_lowercase() {
         bail!("source manifest sha256 does not match model binding");
     }
-    let report = source::validate(&source_path)?;
+    let report = source::validate_with_inputs(&source_path, inputs)?;
     if report.contract_sha256 != binding.contract_sha256
         || report.decoded_pcm_sha256 != binding.decoded_pcm_sha256
     {
@@ -647,6 +681,7 @@ fn validate_analysis_bindings(
     path: &Path,
     model: &MusicModel,
     source_contract_sha256: &str,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
 ) -> Result<BTreeMap<String, BTreeSet<String>>> {
     if model.analyses.is_empty() {
         bail!("analyses must not be empty");
@@ -657,11 +692,11 @@ fn validate_analysis_bindings(
         validate_sha256("analyses[].manifest_sha256", &binding.manifest_sha256)?;
         validate_sha256("analyses[].contract_sha256", &binding.contract_sha256)?;
         let analysis_path = source::resolve(path, &binding.manifest);
-        if sha256_path(&analysis_path)? != binding.manifest_sha256.to_lowercase() {
+        if inputs.sha256(&analysis_path)? != binding.manifest_sha256.to_lowercase() {
             bail!("analysis {} manifest sha256 is stale", binding.analysis_id);
         }
-        let report = analysis::validate(&analysis_path)?;
-        let manifest = analysis::load(&analysis_path)?;
+        let report = analysis::validate_with_inputs(&analysis_path, inputs)?;
+        let manifest = analysis::load_with_inputs(&analysis_path, inputs)?;
         if report.analysis_id != binding.analysis_id
             || report.contract_sha256 != binding.contract_sha256
             || report.source_contract_sha256 != source_contract_sha256

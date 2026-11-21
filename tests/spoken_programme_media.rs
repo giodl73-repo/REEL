@@ -3,6 +3,9 @@
 mod checking;
 #[path = "support/spoken_layers.rs"]
 mod layers;
+#[cfg(feature = "print")]
+#[path = "support/spoken_lesson.rs"]
+mod lesson;
 #[path = "support/spoken_multicue.rs"]
 mod qualification;
 #[cfg(feature = "print")]

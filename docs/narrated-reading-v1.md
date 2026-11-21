@@ -2,7 +2,9 @@
 
 **Status:** M08 implementation under engineering qualification, built on merged
 [M07 #387](https://github.com/giodl73-repo/REEL/pull/387), `1db7679`.
-M08 current-head hosted qualification remains required.
+M08 merged as [#391](https://github.com/giodl73-repo/REEL/pull/391), `d48c427`,
+after [required hosted checks](https://github.com/giodl73-repo/REEL/actions/runs/44935951265)
+passed in 22m33s. The scope below is the qualified engineering profile.
 This is an authored index over admitted assets, not EPUB/store integration or a
 new storage, publishing, narration or print-rendering engine.
 
