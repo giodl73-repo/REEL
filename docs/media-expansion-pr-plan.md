@@ -97,7 +97,7 @@ cannot claim or inherit them for real performances or delivery.
 | 1 | M05: retained editions and selective invalidation | M04 | Merged [#383](https://github.com/giodl73-repo/REEL/pull/383), `027164f`; required hosted checks passed ([CI](https://github.com/giodl73-repo/REEL/actions/runs/44916089006)) |
 | 1 checkpoint | M06: spoken fixture qualification and multi-cue coverage | M05 | Merged [#384](https://github.com/giodl73-repo/REEL/pull/384), `cef69f7`; required hosted checks passed; spoken checkpoint awaiting listening evidence |
 | 2 — companion formats | M07: declared music/Sonic layers | M06 | [Implementation branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m07-layers); [layer contract](spoken-edition-layers-v1.md), 69 distinct local tests/lint pass; hosted qualification pending |
-| 2 | M08: narrated reading package | M07 | Planned |
+| 2 | M08: narrated reading package | M07 | Isolated implementation; [reading contract](narrated-reading-v1.md) and [checklist/test map](reviews/2026-11-21-m08-narrated-reading-review.md). Prerequisite merge and final qualification pending |
 | 2 | M09: lesson/rehearsal package | M08 | Planned |
 | 2 checkpoint | M10: semantic visual companion | M09 | Planned |
 | 3 — installations | M11: installation playback contract | M10 | Planned |

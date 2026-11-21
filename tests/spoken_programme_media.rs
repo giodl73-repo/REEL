@@ -5,6 +5,9 @@ mod checking;
 mod layers;
 #[path = "support/spoken_multicue.rs"]
 mod qualification;
+#[cfg(feature = "print")]
+#[path = "support/spoken_reading.rs"]
+mod reading;
 use anyhow::{Result, bail};
 use reel::spoken_programme::{
     Document,
