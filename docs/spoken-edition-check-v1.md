@@ -1,7 +1,7 @@
 # Independent spoken-edition checking and text access
 
-**Status:** M04 implementation locally checked on merged M03 `a8b481b`.
-Required hosted qualification and merge remain pending. Dependencies and closure remain
+**Status:** M04 merged as `c59b490` in [PR #382](https://github.com/giodl73-repo/REEL/pull/382)
+after required hosted checks passed. Dependencies and closure remain
 in the [PR plan](media-expansion-pr-plan.md). The
 [producer contract](spoken-edition-production-v1.md) defines the candidate input.
 
