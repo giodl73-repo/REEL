@@ -526,3 +526,77 @@ actual source/byte guards and fresh post-exit observations. Producer findings
 addressed; full P4, independent/human approval and production activation OPEN.
 Next implement/qualify explicit client control-ingress/enrollment through the
 existing Publisher and separate ingress sources, preserving the reserved seeds.
+
+
+## Explicit client control ingress entry
+
+Input00fabd0a977c78f9621e50b3b30b4e46955a6b1f; SDK0ccb137 unchanged.
+P4 WP-011/016, REQ-001/002/004/006/007/008/010;
+SPEC-002/003/004/005/007/008/010/011; IF-002/004/005/008/010/012;
+PKG-001/003/004/006; RUST/PROVIDER/INTEGRATION. Allowed: bounded immutable
+control bytes/SDK plan preparation, original-plan encoding and explicit native
+client setup fixtures/docs. No new publisher, journal, cache, automatic enrollment,
+creative selection, deployment or old-route replacement. Entry: retained Binding,
+three reserved seeds, admitted pool roster and explicitly enrolled ingress source.
+Exit: original packet/request/tool/preview/binding and return/plan controls enter
+through original native Publisher; original plans recover without source, and
+reserved seeds stay unused until composite admission. L0 format/diff/source pins;
+L1 pure corruption/size/plan bounds + locked adapter tests/Clippy; L2 ordinary/bare
+native client setup and original lifecycle/abrupt-exit recovery. Reuse qualified
+SDK Plan/Publisher/Ready and existing seeds; keep independent/owner acceptance OPEN.
+
+
+Client ingress implementation: `ingress::Control` owns exact immutable <=1 MiB
+bytes, binds Artifact hash/length, prepares the original SDK Plan through the
+actual configured roster namespace, and requires an empty separate Retention
+source/owner/revision. It refuses the input Job and all three composite seeds.
+No enrollment or publication follows from preparation. Plan wire stays the SDK's
+own; bounded streaming serialization and decode enforce64 KiB and independently
+pinned original bytes/guarded one-shot protocol. Restore needs no original source.
+Native Publisher/Ready remain unchanged, with no new cache/log/receipt format.
+
+The joined native fixture now explicitly enrolls seven ingress sources and uses
+that SDK for packet/request/preview/tool/binding and raw-return/frozen-plan bytes.
+All original plan wires are written/synced before effects; actual Ready guards
+span composite admission. Source-free SDK resume returns the same original receipt.
+Reserved/Job/Branch sources, absent sources, wrong owner/namespace and stale
+revisions refuse before freeze; re-preparing a published source refuses rather
+than replacing original IDs. CLIENT-SETUP.md documents the complete explicit SDK
+sequence and owner/caller control-persistence boundary. No new CLI publisher.
+
+Actual post-effect crash: the uncertainty fixture first persists REEL's original
+ImportPending through the actual Lifecycle, then holds original Lifecycle guards
+while a child reopens exact return/plans from the retained result seed and invokes
+the original SDK Plan on peer resource handles. It exits83 at Imported after the
+real native command, before its acknowledgement, bypassing every Rust destructor.
+A native effect may advance its own namespace/ledger; the original input source
+stays selected. Parent and another fresh process observe the SAME uncertainty;
+parent recovery performs zero producer reads and never completes/republishes.
+This is a guarded post-command native-effect boundary, not a kill during an
+in-flight native subprocess. Nine actual child exits now span these cases.
+
+Producer recovery/custody/provenance checks: original plan storage must precede
+visibility and remain outside disposable scratch; pins are data, not authority;
+individual ingress cannot consume reserved source revisions; preparation is no
+admission; missing/unknown facts never become success; per-object limits are not
+aggregate quotas. Documentation preserves independent/human acceptance and P2/P5/
+P6 gates. Main-base integration remains separate from this isolated SDK route.
+
+
+Client verification closeout: 38 locked default cases PASS; strict all-target
+Clippy/fmt/diff PASS. Consolidated actual native lifecycle profile PASS243.79s:
+three meaningful cases plus inert worker; nine real child exits. All seven
+control blobs publish through the SDK; ordinary/bare final recovery works with
+Git/producer/staging offline. Actual Imported-stage process exit remains uncertain
+with zero producer reads; no creative selection changes. See external
+reel-public-client-ingress-final-{all,clippy,native}.log. Other implementation
+native cases inherit5e52253 where unchanged. Exact new hosted run pending push.
+Implementation, verification and the named synthetic validation/trace close for
+this SDK client entry; independent/human approval and P4/P2/P5/P6 acceptance do not.
+
+Main integration inspection: mainf6d079c already has identical handoff.rs and
+workspace snapshot guard APIs. The old branch's publication::InputReader lives
+inside its unmerged comic/publication module; only that generic seam is needed
+by this adapter. Next qualify a narrow main-based integration of owned adapter
+commits plus a generic InputReader seam, rather than merging the595-file ancestry.
+Keep the old route and every other active worktree untouched.

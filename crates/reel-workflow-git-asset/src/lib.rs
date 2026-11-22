@@ -18,6 +18,7 @@ pub mod binding;
 pub mod candidates;
 pub mod claims;
 pub mod handoff;
+pub mod ingress;
 pub mod retention;
 pub mod workspace;
 

@@ -362,18 +362,28 @@ Rust destructors under the real Lifecycle guards:
 | --- | --- | --- |
 | Manual waiting with original input/control guards held | Ordinary and bare | Waiting and durable claims survive; original work can reopen. |
 | ImportPending persisted, before candidate registration | Ordinary | Original result/plans complete through reconcile; no replacement operation. |
-| Original native effect already uncertain, child observes uncertainty then exits | Ordinary | ImportPending and original uncertainty survive; no effect replay or final acknowledgement. |
+| Original SDK native import completed, before acknowledgement, then another child observes uncertainty and exits | Ordinary | Real Lifecycle guards span the effect; ImportPending and original uncertainty survive, with no effect replay or producer reads. |
 | Results retained, input job settled, before workflow acknowledgement | Ordinary | Original retained cohort reopens with Git/producer/staging offline and no producer reads. |
 | Previously acknowledged retained result | Bare | Read-only verification survives exit with unchanged storage state. |
 
 The parent reopens namespace/ledger disk state before and after each child,
 requires unchanged checkpoints and then exercises original recovery. The child
 recipe is bounded private fixture data, not a new enrollment or product schema.
-This does not test abrupt exit DURING a native import command. Complete client
-control-ingress/enrollment entry, joined native-effect crash boundaries, exact
-consumer hosted checks and project acceptance remain separate gates.
+The client setup extension below also exits after the actual native import and
+before acknowledgement while real REEL input/control guards hold. It is a
+post-command Imported hook, not a kill during a running native subprocess.
+Exact consumer hosted checks and project acceptance remain separate gates.
 
-Native fixture setkey operations are explicit synthetic setup, not a shipped
-control-ingress command. Client control ingress uses existing qualified Publisher
-operations with separate ingress sources, then admits the composite control seed;
-do not consume a reserved seed's first revision with an individual blob plan.
+The joined client lifecycle now uses SDK Publisher for every handoff control;
+lower-level fixture initialization remains explicit synthetic setup. Individual
+ingress sources remain distinct from the three composite seeds; never consume
+a reserved seed's first revision with an individual blob plan.
+
+
+The explicit SDK [client setup](CLIENT-SETUP.md) shows source enrollment,
+original metadata/plan persistence, control ingress, composite admission and
+restart reconciliation. `ingress::Control` owns <=1 MiB exact original bytes,
+prepares the existing SDK Plan against a separate empty actual-roster Retention
+source, and encodes/restores that same wire at <=64 KiB. It never enrolls or
+publishes implicitly. Publisher/Ready remain the only native publication and
+readback mechanism; the original three seeds retain composite task/control state.
