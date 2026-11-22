@@ -22,3 +22,10 @@ through actual retained import, readback and original close recovery. Its source
 and lifecycle evidence must show the predecessor slot closed before a distinct
 test attempt is admitted. Freeze both executables and preserve all original
 handles on failure; no native store is initialized or automatically retired.
+
+Final recovery review found a preparation gap between capacity reservation and
+owned-root creation. The operation is now exclusively claimed before admission,
+and its exact granted capacity identity is persisted before creating the root.
+Partial preparation refuses replacement admission; resume verifies both original
+records. A regression fixture denies admission after the claim and confirms that
+another post cannot proceed or create a replacement workspace/network effect.

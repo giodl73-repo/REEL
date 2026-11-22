@@ -40,7 +40,10 @@ fn proxy_candidate_enters_original_native_handoff_and_retained_close() {
         std::env::var_os("REEL_HTTP_NATIVE_EVIDENCE")
             .expect("Set NEW preserved qualification directory"),
     );
-    let prior = read(&lifecycle.join("complete.json"));
+    let predecessor = std::env::var_os("REEL_HTTP_NATIVE_PREDECESSOR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| lifecycle.clone());
+    let prior = read(&predecessor.join("complete.json"));
     assert_eq!(prior["closed"]["slot_idle"], true);
     assert_eq!(prior["closed"]["original_clear_complete"], true);
     let locations = read(&source.join("locations.json"));
@@ -89,16 +92,22 @@ fn proxy_candidate_enters_original_native_handoff_and_retained_close() {
         BTreeMap::new(),
     )
     .unwrap();
-    let attempt = "http-proxy-attempt-1";
+    let sequence = std::env::var("REEL_HTTP_NATIVE_SEQUENCE")
+        .unwrap_or_else(|_| "1".into())
+        .parse::<u8>()
+        .unwrap();
+    assert!((1..=16).contains(&sequence));
+    let attempt = format!("http-proxy-attempt-{sequence}");
+    let admission_operation = format!("http-proxy-job-{sequence}");
     let mut profile = locations["admission_profile"].clone();
-    profile["scope"]["operation"] = json!("http-proxy-job");
+    profile["scope"]["operation"] = json!(admission_operation);
     save(&evidence, "packet.json", &packet);
     save(&evidence, "source.json", &locations["native"]);
     save(&evidence, "admission-profile.json", &profile);
     save(
         &evidence,
         "attempt.json",
-        &json!({"attempt_id":attempt,"operation":"http-proxy-job","predecessor_closed":true}),
+        &json!({"attempt_id":attempt,"operation":admission_operation,"predecessor_closed":true,"predecessor":predecessor,"predecessor_complete_sha256":digest(&fs::read(predecessor.join("complete.json")).unwrap())}),
     );
     let path = |name: &str| evidence.join(name).to_str().unwrap().to_owned();
     let run = |label: &str, args: Vec<String>| {
@@ -117,7 +126,7 @@ fn proxy_candidate_enters_original_native_handoff_and_retained_close() {
             path("packet.json"),
             path("source.json"),
             path("admission-profile.json"),
-            attempt.into(),
+            attempt.clone(),
             path("admission.json"),
             "--apply".into(),
         ],
@@ -157,7 +166,7 @@ fn proxy_candidate_enters_original_native_handoff_and_retained_close() {
     );
     let spec = reel_workflow_http::proxy::Spec {
         packet: packet.clone(),
-        attempt_id: attempt.into(),
+        attempt_id: attempt.clone(),
         provider: "synthetic".into(),
         model: "synthetic-v1".into(),
     };
@@ -271,7 +280,7 @@ fn proxy_candidate_enters_original_native_handoff_and_retained_close() {
     save(
         &evidence,
         "close.json",
-        &json!({"schema":"reel.workflow-native-close.v1","journal":evidence.join("journal"),"packet":packet,"source":locations["native"],"admission":profile,"receipt":receipt,"result":result,"acknowledgement":read(&ack),"operation":"http-proxy-close-1","original_lifecycle_tool":lifecycle_tool,"runtime":runtime}),
+        &json!({"schema":"reel.workflow-native-close.v1","journal":evidence.join("journal"),"packet":packet,"source":locations["native"],"admission":profile,"receipt":receipt,"result":result,"acknowledgement":read(&ack),"operation":format!("http-proxy-close-{sequence}"),"original_lifecycle_tool":lifecycle_tool,"runtime":runtime}),
     );
     let close_pin = digest(&fs::read(evidence.join("close.json")).unwrap());
     save(&evidence, "close-pin.json", &json!({"sha256":close_pin}));

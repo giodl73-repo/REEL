@@ -71,6 +71,10 @@ variables. Request and response limits are each 1–128 MiB; deadlines are
 request, three response allowances and 8 MiB of owner/control headroom. Capacity
 remains reserved on success or failure; release/retirement is separate work.
 
+An exclusive preparation claim fences the operation **before** capacity admission
+can allocate a reservation. Initial admission/preparation failures therefore
+preserve the original operation for explicit diagnosis too. A separate immutable
+capacity record retains the granted reservation's identity before root creation.
 The registry's exclusive operation record binds the raw request, parent/root
 filesystem identities, reservation and volume. Another `post`, even with a new
 workspace/config, cannot reuse that operation in the original registry. Partial
@@ -187,3 +191,7 @@ bytes, and stages/recovers the original slot close. Every original runtime,
 profile, request, journal and operation is preserved on failure. Do not rerun a
 failed case under a fresh identity. The test initializes no store and imports no
 project asset; it qualifies CLI composition, not automatic native orchestration.
+For another explicitly authorized qualification **after completed close**, set
+`REEL_HTTP_NATIVE_PREDECESSOR` to that completed evidence and a distinct
+`REEL_HTTP_NATIVE_SEQUENCE` (1–16). These controls never authorize restarting an
+uncertain or failed job under another identity.

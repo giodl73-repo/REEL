@@ -328,3 +328,26 @@ fn concurrent_posts_have_one_original_owner_and_only_one_network_effect() {
     observer.set_nonblocking(true).unwrap();
     assert!(observer.accept().is_err());
 }
+
+#[test]
+fn failed_preparation_fences_the_operation_before_capacity_or_workspace_retry() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let mut fixture = Fixture::new(format!("http://{}/call", listener.local_addr().unwrap()));
+    fixture.request["workspace"]["capacity_policy"]["minimum_free_basis_points"] = json!(10000);
+    fixture.save();
+    let denied = fixture.invoke("post");
+    assert!(!denied.0);
+    assert_eq!(denied.1["error"]["kind"], "budget");
+    let claim = fixture
+        .root
+        .path()
+        .join("registry/calls/original-operation.prepare.json");
+    assert!(claim.is_file());
+    assert!(!fixture.owned().exists());
+    let retry = fixture.invoke("post");
+    assert!(!retry.0);
+    assert_eq!(retry.1["error"]["code"], "http-original-operation-exists");
+    assert!(listener.accept().is_err());
+    assert!(!fixture.owned().exists());
+}

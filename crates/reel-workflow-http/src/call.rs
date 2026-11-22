@@ -249,10 +249,41 @@ struct Owned {
     _lease: capacity::Reservation,
     _controls: Vec<File>,
 }
+fn preparation(
+    pin: &str,
+    operation: &str,
+    registry: &WorkspaceDirectory,
+    parent: &WorkspaceDirectory,
+) -> Result<Vec<u8>> {
+    encode(
+        &serde_json::json!({"schema":"reel.workflow-http-preparation.v1","request_sha256":pin,"operation_id":operation,"registry_identity":registry.identity(),"parent_identity":parent.identity()}),
+    )
+}
+fn reservation_record(
+    pin: &str,
+    operation: &str,
+    reservation: &str,
+    volume: &str,
+    maximum_bytes: u64,
+) -> Result<Vec<u8>> {
+    encode(
+        &serde_json::json!({"schema":"reel.workflow-http-capacity.v1","request_sha256":pin,"operation_id":operation,"reservation":reservation,"volume":volume,"maximum_bytes":maximum_bytes}),
+    )
+}
 fn open(request: &Request, pin: &str, operation: &str) -> Result<Owned> {
     let registry = open_workspace_directory(&request.registry).map_err(scoped)?;
     let calls = open_workspace_directory(&registry.path().join("calls")).map_err(scoped)?;
     let parent = open_workspace_directory(&request.workspace.parent).map_err(scoped)?;
+    let (claim, claim_file) = read(
+        &calls.path().join(format!("{operation}.prepare.json")),
+        reel_workflow::MAX_CONTROL_BYTES as u64,
+    )?;
+    if claim != preparation(pin, operation, &registry, &parent)? {
+        return Err(error(
+            ErrorKind::Conflict,
+            "http-original-preparation-binding",
+        ));
+    }
     let root = open_workspace_directory(&parent.path().join(format!("http-{operation}")))
         .map_err(scoped)?;
     let (raw, owner_file) = read(
@@ -260,6 +291,21 @@ fn open(request: &Request, pin: &str, operation: &str) -> Result<Owned> {
         reel_workflow::MAX_CONTROL_BYTES as u64,
     )?;
     let owner: Owner = reel_workflow::decode(&raw)?;
+    let (capacity_record, capacity_file) = read(
+        &calls.path().join(format!("{operation}.capacity.json")),
+        reel_workflow::MAX_CONTROL_BYTES as u64,
+    )?;
+    if capacity_record
+        != reservation_record(
+            pin,
+            operation,
+            &owner.reservation,
+            &owner.volume,
+            owner.maximum_bytes,
+        )?
+    {
+        return Err(error(ErrorKind::Conflict, "http-original-capacity-binding"));
+    }
     if owner.schema != "reel.workflow-http-owner.v1"
         || owner.operation_id != operation
         || owner.request_sha256 != pin
@@ -291,7 +337,7 @@ fn open(request: &Request, pin: &str, operation: &str) -> Result<Owned> {
         _parent: parent,
         root,
         _lease: lease,
-        _controls: vec![owner_file, intent_file],
+        _controls: vec![claim_file, capacity_file, owner_file, intent_file],
     })
 }
 fn prepare(request: &Request, raw: &[u8], pin: &str, operation: &str, body: &[u8]) -> Result<()> {
@@ -307,8 +353,12 @@ fn prepare(request: &Request, raw: &[u8], pin: &str, operation: &str, body: &[u8
     }
     let calls = open_workspace_directory(&registry.path().join("calls")).map_err(scoped)?;
     let owner_path = calls.path().join(format!("{operation}.json"));
+    let claim_path = calls.path().join(format!("{operation}.prepare.json"));
     let root_path = parent.path().join(format!("http-{operation}"));
-    if fs::symlink_metadata(&owner_path).is_ok() || fs::symlink_metadata(&root_path).is_ok() {
+    if fs::symlink_metadata(&owner_path).is_ok()
+        || fs::symlink_metadata(&root_path).is_ok()
+        || fs::symlink_metadata(&claim_path).is_ok()
+    {
         return Err(error(
             ErrorKind::NeedsRecovery,
             "http-original-operation-exists",
@@ -321,9 +371,16 @@ fn prepare(request: &Request, raw: &[u8], pin: &str, operation: &str, body: &[u8
     if required > request.workspace.maximum_bytes {
         return Err(error(ErrorKind::Budget, "http-workspace-budget"));
     }
+    let config = request.config(parent.path(), registry.path())?;
+    // Fence this operation BEFORE admission can allocate a durable reservation.
+    // A partial/failed preparation must not allocate another one on retry.
+    create(
+        &claim_path,
+        &preparation(pin, operation, &registry, &parent)?,
+    )?;
     let lease = capacity::reserve_on(
         parent.path(),
-        &request.config(parent.path(), registry.path())?,
+        &config,
         parent.path(),
         request.workspace.maximum_bytes,
     )
@@ -331,6 +388,16 @@ fn prepare(request: &Request, raw: &[u8], pin: &str, operation: &str, body: &[u8
     let reservation = lease.id.clone();
     let volume = lease.volume_id.clone();
     lease.retain_for_recovery();
+    create(
+        &calls.path().join(format!("{operation}.capacity.json")),
+        &reservation_record(
+            pin,
+            operation,
+            &reservation,
+            &volume,
+            request.workspace.maximum_bytes,
+        )?,
+    )?;
     fs::create_dir(&root_path).map_err(scoped)?;
     let root = open_workspace_directory(&root_path).map_err(scoped)?;
     create(&root.path().join("invocation.json"), raw)?;
