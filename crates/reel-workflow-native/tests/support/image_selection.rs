@@ -293,7 +293,7 @@ fn image_selection_staged_acknowledgement_without_native_bytes_cannot_select() {
 #[ignore = "Explicit existing synthetic native pool and synthetic PNG only; publishes owned image fixtures, retains selection/decision/history and closes original slot; no project adoption or pool initialization"]
 fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_without_reselection()
  {
-    use reel_workflow_native::{admission::Prepared, closing, handoff, image_selection};
+    use reel_workflow_native::admission::Prepared;
     let value: serde_json::Value = serde_json::from_slice(
         &fs::read(
             std::env::var_os("REEL_NATIVE_INPUT_FIXTURE")
@@ -369,17 +369,185 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
     .unwrap();
     assert!(published.report().reopened_verified);
     drop(published);
-    let returns = reel_workflow_native::response::Returns {
-        schema: "reel.workflow-returns.v1".into(),
-        root: returns_root,
-        files: BTreeMap::from([("picture".into(), "picture.png".into())]),
-    };
     let runtime = evidence.join("reel-workflow-native.exe");
     fs::copy(env!("CARGO_BIN_EXE_reel-workflow-native"), &runtime).unwrap();
-    let profile = handoff_profile(&case, receipt.clone(), runtime);
-    let journal = case.temp.path().join("image-journal");
-    handoff::create(&journal, &fixture.packet, &profile).unwrap();
-    handoff::import(&journal, &profile, result.clone(), &returns).unwrap();
+    exercise_image_selection(NativeImageCase {
+        root: fixture.temp.path().into(),
+        case_root: case.temp.path().into(),
+        evidence,
+        packet: fixture.packet,
+        source: case.source,
+        admission: case.profile,
+        receipt,
+        result,
+        spec,
+        png,
+    });
+}
+
+#[cfg(windows)]
+struct NativeImageCase {
+    root: PathBuf,
+    case_root: PathBuf,
+    evidence: PathBuf,
+    packet: Packet,
+    source: reel_workflow_native::NativeProfile,
+    admission: reel_workflow_native::admission::Profile,
+    receipt: reel_workflow_native::admission::Receipt,
+    result: ReturnedResult,
+    spec: reel_workflow_native::image_selection::Spec,
+    png: Vec<u8>,
+}
+#[cfg(windows)]
+#[test]
+#[ignore = "Continue only the preserved original synthetic image admission after pre-handoff runtime refusal; no new admission/pool/attempt or replacement lifecycle runtime"]
+fn continue_original_image_selection_after_handoff_runtime_refusal() {
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_SELECTION_CONTINUE").expect("Set original preserved evidence root"),
+    );
+    let locations: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("locations.json")).unwrap()).unwrap();
+    let packet: Packet = serde_json::from_value(locations["packet"].clone()).unwrap();
+    let receipt: reel_workflow_native::admission::Receipt =
+        serde_json::from_slice(&fs::read(evidence.join("admission.json")).unwrap()).unwrap();
+    let case_root = PathBuf::from(locations["case_root"].as_str().unwrap());
+    let png = fs::read(case_root.join("returns/picture.png")).unwrap();
+    let spec: reel_workflow_native::image_selection::Spec =
+        serde_json::from_value(locations["spec"].clone()).unwrap();
+    // The refusal happened before any handoff or response registration. Rebuild
+    // its exact deterministic result control, not a new task/attempt or payload.
+    assert!(!case_root.join("image-journal").exists());
+    let result = ReturnedResult {
+        schema: RESULT_SCHEMA.into(),
+        task_id: packet.task.id.clone(),
+        task_key: packet.task_key.clone(),
+        attempt_id: receipt.attempt_id.clone(),
+        worker_receipt: None,
+        artifacts: BTreeMap::from([(
+            spec.output_slot.clone(),
+            Artifact {
+                logical_id: "candidate/picture".into(),
+                sha256: digest(&png),
+                bytes: png.len() as u64,
+                media_type: "image/png".into(),
+            },
+        )]),
+        provenance: Provenance {
+            mode: Mode::Handoff,
+            provider: None,
+            model: None,
+            executable: None,
+        },
+    };
+    exercise_image_selection(NativeImageCase {
+        root: PathBuf::from(locations["source_root"].as_str().unwrap()),
+        case_root,
+        evidence,
+        packet,
+        source: serde_json::from_value(locations["native"].clone()).unwrap(),
+        admission: serde_json::from_value(locations["profile"].clone()).unwrap(),
+        receipt,
+        result,
+        spec,
+        png,
+    });
+}
+#[cfg(windows)]
+fn exercise_image_selection(case: NativeImageCase) {
+    use reel_workflow_native::{closing, handoff, image_selection};
+    let NativeImageCase {
+        root,
+        case_root,
+        evidence,
+        packet,
+        source,
+        admission,
+        receipt,
+        result,
+        spec,
+        png,
+    } = case;
+    let saved = |name: &str, value: &serde_json::Value| {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(evidence.join(name))
+            .unwrap();
+        file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
+        file.sync_all().unwrap();
+    };
+    let runtime = evidence.join("reel-workflow-native.exe");
+    let raw = fs::read(&runtime).unwrap();
+    let acknowledgements = case_root.join("acknowledgements");
+    if !acknowledgements.is_dir() {
+        fs::create_dir(&acknowledgements).unwrap();
+    }
+    let profile = handoff::Profile {
+        schema: "reel.workflow-native-handoff.v1".into(),
+        source: serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap(),
+        admission: admission.clone(),
+        binding: handoff::Binding {
+            schema: "reel.workflow-native-handoff-binding.v1".into(),
+            admission: receipt.clone(),
+            target: retained_target(),
+        },
+        runtime: Tool {
+            path: runtime,
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+        },
+        acknowledgements,
+    };
+    let returns = reel_workflow_native::response::Returns {
+        schema: "reel.workflow-returns.v1".into(),
+        root: case_root.join("returns"),
+        files: BTreeMap::from([("picture".into(), "picture.png".into())]),
+    };
+    saved(
+        "packet-control.json",
+        &serde_json::to_value(&packet).unwrap(),
+    );
+    saved(
+        "profile-control.json",
+        &serde_json::to_value(&profile).unwrap(),
+    );
+    saved(
+        "result-control.json",
+        &serde_json::to_value(&result).unwrap(),
+    );
+    saved(
+        "returns-control.json",
+        &serde_json::to_value(&returns).unwrap(),
+    );
+    let call = |args: Vec<std::ffi::OsString>| {
+        let output = Command::new(&profile.runtime.path)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    };
+
+    let journal = case_root.join("image-journal");
+    call(vec![
+        "create-handoff".into(),
+        evidence.join("packet-control.json").into(),
+        evidence.join("profile-control.json").into(),
+        journal.clone().into(),
+        "--apply".into(),
+    ]);
+    call(vec![
+        "import-handoff".into(),
+        journal.clone().into(),
+        evidence.join("profile-control.json").into(),
+        evidence.join("result-control.json").into(),
+        evidence.join("returns-control.json").into(),
+        "--apply".into(),
+    ]);
     let ack_path = fs::read_dir(&profile.acknowledgements)
         .unwrap()
         .map(|e| e.unwrap().path())
@@ -387,9 +555,9 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
         .unwrap();
     let ack = serde_json::from_slice(&fs::read(ack_path).unwrap()).unwrap();
     let request = image_selection::Request {
-        packet: fixture.packet.clone(),
-        source: serde_json::from_slice(&serde_json::to_vec(&case.source).unwrap()).unwrap(),
-        admission: case.profile.clone(),
+        packet: packet.clone(),
+        source: serde_json::from_slice(&serde_json::to_vec(&source).unwrap()).unwrap(),
+        admission: admission.clone(),
         receipt: receipt.clone(),
         result: result.clone(),
         acknowledgement: ack,
@@ -415,7 +583,7 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
             .kind,
         ErrorKind::Denied
     );
-    assert!(git(fixture.temp.path(), &["for-each-ref", "refs/reel-workflow"]).is_empty());
+    assert!(git(&root, &["for-each-ref", "refs/reel-workflow"]).is_empty());
     let selected = image_selection::run(&request, &mut SyntheticSelectionAuthority, true).unwrap();
     assert!(
         selected.selection.applied
@@ -425,7 +593,7 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
     );
     saved("selected.json", &serde_json::to_value(&selected).unwrap());
     let selected_record: serde_json::Value = serde_json::from_str(&git(
-        fixture.temp.path(),
+        &root,
         &[
             "show",
             &format!("{}:records/input.tig", selected.selection.proposal),
@@ -436,7 +604,7 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
     assert_eq!(selected_record["status"], json!({}));
     assert_eq!(selected_record["selected"]["sha256"], digest(&png));
     let selected_decision = git(
-        fixture.temp.path(),
+        &root,
         &[
             "show",
             &format!(
@@ -451,20 +619,13 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
     );
     let replay = image_selection::run(&request, &mut SyntheticSelectionAuthority, true).unwrap();
     assert_eq!(replay.selection.proposal, selected.selection.proposal);
-    fs::write(
-        fixture.temp.path().join("later.txt"),
-        b"later unrelated authored change",
-    )
-    .unwrap();
-    git(fixture.temp.path(), &["add", "later.txt"]);
-    git(
-        fixture.temp.path(),
-        &["commit", "-m", "source advances independently"],
-    );
+    fs::write(root.join("later.txt"), b"later unrelated authored change").unwrap();
+    git(&root, &["add", "later.txt"]);
+    git(&root, &["commit", "-m", "source advances independently"]);
     let replay = image_selection::run(&request, &mut SyntheticSelectionAuthority, true).unwrap();
     assert_eq!(replay.selection.proposal, selected.selection.proposal);
     assert_eq!(
-        fs::read(fixture.temp.path().join("records/input.tig")).unwrap(),
+        fs::read(root.join("records/input.tig")).unwrap(),
         request.spec.old_record
     );
     let original_lifecycle_tool = reel_workflow::handoff::Journal::open(&journal)
@@ -486,14 +647,22 @@ fn retained_image_selection_applies_exact_record_leaf_and_decision_and_recovers_
         runtime: profile.runtime.clone(),
     };
     saved("close-request.json", &serde_json::to_value(&close).unwrap());
-    let closed = closing::run(&close, closing::Action::Apply).unwrap();
+    let close_pin = digest(&fs::read(evidence.join("close-request.json")).unwrap());
+    call(vec![
+        "close-retained".into(),
+        evidence.join("close-request.json").into(),
+        close_pin.into(),
+        evidence.join("closed.json").into(),
+        "--apply".into(),
+    ]);
+    let closed: closing::Outcome =
+        serde_json::from_slice(&fs::read(evidence.join("closed.json")).unwrap()).unwrap();
     assert!(closed.slot_idle && closed.original_clear_complete);
-    saved("closed.json", &serde_json::to_value(&closed).unwrap());
     for object in [
         Object::from_bytes(b"P6\n1 1\n255\n\xff\0\0"),
         Object::from_bytes(&png),
     ] {
-        drop(tig_git::annex::workflow::reader::open(&case.source.source, &object).unwrap());
+        drop(tig_git::annex::workflow::reader::open(&source.source, &object).unwrap());
     }
     saved(
         "complete.json",
