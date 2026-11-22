@@ -267,6 +267,7 @@ pub fn ingest(
             returns,
             root: &held.root,
             worker_receipt: None,
+            allowance: crate::output_bounds::Allowance::EXTERNAL,
         },
     )
 }
@@ -276,6 +277,7 @@ pub(crate) struct VerifiedFiles<'a> {
     pub returns: &'a Returns,
     pub root: &'a std::path::Path,
     pub worker_receipt: Option<&'a str>,
+    pub allowance: crate::output_bounds::Allowance,
 }
 pub(crate) fn ingest_verified(
     packet: &Packet,
@@ -303,14 +305,11 @@ pub(crate) fn ingest_verified(
         (None, None) => (),
         _ => return Err(error(ErrorKind::Conflict, "response-worker-file-binding")),
     }
+    files.allowance.check(result)?;
     if declared.len() > 32
         || declared
             .iter()
             .any(|(_, path)| !crate::staging::portable(path))
-        || declared
-            .iter()
-            .try_fold(0u64, |n, (a, _)| n.checked_add(a.bytes))
-            .is_none_or(|n| n > MAX_BYTES)
     {
         return Err(error(ErrorKind::Budget, "response-verified-file-bounds"));
     }
@@ -338,7 +337,7 @@ pub(crate) fn ingest_verified(
                 source_owned: true,
                 expected: Some(object),
                 include_private_location: false,
-                maximum_bytes: MAX_BYTES,
+                maximum_bytes: files.allowance.object_bytes(),
                 minimum_free_bytes: 100 * 1024 * 1024,
             },
         )

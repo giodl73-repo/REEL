@@ -10,12 +10,36 @@ pub fn reference(path: &Path, name: &str) -> FileRef {
     }
 }
 pub fn fixture(root: &Path) -> BTreeMap<String, FileRef> {
-    fs::write(
-        root.join("red.ppm"),
-        [b"P6\n2 2\n255\n".as_slice(), &[255, 0, 0].repeat(4)].concat(),
-    )
-    .unwrap();
-    let samples = 4800u32;
+    fixture_mode(root, false)
+}
+pub fn fixture_mode(root: &Path, large: bool) -> BTreeMap<String, FileRef> {
+    if large {
+        fixture_shape(root, 512, 512, 480000, true)
+    } else {
+        fixture_shape(root, 64, 64, 4800, false)
+    }
+}
+fn fixture_shape(
+    root: &Path,
+    width: u32,
+    height: u32,
+    samples: u32,
+    noise: bool,
+) -> BTreeMap<String, FileRef> {
+    let picture = if noise {
+        let mut state = 0x1234abcd_u32;
+        let mut raw = format!("P6\n{width} {height}\n255\n").into_bytes();
+        for _ in 0..width * height * 3 {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            raw.push(state as u8);
+        }
+        raw
+    } else {
+        [b"P6\n2 2\n255\n".as_slice(), &[255, 0, 0].repeat(4)].concat()
+    };
+    fs::write(root.join("red.ppm"), picture).unwrap();
     let size = samples * 6;
     let mut wav = Vec::new();
     wav.extend(b"RIFF");
@@ -48,7 +72,7 @@ pub fn fixture(root: &Path) -> BTreeMap<String, FileRef> {
     );
     write(
         "job.json",
-        json!({"schema":"reel.scene-delivery.v0.1","id":"scene","contract":reference(&root.join("contract.json"),"contract.json"),"production_manifest_sha256":reference(&root.join("production.json"),"production.json").sha256,"width":64,"height":64,"max_composition_samples":480000,"pictures":[{"attachment_id":"p-a","source":reference(&root.join("red.ppm"),"red.ppm"),"kind":"still","attention":"Synthetic"}],"audio":[{"attachment_id":"d-a","source":reference(&root.join("a.wav"),"a.wav"),"bus":"D","cue_id":"a"}],"buses":{"D":{"state":"present","reason":"Synthetic"},"M":{"state":"intentional-silence","reason":"Synthetic"},"E":{"state":"intentional-silence","reason":"Synthetic"}}}),
+        json!({"schema":"reel.scene-delivery.v0.1","id":"scene","contract":reference(&root.join("contract.json"),"contract.json"),"production_manifest_sha256":reference(&root.join("production.json"),"production.json").sha256,"width":width,"height":height,"max_composition_samples":480000,"pictures":[{"attachment_id":"p-a","source":reference(&root.join("red.ppm"),"red.ppm"),"kind":"still","attention":"Synthetic"}],"audio":[{"attachment_id":"d-a","source":reference(&root.join("a.wav"),"a.wav"),"bus":"D","cue_id":"a"}],"buses":{"D":{"state":"present","reason":"Synthetic"},"M":{"state":"intentional-silence","reason":"Synthetic"},"E":{"state":"intentional-silence","reason":"Synthetic"}}}),
     );
     [
         "production.json",

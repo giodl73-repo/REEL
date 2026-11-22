@@ -1,6 +1,7 @@
 //! Qualified SDK inputs, durable claims, private staging and response ingress.
 //! Guarded reads alone do not establish durable job or retained-result ownership.
 use reel_workflow::{Artifact, Error, ErrorKind, Packet, Result};
+mod output_bounds;
 mod pins;
 pub use pins::*;
 /// Bounded metadata/candidate reads. Retaining a file handle does not admit a job.
