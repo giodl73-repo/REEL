@@ -16,3 +16,9 @@ The prototype's transport is extracted without its unfinished graph, review,
 tracker or service dependencies. Root/native SDK and producer locks remain
 unchanged. Synthetic loopback tests exercise effects; they are distinct from
 metadata checks and grant no real account or voice authority.
+
+The separate existing-store bridge fixture composes the landed CLI boundaries
+through actual retained import, readback and original close recovery. Its source
+and lifecycle evidence must show the predecessor slot closed before a distinct
+test attempt is admitted. Freeze both executables and preserve all original
+handles on failure; no native store is initialized or automatically retired.

@@ -175,3 +175,15 @@ CI runs portable transport/proxy tests on Linux and Windows, plus actual owned C
 fixtures on Windows. Loopback tests cover exact bytes, private credential handling,
 refusal before calls, redirects/statuses, deadlines, truncation, duplicate posts,
 concurrent posts, lost metadata, replaced workspaces and preserved capacity.
+
+An explicitly ignored native bridge fixture additionally uses a caller-declared,
+completed synthetic store/index and hash-qualified lifecycle executable. Set
+`REEL_HTTP_NATIVE_SOURCE` to original synthetic source evidence,
+`REEL_HTTP_NATIVE_LIFECYCLE` to completed owned-CLI evidence, and
+`REEL_HTTP_NATIVE_EVIDENCE` to a **new** preserved directory. It accepts a distinct
+attempt after confirming its predecessor closed, verifies inputs, creates the
+native handoff, sends the loopback proxy call, imports/verifies actual retained
+bytes, and stages/recovers the original slot close. Every original runtime,
+profile, request, journal and operation is preserved on failure. Do not rerun a
+failed case under a fresh identity. The test initializes no store and imports no
+project asset; it qualifies CLI composition, not automatic native orchestration.
