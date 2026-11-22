@@ -94,6 +94,14 @@ W4 acceptance. Wiring retained candidates, exact annex record/leaf replacement,
 project decision authority and protected affected-language/consumer rebuilds
 remains required. See the [scoped review](reviews/workflow-owned-selection-review.md).
 
+The retained-image adapter builds on that transaction: live retained ownership,
+project-supplied exact decision authority, immutable decision evidence in Git and
+prospective native record/leaf validation precede owned selection. It clears the
+old status and preserves stable authoring/metadata and exact historical approvals.
+It is a Rust integration component, not the complete film issue/fix/rebuild flow;
+project policy/CLI integration and protected affected-consumer rebuilds are still
+open. See its [scoped review](reviews/workflow-image-selection-review.md).
+
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:
 
