@@ -9,8 +9,8 @@ Source landing: [W1 #386](https://github.com/giodl73-repo/REEL/pull/386),
 [retained film tasks #397](https://github.com/giodl73-repo/REEL/pull/397) are merged.
 The merged [native lifecycle #392](https://github.com/giodl73-repo/REEL/pull/392)
 adds protected manual work and retained close/recovery.
-Bounded film task execution is landed; owned CLI dispatch and episode-scale
-qualification remain separate gates. No source merge
+Bounded film task execution and [owned CLI dispatch #399](https://github.com/giodl73-repo/REEL/pull/399)
+are landed. Episode-scale qualification remains a separate gate. No source merge
 adopts an actual project or production profile.
 The [role review](reviews/workflow-pr-plan-review.md) records findings and their
 disposition. Roles are author-applied checklists, not independent reviewers.
@@ -56,10 +56,14 @@ Concrete W3a slices:
 - [#397](https://github.com/giodl73-repo/REEL/pull/397): bounded task dispatch,
   actual producer receipts, retained publication/completion, original-operation
   recovery and explicit retained-owner close through Rust APIs.
-- In this slice: one owned CLI dispatch path with pinned requests/tickets,
+- [#399](https://github.com/giodl73-repo/REEL/pull/399): owned CLI dispatch with pinned requests/tickets,
   existing workspace/capacity admission, retained run/resume and explicit close.
   Its synthetic qualification does not adopt a project profile.
-- Next: a project example, API/proxy execution and film issue/fix/rebuild integration.
+- W3b API/proxy slice: bounded pinned JSON POSTs, private original-operation
+  evidence/recovery and proxy candidates in the existing result/returns contract.
+  Native ingress/retention remains explicit through the landed lifecycle commands.
+- Next: built-in service/speech and native provider orchestration, a project
+  example and film issue/fix/rebuild integration.
 - Before advertised S5 use: qualify episode resource/large-master admission,
   streaming composition, long execution and interruption with exact retained outputs.
 
