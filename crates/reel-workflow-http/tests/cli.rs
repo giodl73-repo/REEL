@@ -29,8 +29,13 @@ fn server(reply: Vec<u8>) -> (String, thread::JoinHandle<Vec<u8>>, TcpListener) 
                 Err(e) => panic!("bounded synthetic accept: {e}"),
             }
         };
+        // Windows accepted sockets may inherit the listener's nonblocking mode.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let mut raw = Vec::new();
         let mut byte = [0; 1];
@@ -61,6 +66,28 @@ fn ok(body: &[u8]) -> Vec<u8> {
     let mut raw=format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nx-request-id: synthetic-17\r\nConnection: close\r\n\r\n",body.len()).into_bytes();
     raw.extend(body);
     raw
+}
+#[test]
+fn synthetic_listener_waits_for_headers_after_accept() {
+    let (endpoint, worker, _observer) = server(ok(b"{}"));
+    let authority = endpoint
+        .strip_prefix("http://")
+        .unwrap()
+        .split('/')
+        .next()
+        .unwrap();
+    let mut stream = std::net::TcpStream::connect(authority).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    let request =
+        format!("POST /call HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 2\r\n\r\n{{}}");
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(worker.join().unwrap(), request.as_bytes());
 }
 struct Fixture {
     root: tempfile::TempDir,

@@ -69,6 +69,11 @@ Concrete W3a slices:
 
 ## Film acceptance contract
 
+The first W4 producer component is [private cel-ID review copies](film-cel-review-v1.md):
+visible stable targets from an existing scene-delivery receipt, exact frame maps
+and unchanged audio/timestamps. Finding/issue/fix handling, affected rebuilds and
+protected workflow dispatch remain required before W4 is complete.
+
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:
 
