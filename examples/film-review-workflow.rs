@@ -1,6 +1,8 @@
 //! Explicit synthetic developer walkthrough; no project media or native custody.
 #[path = "../tests/support/film_review_fixture.rs"]
 mod fixture;
+#[path = "support/film_repair.rs"]
+mod repair_demo;
 use anyhow::{Result, ensure};
 use reel::film_presentation_overlay::review;
 use reel_workflow::{Artifact, film_review as findings};
@@ -45,13 +47,13 @@ fn run() -> Result<()> {
         map: descriptor("review-map.json", "application/json")?,
         receipt: descriptor("receipt.json", "application/json")?,
         findings: vec![findings::Finding {
-            id: "demo-transition".into(),
+            id: "demo-green-cel".into(),
             target_id: target.attachment_id.clone(),
             frame: target.start_frame,
-            category: findings::Category::Timing,
+            category: findings::Category::Picture,
             method: findings::Method::DeterministicCheck,
             observation: format!(
-                "Synthetic demonstration: inspect the transition to {}. No real production issue is asserted.",
+                "Controlled synthetic expectation: {} should be green, but its current center pixel is blue. Preserve its identity and exact frame interval. No real production issue is asserted.",
                 target.cel_id
             ),
             evidence: vec![],
@@ -74,15 +76,18 @@ fn run() -> Result<()> {
     let path = root.join("issue-request.json");
     let pin = reel_workflow::digest(&fs::read(&path)?);
     findings::export(&path, &pin, &root.join("issues"))?;
+    repair_demo::run(&root, &export)?;
     println!(
         "{}",
-        serde_json::json!({"ok":true,"synthetic":true,"review_movie":"review/review.mp4","issue_directory":"issues","issue_submitted":false,"native_retention_verified":false,"selection_applied":false})
+        serde_json::json!({"ok":true,"synthetic":true,"review_movie":"review/review.mp4","issue_directory":"issues","repair_directory":"repair","repaired_review_movie":"repaired-review/review.mp4","issue_submitted":false,"native_retention_verified":false,"selection_applied":false})
     );
     Ok(())
 }
 fn main() {
-    if run().is_err() {
-        eprintln!("synthetic walkthrough refused or failed; preserve its directory for diagnosis");
+    if let Err(error) = run() {
+        eprintln!(
+            "synthetic walkthrough refused or failed; preserve its directory for diagnosis: {error:#}"
+        );
         std::process::exit(1);
     }
 }

@@ -25,6 +25,10 @@ the directory. The example shares its fixture with the real-media regression.
 This is a developer walkthrough of these components, not Season 5 acceptance or
 an installed/retained production workflow.
 
+It also exercises [image repair preparation](workflow-film-image-repair.md) and
+an explicit synthetic returned PNG, producing a separate candidate review with
+the same C/story identity. No production selection follows from that preview.
+
 The v1 map/receipt contracts live in `reel-publication::film_review`, shared by the
 [review-copy producer](film-cel-review-v1.md) and portable workflow consumer. The
 producer re-exports those metadata types; JSON fields are unchanged. Its native
