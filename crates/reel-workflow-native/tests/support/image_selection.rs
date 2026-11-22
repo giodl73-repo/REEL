@@ -452,6 +452,45 @@ fn continue_original_image_selection_after_handoff_runtime_refusal() {
         png,
     });
 }
+
+#[cfg(windows)]
+#[test]
+#[ignore = "Reopen only the completed original synthetic image selection after slot close; no new task, generation, publication or selection change"]
+fn reopen_completed_image_selection_after_original_slot_close() {
+    use reel_workflow_native::image_selection;
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_SELECTION_CONTINUE").expect("Set original completed evidence root"),
+    );
+    let complete: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("complete.json")).unwrap()).unwrap();
+    assert_eq!(complete["slot_idle"], true);
+    let request: image_selection::Request =
+        serde_json::from_slice(&fs::read(evidence.join("selection-request.json")).unwrap())
+            .unwrap();
+    let selected: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("selected.json")).unwrap()).unwrap();
+    let before = git(&request.spec.transaction.repository, &["show-ref"]);
+    let replay = image_selection::run(&request, &mut SyntheticSelectionAuthority, true).unwrap();
+    assert!(
+        replay.native_retention_verified
+            && replay.selection.applied
+            && replay.selection.currently_selected
+    );
+    assert_eq!(selected["selection"]["proposal"], replay.selection.proposal);
+    assert_eq!(
+        before,
+        git(&request.spec.transaction.repository, &["show-ref"])
+    );
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(evidence.join("after-close-replay.json"))
+        .unwrap();
+    file.write_all(&serde_json::to_vec(&replay).unwrap())
+        .unwrap();
+    file.sync_all().unwrap();
+}
 #[cfg(windows)]
 fn exercise_image_selection(case: NativeImageCase) {
     use reel_workflow_native::{closing, handoff, image_selection};
