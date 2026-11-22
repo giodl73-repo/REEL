@@ -48,6 +48,11 @@ native provider orchestration, packaged project adoption/rollback and episode-sc
 qualification retain their separate gates. A source merge does not install or
 adopt a production profile, approve a candidate or qualify all of Season 5.
 
+The [visual production workspace requirements](workflow-ux-requirements.md)
+audit existing REEL editors and current git-asset catalogue extension gaps.
+They propose a live cel/cue/page board and a generic tool/preview handoff, keeping
+production semantics in REEL. This UX has not been implemented.
+
 The existing main-branch managed scene, presentation and episode jobs remain
 documented under [use cases](use-cases.md) and [architecture](architecture.md).
 Active orchestration work extends a framework that already produces and checks

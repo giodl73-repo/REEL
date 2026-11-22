@@ -33,6 +33,11 @@ voice authority, candidate selection or publication permission.
 
 ## Remaining production gates
 
+The [visual production workspace requirements](workflow-ux-requirements.md)
+describe the near-term cel/cue/page board, existing editor reuse and generic
+git-asset tool/preview handoff gaps. This is proposed UX work, not an existing
+live production dashboard.
+
 Film review copies with stable targets, issue/fix and affected-language rebuilds
 remain W4 work. Dedicated service/speech adapters and automatic native provider
 orchestration remain W3b work. Existing approved recordings are reusable inputs;
