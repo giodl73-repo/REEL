@@ -1,6 +1,6 @@
 # M10 semantic companion: source, role and qualification review
 
-Status: implementation under qualification on merged M09 `b95a6c2`, [PR #395](https://github.com/giodl73-repo/REEL/pull/395). Eight explicit runtime cases pass locally. Lexical unit tests, regression/lint completion and required hosted qualification remain to be recorded. This is one assistant applying repository `.roles` checklists, not independent review or creative approval.
+Status: implementation under qualification on merged M09 `b95a6c2`, [PR #395](https://github.com/giodl73-repo/REEL/pull/395). Local qualification passed 66 distinct tests and all-target/all-feature Clippy. Required hosted qualification on the current main base remains to be recorded. This is one assistant applying repository `.roles` checklists, not independent review or creative approval.
 
 The [illustrated contract](../semantic-visual-companion-v1.md) describes the language example, supported API, bounds and evidence distinctions.
 
@@ -79,3 +79,26 @@ byte verification therefore retains its semantics while avoiding an unnecessary
 cryptographic debug-build cost. Final reading/lesson/companion reruns and hosted
 results remain required before merge; the earlier failed timing run is not a
 passing qualification claim.
+## Final local checkpoint at implementation head 87eb0ec
+
+All four lexical/preflight cases passed (0.02s). The final eight-case companion
+run passed in 66.66s with zero ignored/failed cases, including admitted IDs that
+differ from original filenames and a self-consistent substituted audio object.
+The exact frame/PCM native cases ran in that invocation.
+
+Existing reading qualification passed all five cases in 120.86s; lesson
+qualification passed all five in 63.48s. The previously timing-failing layered
+reading case also passed alone in 29.43s. No fixture timeout was changed.
+Twenty declaration/compiler and 24 ordinary media cases passed earlier in the
+same isolated target. This is 66 distinct passing local tests; repeated reruns
+are not counted again. Final all-target/all-feature Clippy passed with warnings
+denied (3m33s). Formatting, whitespace, actionlint and local documentation links
+passed.
+
+The repeated CLI identity probe after the targeted hash profile change took
+1.78s for a 45,926,912-byte executable, versus 2.97s before; both intentionally
+refused missing alignment and created no output. The compiler probe includes
+startup/metadata work and is not a standalone cryptographic benchmark.
+Application assertions and per-operation source/runtime identity checks remain
+unchanged. Final hosted checks must cover the latest main, which advanced with
+workflow PRs #393/#396 while the first M10 cycle ran.
