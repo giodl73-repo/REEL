@@ -179,6 +179,7 @@ struct WorkerReceipt {
 }
 /// Constructible only after exact task binding and actual contained production.
 pub struct Generated {
+    allowance: crate::output_bounds::Allowance,
     packet: Packet,
     source: String,
     receipt: admission::Receipt,
@@ -220,6 +221,7 @@ impl Generated {
                 returns: &self.returns,
                 root: self._workspace.path(),
                 worker_receipt: Some("worker-receipt.json"),
+                allowance: self.allowance,
             },
         )
     }
@@ -241,21 +243,23 @@ impl Generated {
         target: &crate::retention::Target,
     ) -> Result<crate::retention::Acknowledgement> {
         self.context(source)?;
-        let ack = crate::retention::retain_verified(
+        let ack = crate::retention::retain_bounded(
             &self.packet,
             source,
             profile,
             &self.receipt,
             &self.result,
             target,
+            self.allowance,
         )?;
-        let _proof = crate::retention::verify_qualified(
+        let _proof = crate::retention::verify_bounded(
             &self.packet,
             source,
             profile,
             &self.receipt,
             &self.result,
             &ack,
+            self.allowance,
         )?;
         let raw = ack.canonical_bytes()?;
         let path = self._workspace.path().join("retained.json");
@@ -284,6 +288,7 @@ pub fn verify_retained(
     reel_workflow::check_result(packet, result)?;
     let mut inputs = NativeInputs::open(packet, source)?;
     let bound = bind(packet, &mut inputs)?;
+    let allowance = crate::output_bounds::Allowance::film(bound.request.limits.output_bytes)?;
     let tool = packet.task.tool.as_ref().unwrap();
     let worker = result
         .worker_receipt
@@ -325,7 +330,15 @@ pub fn verify_retained(
         ));
     }
     drop(inputs);
-    crate::retention::verify_qualified(packet, source, profile, receipt, result, acknowledgement)
+    crate::retention::verify_bounded(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        acknowledgement,
+        allowance,
+    )
 }
 /// Explicit close of the original job slot into retained coverage. Persist the
 /// operation key before staging; recovery must reuse it. No workspace is retired.
@@ -379,6 +392,10 @@ pub fn close(
         request.operation,
         action,
         request.source,
+        // Recovery reconciles original native work before reopening outputs in
+        // the qualified close callback. This read ceiling admits no new output;
+        // generation/publication used the checked original request allowance.
+        crate::output_bounds::Allowance::film(16 * 1024 * 1024 * 1024)?,
     )
 }
 /// Explicit, metadata-only preparation for an older retained layout. Preview
@@ -678,6 +695,7 @@ fn run_expected(
     // that actor. Positive durable claims are not released by this drop.
     drop(inputs);
     Ok(Generated {
+        allowance: crate::output_bounds::Allowance::film(bound.request.limits.output_bytes)?,
         packet: packet.clone(),
         source: reel_workflow::canonical_digest(invocation.source)?,
         receipt: invocation.receipt.clone(),

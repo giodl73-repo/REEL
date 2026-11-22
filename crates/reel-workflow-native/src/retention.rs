@@ -76,20 +76,12 @@ fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<
     }
     Ok(())
 }
-pub(crate) fn outputs(
+pub(crate) fn outputs_bounded(
     source: &NativeProfile,
     result: &ReturnedResult,
+    allowance: crate::output_bounds::Allowance,
 ) -> Result<Vec<reader::VerifiedRead>> {
-    if result.artifacts.len() + usize::from(result.worker_receipt.is_some()) > 32
-        || result
-            .artifacts
-            .values()
-            .chain(result.worker_receipt.iter())
-            .try_fold(0u64, |n, a| n.checked_add(a.bytes))
-            .is_none_or(|n| n > 128 * 1024 * 1024)
-    {
-        return Err(error(ErrorKind::Budget, "retention-output-bounds"));
-    }
+    allowance.check(result)?;
     let objects = result
         .artifacts
         .values()
@@ -155,6 +147,26 @@ pub(crate) fn retain_verified(
     result: &ReturnedResult,
     target: &Target,
 ) -> Result<Acknowledgement> {
+    retain_bounded(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        target,
+        crate::output_bounds::Allowance::EXTERNAL,
+    )
+}
+pub(crate) fn retain_bounded(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    target: &Target,
+    allowance: crate::output_bounds::Allowance,
+) -> Result<Acknowledgement> {
+    allowance.check(result)?;
     check_result(packet, result)?;
     if result.attempt_id != receipt.attempt_id {
         return Err(error(ErrorKind::Conflict, "retention-original-attempt"));
@@ -165,7 +177,7 @@ pub(crate) fn retain_verified(
         .completed_retention(receipt, result, target)
         .map_err(|e| phase(e, "retention-completed-probe"))?
     {
-        let _verified = verify_qualified(packet, source, profile, receipt, result, &ack)?;
+        let _verified = verify_bounded(packet, source, profile, receipt, result, &ack, allowance)?;
         return Ok(ack);
     }
     let (guard, candidate) = prepared
@@ -174,12 +186,12 @@ pub(crate) fn retain_verified(
     // Native read guards hold object effect gates. Do not keep those gates
     // while admitting a NEW index update. Original positive job claims and the
     // ordered source/retained fences protect this transition instead.
-    drop(outputs(source, result)?);
+    drop(outputs_bounded(source, result, allowance)?);
     let acknowledgement = guard
         .retain_response(receipt, &candidate, target, true)
         .map_err(|e| phase(e, "retention-apply"))?;
     guard.verify_retention(receipt, &acknowledgement)?;
-    let _outputs = outputs(source, result)?;
+    let _outputs = outputs_bounded(source, result, allowance)?;
     Ok(acknowledgement)
 }
 
@@ -205,6 +217,26 @@ pub(crate) fn verify_qualified(
     result: &ReturnedResult,
     acknowledgement: &Acknowledgement,
 ) -> Result<RetainedGuard> {
+    verify_bounded(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        acknowledgement,
+        crate::output_bounds::Allowance::EXTERNAL,
+    )
+}
+pub(crate) fn verify_bounded(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    acknowledgement: &Acknowledgement,
+    allowance: crate::output_bounds::Allowance,
+) -> Result<RetainedGuard> {
+    allowance.check(result)?;
     check_result(packet, result)?;
     if result.attempt_id != receipt.attempt_id {
         return Err(error(ErrorKind::Conflict, "retention-original-attempt"));
@@ -212,7 +244,7 @@ pub(crate) fn verify_qualified(
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
-    let outputs = outputs(source, result)?;
+    let outputs = outputs_bounded(source, result, allowance)?;
     Ok(RetainedGuard {
         _fences: fences,
         _prepared: prepared,

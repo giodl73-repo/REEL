@@ -92,8 +92,8 @@ metadata reader stays limited to 64 MiB and directs larger reads to streaming.
 The qualified single-store SDK and caller's native-reader bounds still apply.
 
 These input descriptions do not expand executable workflow capacity. This slice
-retains a 1 GiB protected envelope/retained aggregation scope, 128 MiB response
-scope, 512 MiB staging scope, 512 resource objects, 128 changed paths per phase
+retains a 1 GiB protected envelope/retained aggregation scope, 128 MiB external
+response scope, 512 MiB staging scope, 512 resource objects, 128 changed paths per phase
 and 16 total actors. Admission conservatively preflights response/close paths
 before effects, counting unknown output hashes separately. Declared response
 counts/bytes, the native reader's
@@ -218,9 +218,13 @@ added before aliases are removed, all prior objects and tree roots stay covered,
 and original native work is reconciled on retry. This is not payload deletion or
 an automatic workaround for oversized production admission.
 
-The existing native bounds still apply: a 1 GiB protected envelope, at most 32
-response objects including the worker receipt, and 128 MiB aggregate response
-bytes. Admission reserves one 64 KiB worker object for tool tasks and includes it
+The existing native bounds still apply: a 1 GiB protected envelope and at most 32
+response objects including the worker receipt. External responses retain their
+128 MiB aggregate ceiling. Film publication and retention use the checked original
+producer request's media-output allowance, plus one separate 64 KiB worker object.
+Film preview uses the existing 1 GiB envelope as its response ceiling; combined
+inputs, declared output contracts and metadata reserve must still fit that same
+envelope before admission. Admission reserves one 64 KiB worker object for tool tasks and includes it
 in response/close headroom. Byte deduplication does not change logical result
 identity. This is not S5-scale execution or owned-profile adoption; five-hour
 process ceilings do not enlarge these native admission bounds.
@@ -276,7 +280,9 @@ lease refuse. No command discovers or initializes a native pool.
 
 This is the bounded native film path, not full S5/episode-scale qualification,
 API/proxy generation, publication approval or owned project-profile adoption.
-The 1 GiB protection/128 MiB response limits above still apply.
+The 1 GiB protection envelope and the other admission limits above still apply;
+the generic external response ceiling remains 128 MiB. Routing a checked film
+output budget does not qualify multi-GiB native publication or Season 5 scale.
 
 ## Validation
 
