@@ -208,20 +208,20 @@ impl OutputSink {
     pub fn stats(&self) -> OutputStats {
         self.facts.stats()
     }
-    pub fn attach(&mut self, callback: Callback) -> std::result::Result<(), Callback> {
+    pub fn attach(&mut self, callback: Callback) -> std::result::Result<(), Box<Callback>> {
         if !self.ready() || self.attached || callback.generation() != Some(self.generation) {
-            return Err(callback);
+            return Err(Box::new(callback));
         }
         self.reclaim_closed();
         let Some(sender) = self.sender.as_mut() else {
-            return Err(callback);
+            return Err(Box::new(callback));
         };
         match sender.push(callback) {
             Ok(()) => {
                 self.attached = true;
                 Ok(())
             }
-            Err(rtrb::PushError::Full(callback)) => Err(callback),
+            Err(rtrb::PushError::Full(callback)) => Err(Box::new(callback)),
         }
     }
     /// Closing a receiver can race its final pop. Dropping an abandoned sender
@@ -633,13 +633,145 @@ impl OutputWorker {
     pub fn finished(&self) -> bool {
         self.thread.as_ref().is_none_or(JoinHandle::is_finished)
     }
+    /// Actual backend/stream teardown barrier. May block on a broken driver;
+    /// the enclosing process owner, not a timer flag, bounds that failure.
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.request_stop();
+        if let Some(thread) = self.thread.take() {
+            thread
+                .join()
+                .map_err(|_| anyhow::anyhow!("installation output owner panicked"))?;
+        }
+        Ok(())
+    }
 }
 impl Drop for OutputWorker {
     fn drop(&mut self) {
-        self.request_stop();
-        if let Some(thread) = self.thread.take() {
-            let _ = thread.join();
+        let _ = self.shutdown();
+    }
+}
+
+#[cfg(test)]
+pub(super) mod controlled {
+    use super::*;
+    use std::sync::Mutex;
+    pub struct Harness {
+        slot: Arc<Mutex<Option<Slot>>>,
+        open: Arc<AtomicBool>,
+        close: Arc<AtomicBool>,
+        pub opened: Arc<AtomicU32>,
+        pub closed: Arc<AtomicU32>,
+    }
+    pub struct Release(Arc<AtomicBool>, Arc<AtomicBool>);
+    impl Drop for Release {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+            self.1.store(true, Ordering::Release);
         }
+    }
+    impl Harness {
+        pub fn release_guard(&self) -> Release {
+            Release(self.open.clone(), self.close.clone())
+        }
+        pub fn block_open(&self) {
+            self.open.store(false, Ordering::Release);
+        }
+        pub fn release_open(&self) {
+            self.open.store(true, Ordering::Release);
+        }
+        pub fn block_close(&self) {
+            self.close.store(false, Ordering::Release);
+        }
+        pub fn release_close(&self) {
+            self.close.store(true, Ordering::Release);
+        }
+        pub fn fill(&self, frames: usize) -> Vec<f32> {
+            let mut out = vec![0.0; frames * 2];
+            if let Some(slot) = self.slot.lock().unwrap().as_mut() {
+                slot.fill(&mut out, None);
+            }
+            out
+        }
+    }
+    struct Backend {
+        harness: Harness,
+    }
+    struct Stream {
+        slot: Arc<Mutex<Option<Slot>>>,
+        release: Arc<AtomicBool>,
+        closed: Arc<AtomicU32>,
+    }
+    impl Drop for Stream {
+        fn drop(&mut self) {
+            while !self.release.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            self.slot.lock().unwrap().take();
+            self.closed.fetch_add(1, Ordering::Release);
+        }
+    }
+    impl Driver for Backend {
+        type Stream = Stream;
+        fn probe(
+            &mut self,
+            binding: &EndpointBinding,
+            _: &OutputOperation,
+        ) -> std::result::Result<EndpointObservation, OutputFailure> {
+            Ok(EndpointObservation {
+                binding: binding.clone(),
+                sample_rate: 48000,
+                channels: 2,
+                format: "f32".into(),
+                requested_buffer_frames: 480,
+                effective_buffer_checked: false,
+                device_playback_checked: false,
+            })
+        }
+        fn open(
+            &mut self,
+            _: &EndpointBinding,
+            slot: Slot,
+            _: &OutputOperation,
+        ) -> std::result::Result<(Stream, u32), OutputFailure> {
+            self.harness.opened.fetch_add(1, Ordering::Release);
+            while !self.harness.open.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            *self.harness.slot.lock().unwrap() = Some(slot);
+            Ok((
+                Stream {
+                    slot: self.harness.slot.clone(),
+                    release: self.harness.close.clone(),
+                    closed: self.harness.closed.clone(),
+                },
+                480,
+            ))
+        }
+    }
+    pub fn output(binding: EndpointBinding, clock: OutputClock) -> (OutputWorker, Harness) {
+        let slot = Arc::new(Mutex::new(None));
+        let open = Arc::new(AtomicBool::new(true));
+        let close = Arc::new(AtomicBool::new(true));
+        let opened = Arc::new(AtomicU32::new(0));
+        let closed = Arc::new(AtomicU32::new(0));
+        let clone = Harness {
+            slot: slot.clone(),
+            open: open.clone(),
+            close: close.clone(),
+            opened: opened.clone(),
+            closed: closed.clone(),
+        };
+        let worker = OutputWorker::spawn(Backend { harness: clone }, binding, clock).unwrap();
+        (
+            worker,
+            Harness {
+                slot,
+                open,
+                close,
+                opened,
+                closed,
+            },
+        )
     }
 }
 
@@ -680,7 +812,7 @@ mod tests {
         let (mut sink, mut slot) = slot(operation(clock, 1));
         let (mut control, callback) = callback_pair(engine());
         let callback = match sink.attach(callback) {
-            Err(owned) => owned,
+            Err(owned) => *owned,
             Ok(()) => panic!("source attached before callback readiness"),
         };
         let mut out = [1.0; 960];

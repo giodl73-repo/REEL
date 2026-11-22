@@ -503,6 +503,65 @@ fn native_source_worker_retains_guards_and_checks_real_opaque_restart() {
     assert!(fs::OpenOptions::new().write(true).open(&original).is_ok());
 }
 
+#[cfg(all(windows, feature = "installation-native"))]
+#[test]
+#[ignore = "explicit combined runtime/original source-thread qualification; no devices"]
+fn native_source_thread_retains_and_rechecks_current_runtime_and_originals() {
+    use api::native::{
+        output::OutputClock,
+        protocol::RuntimeBinding,
+        source::{SourceEvent, SourceWorker},
+    };
+    let f = InstallationFixture::new(true);
+    let mut request = native_request(&f);
+    request.playback.runtime = reel::scene_delivery::FileRef {
+        path: std::env::current_exe().unwrap(),
+        sha256: f.runtime.sha256.clone(),
+        bytes: f.runtime.bytes,
+    };
+    let lock = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
+    fs::write(&request.playback.cargo_lock.path, lock).unwrap();
+    request.playback.cargo_lock.sha256 = hash(lock);
+    request.playback.cargo_lock.bytes = lock.len() as u64;
+    let lock_path = request.playback.cargo_lock.path.clone();
+    let binding =
+        std::sync::Arc::new(RuntimeBinding::bind(&serde_json::to_vec(&request).unwrap()).unwrap());
+    let clock = OutputClock::start().unwrap();
+    let mut worker =
+        SourceWorker::with_runtime(binding.clone(), clock, clock.now_us().unwrap() + 30_000_000)
+            .unwrap();
+    drop(binding);
+    let core = match source_event(&mut worker) {
+        SourceEvent::Ready(core) => core,
+        _ => panic!("combined source check failed"),
+    };
+    assert!(fs::OpenOptions::new().write(true).open(&lock_path).is_err());
+    // The real source/controller connection stops before native probing: this
+    // proves checking/staging without querying an actual audio endpoint.
+    let output = api::native::output::OutputWorker::new(request.endpoint.clone(), clock).unwrap();
+    let mut controller = api::native::controller::Controller::new(core, output, clock);
+    controller
+        .command(1, api::Command::Stop, 0, clock.now_us().unwrap())
+        .unwrap();
+    controller
+        .command(2, api::Command::Restart, 0, clock.now_us().unwrap())
+        .unwrap();
+    let until = std::time::Instant::now() + Duration::from_secs(30);
+    while !controller.has_staged_restart() {
+        controller.drive_source(&mut worker).unwrap();
+        assert!(
+            std::time::Instant::now() < until,
+            "source/controller check deadline"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    assert_eq!(controller.observed().state, api::State::Restarting);
+    assert_eq!(controller.observed().generation, 1);
+    drop(controller);
+    drop(worker);
+    assert!(fs::OpenOptions::new().write(true).open(&lock_path).is_ok());
+}
+
 #[test]
 #[ignore = "explicit original-input installation qualification"]
 fn exact_checked_pcm_reaches_finite_transport_without_device() {

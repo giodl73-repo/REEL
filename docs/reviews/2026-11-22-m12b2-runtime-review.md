@@ -225,6 +225,54 @@ reruns and fixture children are not counted again. No endpoint, real audio,
 capture, human listening/usability or release was performed. Formatting,
 whitespace, actionlint and changed-document relative links passed.
 
+## Actual core, source and output controller checkpoint
+
+The same assistant applied the same four role checklists to the
+[transport/output controller](../installation-native-runtime-v1.md#real-transportoutput-controller).
+It now connects the sole actual core to callback ownership, background native
+operations and the retained source worker's opaque restart path.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Sound/Editor | Hold the identical core during blocked open, hand it off only after a valid silent callback, retain exact source/interval cursors while paused and return that core before replacement. Controlled-backend tests cover source and interval pause, Stop, old-close gating, successful second-generation reopen and late-permit refusal after Stop. Fresh-check permits are staged through probing and consumed by the real core immediately before native opening. |
+| Platform/Audience | Command records are produced before the controller schedules startup work. Stop updates the real core during blocked open/close; watchdog failure is observable without inventing a mutable snapshot while the callback owns the core. End-to-end foreground acknowledgement visibility and every aggregate numeric gate remain pending. |
+| Platform/Audience — command identity | FIFO guessing is insufficient when Fault refuses a command at enqueue while a later Status gets a core sequence. Fixed-size tagged delivery records now preserve the actual tag/sequence/refusal through fill and teardown; tests prove the rejected Pause cannot steal Status's acknowledgement. Delivery overflow faults before source progress. |
+| Rights/Provenance | `SourceWorker::with_runtime` holds and rechecks the actual player/lock on its checking thread, independently of original producer checking. `Controller::drive_source` issues tickets after physical close, cancels obsolete operations and stages only current completions. No wire success creates a permit or rewrites original lineage. |
+| Ownership/cleanup | Controller destruction explicitly joins native output teardown while retaining the callback return receiver, then recovers actual returned ownership. A refused attachment returns a boxed Callback off the data path; no allocation/free was added to data fill. Broken native teardown still needs the enclosing process owner and remains a failed qualification. |
+
+Preparation/ack/end messages now represent pre-transport Checking/Fault without
+constructing a fake Ready core or snapshot. The actual authenticated outer worker
+must route these observations, preserve local Fault/status/quit behavior and
+close the source/output/IPC/process lifecycle. The controlled restart tests use
+private checker permits to test orchestration; they do not substitute for the
+separate real-original checking integration or device qualification.
+
+The isolated allocation fixture now includes tagged enqueue records as well as
+report overflow and ownership return. Separate delivery-overflow and faulted
+enqueue/refusal tests verify source cursor and command identity independently.
+Same-assistant checklist findings are not independent approval; no other craft
+lens gains new authored-media scope from this change.
+
+Final execution on the exclusive Windows worktree target:
+
+- Installation unit filter: **70 passed**, zero failed, in 5.08 s. The five
+  ordinary ignored fixtures were explicitly launched by their parent cases.
+  The five controller cases use a private controlled backend; their synthetic
+  checker permits test orchestration, not original-input qualification.
+- Explicit original/runtime-input filter: **ten passed**, zero failed or ignored,
+  in 60.31 s. The new combined source-thread case uses actual pinned player/lock
+  and original inputs, drives the real controller/source ticket connection and
+  checks a staged permit. It deliberately does not tick the controller into
+  endpoint probing; no actual device operation is hidden in this test.
+- Native CLI: **five passed**, zero failed, in 0.10 s.
+- Final all-target/all-feature Clippy passed with warnings denied in 39.88 s.
+
+That is **85 distinct focused passing cases**; previous executions and fixture
+children are not extra cases. Intermediate lint/style findings and the larger
+off-callback attachment-refusal representation were corrected before final
+qualification. Formatting, whitespace, actionlint and changed-document links
+passed. No actual endpoint, playback, capture, listening or release is claimed.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
@@ -232,10 +280,14 @@ move once into the callback and return intact through the actual backend.
 Primitive and controlled-output ownership/race cases above passed; complete
 native session integration remains open.
 Framing, peer, authentication components and scoped command application passed.
-Actual session orchestration, parent observation ordering, global command-window
-accounting, console behavior, native open/drop/recheck cancellation through the
-full worker and all aggregate deadlines remain open. Preparing/Fault/status
-before a transport exists needs explicit outer-state observations; do not invent
-a Ready transport/snapshot to acknowledge those controls.
+The transport/source/output controller exists; complete authenticated session
+routing, parent observation ordering, global command-window accounting, console
+behavior, native cancellation through the complete contained worker and all
+aggregate deadlines remain open. The new pre-transport observations must be
+integrated without inventing a Ready transport to acknowledge those controls.
+The complete command path still needs a receipt-to-controller/foreground
+acknowledgement watchdog, including a stalled callback while Paused; the
+250 ms Playing/LoopWait output watchdog alone does not establish the 100 ms
+control-acknowledgement gate.
 Only after those components and full checks pass can M12b.2 be proposed for
 merge. M12c's actual station/capture/listening/usability gates remain separate.

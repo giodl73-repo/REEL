@@ -47,6 +47,14 @@ pub struct CallbackEmission {
 struct QueuedCommand {
     command: Command,
     generation: Option<u64>,
+    tag: u64,
+}
+#[derive(Clone, Copy, Debug)]
+pub struct CallbackDelivery {
+    pub tag: u64,
+    pub sequence: Option<u64>,
+    pub refusal: Option<TransportError>,
+    pub snapshot: Snapshot,
 }
 pub struct CallbackControl {
     commands: Producer<QueuedCommand>,
@@ -54,6 +62,7 @@ pub struct CallbackControl {
     returned: Consumer<Box<Transport>>,
     fatal: Arc<AtomicBool>,
     phase: Arc<AtomicU8>,
+    deliveries: Consumer<CallbackDelivery>,
 }
 pub struct Callback {
     transport: Option<Box<Transport>>,
@@ -64,11 +73,13 @@ pub struct Callback {
     opened: bool,
     phase: Arc<AtomicU8>,
     pending_return: bool,
+    deliveries: Producer<CallbackDelivery>,
 }
 pub fn callback_pair(transport: Box<Transport>) -> (CallbackControl, Callback) {
     let (commands, receive) = RingBuffer::new(8);
     let (reports, read) = RingBuffer::new(256);
     let (returned, take) = RingBuffer::new(1);
+    let (deliveries, delivery_records) = RingBuffer::new(16);
     let fatal = Arc::new(AtomicBool::new(false));
     let phase = Arc::new(AtomicU8::new(OWNED));
     (
@@ -78,6 +89,7 @@ pub fn callback_pair(transport: Box<Transport>) -> (CallbackControl, Callback) {
             returned: take,
             fatal: fatal.clone(),
             phase: phase.clone(),
+            deliveries: delivery_records,
         },
         Callback {
             transport: Some(transport),
@@ -88,6 +100,7 @@ pub fn callback_pair(transport: Box<Transport>) -> (CallbackControl, Callback) {
             opened: false,
             phase,
             pending_return: false,
+            deliveries,
         },
     )
 }
@@ -104,6 +117,7 @@ impl CallbackControl {
         self.try_queued(QueuedCommand {
             command,
             generation: None,
+            tag: 0,
         })
     }
     pub fn try_command_for_generation(
@@ -114,7 +128,23 @@ impl CallbackControl {
         self.try_queued(QueuedCommand {
             command,
             generation: Some(generation),
+            tag: 0,
         })
+    }
+    pub fn try_tagged_command(
+        &mut self,
+        command: Command,
+        generation: u64,
+        tag: u64,
+    ) -> std::result::Result<(), CallbackCommandError> {
+        self.try_queued(QueuedCommand {
+            command,
+            generation: Some(generation),
+            tag,
+        })
+    }
+    pub fn delivery(&mut self) -> Option<CallbackDelivery> {
+        self.deliveries.pop().ok()
     }
     fn try_queued(
         &mut self,
@@ -155,8 +185,13 @@ fn enqueue_pending(
     commands: &mut Consumer<QueuedCommand>,
     transport: &mut Transport,
     fatal: &AtomicBool,
+    deliveries: &mut Producer<CallbackDelivery>,
 ) {
     for _ in 0..8 {
+        if commands.peek().is_ok_and(|command| command.tag != 0) && deliveries.slots() == 0 {
+            fatal.store(true, Ordering::Release);
+            break;
+        }
         let Ok(command) = commands.pop() else {
             break;
         };
@@ -166,6 +201,24 @@ fn enqueue_pending(
             }
             None => transport.enqueue(command.command.as_str()),
         };
+        if command.tag != 0 {
+            let (sequence, refusal) = match enqueued {
+                Ok(sequence) => (Some(sequence), None),
+                Err(reason) => (None, Some(reason)),
+            };
+            if deliveries
+                .push(CallbackDelivery {
+                    tag: command.tag,
+                    sequence,
+                    refusal,
+                    snapshot: transport.snapshot(),
+                })
+                .is_err()
+            {
+                fatal.store(true, Ordering::Release);
+                break;
+            }
+        }
         match enqueued {
             Ok(_) => {}
             // Terminal/closed cores refuse late controls without manufacturing
@@ -256,8 +309,15 @@ impl Callback {
             if self.fatal.load(Ordering::Acquire) {
                 effects = transport.poll(now_ms, Notice::BackendFault { generation });
             } else {
-                enqueue_pending(&mut self.commands, transport, &self.fatal);
-                if self.pending_return {
+                enqueue_pending(
+                    &mut self.commands,
+                    transport,
+                    &self.fatal,
+                    &mut self.deliveries,
+                );
+                if self.fatal.load(Ordering::Acquire) {
+                    effects = transport.poll(now_ms, Notice::BackendFault { generation });
+                } else if self.pending_return {
                     effects = transport.poll(now_ms, Notice::None);
                 } else {
                     if !self.opened {
@@ -335,6 +395,7 @@ impl Callback {
                 &mut self.commands,
                 self.transport.as_mut().unwrap(),
                 &self.fatal,
+                &mut self.deliveries,
             );
             self.return_transport();
         }
@@ -355,6 +416,7 @@ impl Drop for Callback {
             &mut self.commands,
             self.transport.as_mut().unwrap(),
             &self.fatal,
+            &mut self.deliveries,
         );
         self.return_transport();
     }
@@ -410,6 +472,27 @@ mod tests {
         t.enqueue("start").unwrap();
         assert_eq!(t.poll(0, Notice::None).open, Some(1));
         Box::new(t)
+    }
+    #[test]
+    fn tagged_delivery_overflow_faults_before_another_source_frame() {
+        let (mut control, mut callback) = callback_pair(engine());
+        for batch in 0..2 {
+            for offset in 0..8 {
+                control
+                    .try_tagged_command(Command::Status, 1, batch * 8 + offset + 1)
+                    .unwrap();
+            }
+            callback.fill(batch + 1, None, &mut [0.0; 2]);
+            control.report().unwrap();
+        }
+        for id in 17..=24 {
+            control.try_tagged_command(Command::Status, 1, id).unwrap();
+        }
+        callback.fill(3, None, &mut [1.0; 2]);
+        let core = control.returned().unwrap();
+        assert!(control.failed());
+        assert_eq!(core.snapshot().state, State::Fault);
+        assert_eq!(core.snapshot().source_frame, 2);
     }
     #[test]
     fn stale_generation_commands_keep_their_scope_through_callback_and_teardown() {
@@ -636,7 +719,10 @@ mod tests {
     #[test]
     #[ignore = "isolated allocator fixture only; explicitly launched by parent"]
     fn allocation_fixture() {
-        let (_control, mut callback) = callback_pair(engine());
+        let (mut control, mut callback) = callback_pair(engine());
+        for id in 1..=8 {
+            control.try_tagged_command(Command::Status, 1, id).unwrap();
+        }
         let mut out = [0.0; 2];
         assert_no_allocations(|| {
             for n in 0..260 {

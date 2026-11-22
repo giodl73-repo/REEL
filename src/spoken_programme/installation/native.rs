@@ -3,9 +3,11 @@ use super::*;
 use serde::{Deserialize, Serialize};
 
 mod callback;
+#[cfg(windows)]
+pub mod controller;
 pub use callback::{
-    Callback, CallbackCommandError, CallbackControl, CallbackEmission, CallbackReport,
-    callback_pair,
+    Callback, CallbackCommandError, CallbackControl, CallbackDelivery, CallbackEmission,
+    CallbackReport, callback_pair,
 };
 #[cfg(windows)]
 mod device;

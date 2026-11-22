@@ -27,8 +27,30 @@ pub enum Input {
     },
 }
 #[derive(Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Preparation {
+    Checking,
+    AwaitingText,
+    Fault,
+    Stopped,
+}
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Output {
+    Preparing {
+        phase: Preparation,
+        observed_counter: i64,
+    },
+    PreparationAck {
+        id: u64,
+        phase: Preparation,
+        refusal: Option<TransportError>,
+        observed_counter: i64,
+    },
+    PreparationEnded {
+        phase: Preparation,
+        observed_counter: i64,
+    },
     Hello {
         request_sha256: String,
         runtime_sha256: String,
@@ -170,6 +192,32 @@ impl Output {
     }
     fn validate(&self) -> Result<()> {
         match self {
+            Self::Preparing {
+                observed_counter, ..
+            }
+            | Self::PreparationAck {
+                observed_counter, ..
+            }
+            | Self::PreparationEnded {
+                observed_counter, ..
+            } => {
+                ensure!(
+                    *observed_counter > 0,
+                    "installation preparation counter profile"
+                );
+                if let Self::PreparationAck { id, .. } = self {
+                    ensure!(
+                        *id > 0,
+                        "installation preparation command identifier profile"
+                    );
+                }
+                if let Self::PreparationEnded { phase, .. } = self {
+                    ensure!(
+                        matches!(phase, Preparation::Fault | Preparation::Stopped),
+                        "installation preparation end profile"
+                    );
+                }
+            }
             Self::Hello {
                 request_sha256,
                 runtime_sha256,
@@ -734,6 +782,44 @@ mod tests {
             assert!(!request.original.declaration.path.exists());
             channel.shutdown().unwrap();
         });
+    }
+    #[test]
+    fn preparing_controls_do_not_invent_a_transport_snapshot() {
+        let message = Output::PreparationAck {
+            id: 1,
+            phase: Preparation::Checking,
+            refusal: None,
+            observed_counter: 150,
+        };
+        let body = message.bytes().unwrap();
+        assert!(!std::str::from_utf8(&body).unwrap().contains("snapshot"));
+        let packet = Encoder::new([1; 16], Direction::Report)
+            .unwrap()
+            .encode(0, &body)
+            .unwrap();
+        assert!(matches!(
+            Output::parse(&packet).unwrap(),
+            Output::PreparationAck {
+                phase: Preparation::Checking,
+                ..
+            }
+        ));
+        assert!(
+            Output::PreparationEnded {
+                phase: Preparation::Checking,
+                observed_counter: 150
+            }
+            .bytes()
+            .is_err()
+        );
+        assert!(
+            Output::PreparationEnded {
+                phase: Preparation::Stopped,
+                observed_counter: 150
+            }
+            .bytes()
+            .is_ok()
+        );
     }
     #[test]
     fn parent_bootstrap_checks_held_peer_context_and_rejects_replay() {

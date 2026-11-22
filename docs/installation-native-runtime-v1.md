@@ -203,6 +203,65 @@ These are implemented admission components, not the complete session loop.
 Actual SourceWorker/OutputWorker orchestration, receipt-to-output deadlines,
 parent report ordering and persistent-console proofs still gate the Run command.
 
+### Real transport/output controller
+
+`native::controller::Controller` now connects the actual transport owner to the
+output backend. Its nonblocking tick drains callback observations, applies
+stamped commands to the sole real core, and schedules native operations off
+that thread. Construction creates no stream. The outer session still needs to
+route authenticated messages, confirm actual display and deliver acknowledgements.
+
+```mermaid
+flowchart LR
+    accTitle: The same transport moves through native output and restart
+    accDescr: The controller retains the prepared core during native startup. A valid silent callback precedes handoff. Stop and restart return the identical core before physical close. A restart ticket goes to source checking; its checked permit is held through probing and consumed by the actual core immediately before opening.
+    core["Controller owns real core"] --> ack["Actual command record<br/>Starting acknowledgement"]
+    ack --> probe["Bound endpoint probe"] --> open["Owned native open"]
+    open --> silent["Valid silent callback"] --> callback["Move same core<br/>into data callback"]
+    callback --> returned["Return identical core"] --> close["Actual old-stream close"]
+    close --> ticket["Opaque restart ticket"]
+    ticket -.-> check["Source/runtime checking thread"]
+    check -.-> permit["Stage checked permit"] --> probe
+```
+
+`Controller::drive_source` now connects the dashed checking links to the
+retained source worker: it issues tickets only after actual close, cancels
+obsolete checks and discards stale completions. The complete authenticated
+session still needs to call that orchestration in its control loop.
+`SourceWorker::with_runtime` supplies the source-thread path:
+current-player/lock rechecks run alongside original checks, off the controller,
+using the same absolute checking budget. The existing original-only constructor
+retains its narrower scope and does not start validating a missing player.
+
+Startup Stop/Quit updates the core while a native open is blocked and cancels
+the operation. Late completion cannot attach that core. Restart tickets are
+unavailable until the old stream actually closes. A checked permit is staged
+through probing; the real core consumes it just before stream opening, so the
+core's two-second open window is not spent on the preceding probe. The external
+Start/Restart aggregate remains tied to complete foreground command receipt.
+
+Callback delivery records now carry fixed-size command tags and the actual
+enqueue sequence/refusal. This prevents a rejected command during Fault from
+stealing a later Status acknowledgement. The 16-entry delivery-record channel
+does not expand the eight outstanding-command budget. Delivery overflow faults
+before another source frame. Tags, overflow and actual ownership return are
+covered by the isolated data-callback allocation check (tagged enqueue, report
+overflow and actual return); delivery-overflow refusal has its own source-cursor
+test. A refused pre-handoff
+attachment may box its returned Callback off that data path.
+
+The controller can report a watchdog failure immediately, then fault the actual
+core when native teardown returns it. It does not invent a mutable core snapshot
+while the callback owns the transport. Destruction joins actual output teardown
+while keeping the callback return receiver alive; only then can ownership and
+buffers be released. This join may block a broken driver and still belongs
+inside the externally contained native worker.
+
+Preparation/status/end message variants represent Checking/Fault before any
+transport exists. They contain no fabricated Ready snapshot. Actual full-worker
+routing, parent acknowledgement visibility/order, global command admission,
+console behavior and process-wide cleanup deadlines remain required.
+
 ### Existing runner and output ports
 
 The existing contained process runner now offers an explicit observer port.
@@ -284,8 +343,8 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest source/output/admission checkpoint: 63 unit cases, five CLI cases and nine
-explicit original/runtime-input cases passed: **77 distinct focused cases**. The
+Latest controller/admission checkpoint: 70 unit cases, five CLI cases and ten
+explicit original/runtime-input cases passed: **85 distinct focused cases**. The
 original-input invocation ran with zero ignored cases; the five ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains

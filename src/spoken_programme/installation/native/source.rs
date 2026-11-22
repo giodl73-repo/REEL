@@ -95,6 +95,23 @@ pub struct SourceWorker {
 }
 impl SourceWorker {
     pub fn new(request: SessionRequest, clock: OutputClock, deadline_us: u64) -> Result<Self> {
+        Self::spawn(request, clock, deadline_us, None)
+    }
+    /// The authenticated session retains/rechecks the current player and lock
+    /// on this checking thread, independently of the original producer.
+    pub fn with_runtime(
+        runtime: Arc<super::protocol::RuntimeBinding>,
+        clock: OutputClock,
+        deadline_us: u64,
+    ) -> Result<Self> {
+        Self::spawn(runtime.request().clone(), clock, deadline_us, Some(runtime))
+    }
+    fn spawn(
+        request: SessionRequest,
+        clock: OutputClock,
+        deadline_us: u64,
+        runtime: Option<Arc<super::protocol::RuntimeBinding>>,
+    ) -> Result<Self> {
         request.validate()?;
         let stop = Arc::new(AtomicBool::new(false));
         let initial = operation(clock, 0, deadline_us, &stop)?;
@@ -105,7 +122,14 @@ impl SourceWorker {
         let thread = std::thread::Builder::new()
             .name("reel-installation-original-check".into())
             .spawn(move || {
-                if let Err(reason) = run(request, &initial_task, receive, &mut send, &stopped) {
+                if let Err(reason) = run(
+                    request,
+                    &initial_task,
+                    receive,
+                    &mut send,
+                    &stopped,
+                    runtime,
+                ) {
                     let _ = send.push(SourceEvent::Failed {
                         generation: 0,
                         reason,
@@ -210,7 +234,16 @@ fn run(
     mut tasks: Consumer<Task>,
     events: &mut Producer<SourceEvent>,
     stopped: &AtomicBool,
+    runtime: Option<Arc<super::protocol::RuntimeBinding>>,
 ) -> std::result::Result<(), SourceFailure> {
+    let check_runtime = |operation: &SourceOperation| -> Result<()> {
+        operation.check()?;
+        if let Some(runtime) = &runtime {
+            runtime.recheck()?;
+        }
+        operation.check()
+    };
+    check_runtime(initial).map_err(|_| initial.failure())?;
     let loaded = LoadedProgramme::load(&request.original, || initial.check())
         .map_err(|_| initial.failure())?;
     loaded
@@ -245,7 +278,7 @@ fn run(
         };
         let op = &task.operation;
         let checked = (|| -> Result<RestartPermit> {
-            op.check()?;
+            check_runtime(op)?;
             loaded.recheck_controls(|| op.check())?;
             let permit = prepared.restart_permit(task.ticket, op.control()?)?;
             op.check()?;
