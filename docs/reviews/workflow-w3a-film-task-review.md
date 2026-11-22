@@ -23,3 +23,11 @@ error before producer dispatch; recovery continues that same admitted job with
 the original pinned worker/media tools. Qualification records distinguish the
 repair driver from the original producer runtime. No cache initialization,
 hydration, project-profile changes or scratch retirement occurs.
+
+The original task reached retained completion and historical readback, then
+found a retained-layout path-bound refusal at close. Existing workflow aliases
+and the qualified closer's canonical paths would have counted removals plus
+additions for the same objects. New retention work now starts in the canonical
+layout. An explicit, separately reported two-phase preparation handles old
+layouts within the unchanged per-phase limit while preserving every object and
+historical root. Its original close key and all prior acknowledgements remain.

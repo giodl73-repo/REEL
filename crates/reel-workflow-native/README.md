@@ -210,6 +210,14 @@ Persist its operation key before staging and reuse it on uncertainty. Close
 reopens outputs before clearing the original slot; it does not retire scratch,
 release retained history, select a candidate or approve a film.
 
+New retention work uses the qualified close code's canonical `objects/<sha256>`
+layout. An older retained tree may first require explicit
+`prepare_close_layout` preview/application with the original close key. Its
+reported add and cleanup phases each obey the 128-change limit: references are
+added before aliases are removed, all prior objects and tree roots stay covered,
+and original native work is reconciled on retry. This is not payload deletion or
+an automatic workaround for oversized production admission.
+
 The existing native bounds still apply: a 1 GiB protected envelope, at most 32
 response objects including the worker receipt, and 128 MiB aggregate response
 bytes. Admission reserves one 64 KiB worker object for tool tasks and includes it
