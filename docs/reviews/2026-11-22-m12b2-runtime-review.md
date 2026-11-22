@@ -180,12 +180,50 @@ That is **66 distinct focused passing cases**; prior runs and child fixtures
 are not counted again. Formatting, whitespace, actionlint and changed-document
 relative links passed.
 
-Strict message bodies, request/runtime-hash authentication, command IDs and
+At that pipe-only checkpoint, strict message bodies, request/runtime-hash authentication, command IDs and
 generation applicability, original-text display acknowledgement, whole-session
 deadlines and the operator console remain open. The current pipe transports
 bounded bytes; it cannot be presented as a complete authenticated player.
 Other craft lenses remain outside this unchanged-media scope; no independent
 review, actual-device listening/usability or human authority is claimed.
+
+## Guarded admission and command application checkpoint
+
+The same assistant applied Rights/Provenance, Platform/Audience, Sound and Editor
+checklists to the [runtime/message admission](../installation-native-runtime-v1.md#guarded-runtime-and-message-admission)
+components and generation-stamped command path.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Rights/Provenance | Bind the actual current executable and exact raw request independently from the original producer. Retained lock bytes must match this binary's embedded build lock. Context clones retain native image/lock guards even after the initial binding is dropped. Source commit remains declared; neither lock matching nor a Hello invents source attestation or creative authority. |
+| Rights/Provenance — actual handshake | A real contained child and parent bind the same image/lock/request, compare both OS pipe peers with the held runner PID, then exchange strict Hello/Authorize messages in the exact random context. The original declaration deliberately does not exist: successful authentication proves no original loading or source admission. Original checking remains a subsequent independent gate. |
+| Platform/Audience | Strict tagged bodies reject unknown fields/commands, invalid hash/counter/layout shapes and inconsistent observed generations. Consecutive IDs, nondecreasing receipt counters and eight outstanding commands are checked; only actual application/refusal may release an ID. Actual console rendering and the global UI/IPC/core window still need integration. |
+| Platform/Audience — semantic refusal | Supported controls before text acknowledgement receive InvalidState without source motion; Status/Quit remain admissible. This differs from malformed/foreign/replayed protocol data, which ends admission. The operator's local Fault/status/quit behavior after protocol failure is still required. |
+| Sound/Editor | Preserve the expected generation through callback buffering and actual ownership return. Check it when the real core applies a command, after earlier commands may change generation. A stale Pause cannot pause the newly started generation; its actual refusal trace is retained. Stop/Quit/Status remain run-wide. No PCM/order/interval/translation changes. |
+
+Immutable Snapshot/State/Error/Command values now deserialize for observations
+and strict messages. The actual Transport, Prepared and restart capabilities do
+not deserialize; no observation is copied into their private state. The
+controller must use the stamped command path and actual source/output objects.
+
+Execution on the exclusive worktree target:
+
+- Installation unit filter: **63 passed**, zero failed, in 4.84 s. Five ordinary
+  ignored native/allocator fixture entries were explicitly launched by their
+  parents, not counted as extra cases. Includes the contained authentication
+  exchange, strict message refusal cases and actual core/callback generation tests.
+- Explicit original/runtime-input integration filter: **nine passed**, zero
+  failed or ignored, in 23.34 s. New current-player case succeeds with originals
+  unavailable, proves cloned gate contexts retain lock guards, and rejects a
+  byte-correct alternative player path and a byte-correct incorrect lock.
+- Native CLI: **five passed**, zero failed, in 0.09 s. Shape/original checks
+  still do not start a channel, probe an endpoint or play audio.
+- Final all-target/all-feature Clippy passed with warnings denied in 44.87 s.
+
+That is **77 distinct focused passing cases**, including the earlier cases;
+reruns and fixture children are not counted again. No endpoint, real audio,
+capture, human listening/usability or release was performed. Formatting,
+whitespace, actionlint and changed-document relative links passed.
 
 ## Remaining proof
 
@@ -193,8 +231,11 @@ The real transport must stay in the controller until native readiness, then
 move once into the callback and return intact through the actual backend.
 Primitive and controlled-output ownership/race cases above passed; complete
 native session integration remains open.
-Framing/peer/closed-I/O cases passed; strict message authentication and
-generation/state applicability, actual console behavior,
-native open/drop/recheck cancellation and all aggregate deadlines remain open.
+Framing, peer, authentication components and scoped command application passed.
+Actual session orchestration, parent observation ordering, global command-window
+accounting, console behavior, native open/drop/recheck cancellation through the
+full worker and all aggregate deadlines remain open. Preparing/Fault/status
+before a transport exists needs explicit outer-state observations; do not invent
+a Ready transport/snapshot to acknowledge those controls.
 Only after those components and full checks pass can M12b.2 be proposed for
 merge. M12c's actual station/capture/listening/usability gates remain separate.

@@ -29,7 +29,7 @@ fn next_session() -> Outcome<u64> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum State {
     Ready,
     Starting,
@@ -41,7 +41,8 @@ pub enum State {
     Stopped,
     Fault,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Command {
     Start,
     Pause,
@@ -82,7 +83,7 @@ impl Command {
         .ok_or(TransportError::InvalidCommand)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum TransportError {
     InvalidCommand,
     InvalidState,
@@ -120,7 +121,8 @@ pub enum Notice {
     BackendFault { generation: u64 },
     RestartRejected { generation: u64 },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Snapshot {
     pub state: State,
     pub generation: u64,
@@ -150,7 +152,7 @@ pub struct Transport {
     last_callback: u64,
     stage_deadline: u64,
     restart_verified: bool,
-    queue: VecDeque<(u64, Command)>,
+    queue: VecDeque<(u64, Command, Option<u64>)>,
     next_sequence: u64,
     trace: Vec<Trace>,
     effects: Effects,
@@ -207,7 +209,19 @@ impl Transport {
         (self.samples.len() / 2) as u64
     }
     pub fn enqueue(&mut self, line: &str) -> Outcome<u64> {
+        self.enqueue_expected(line, None)
+    }
+    /// Check applicability when the real core applies the command, not when a
+    /// potentially stale controller snapshot was last observed. Run-wide safety
+    /// controls remain applicable across generation changes.
+    pub fn enqueue_for_generation(&mut self, line: &str, generation: u64) -> Outcome<u64> {
+        self.enqueue_expected(line, Some(generation))
+    }
+    fn enqueue_expected(&mut self, line: &str, mut expected: Option<u64>) -> Outcome<u64> {
         let command = Command::parse(line)?;
+        if matches!(command, Command::Stop | Command::Quit | Command::Status) {
+            expected = None;
+        }
         if self.snapshot.session_closed
             || (self.snapshot.state == State::Fault
                 && !matches!(command, Command::Status | Command::Quit))
@@ -219,7 +233,8 @@ impl Transport {
             return Err(TransportError::QueueFull);
         }
         self.next_sequence += 1;
-        self.queue.push_back((self.next_sequence, command));
+        self.queue
+            .push_back((self.next_sequence, command, expected));
         Ok(self.next_sequence)
     }
     fn record(&mut self, refusal: Option<TransportError>) {
@@ -291,8 +306,12 @@ impl Transport {
                 }
                 _ => {}
             }
-            while let Some((sequence, command)) = self.queue.pop_front() {
+            while let Some((sequence, command, expected)) = self.queue.pop_front() {
                 self.snapshot.command_sequence = sequence;
+                if expected.is_some_and(|generation| generation != self.snapshot.generation) {
+                    self.record(Some(TransportError::StaleGeneration));
+                    continue;
+                }
                 let valid = self.command(command);
                 self.record(if valid {
                     None

@@ -321,6 +321,86 @@ fn source_event(
 
 #[cfg(all(windows, feature = "installation-native"))]
 #[test]
+#[ignore = "explicit current-player binding qualification; no originals/devices"]
+fn native_player_binding_checks_current_image_and_embedded_lock_independently() {
+    use api::native::protocol::{Output, RuntimeBinding, WorkerGate};
+    let f = InstallationFixture::new(true);
+    let mut request = native_request(&f);
+    fs::remove_file(&request.original.declaration.path).unwrap();
+    request.playback.runtime = reel::scene_delivery::FileRef {
+        path: std::env::current_exe().unwrap(),
+        sha256: f.runtime.sha256.clone(),
+        bytes: f.runtime.bytes,
+    };
+    let lock = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
+    fs::write(&request.playback.cargo_lock.path, lock).unwrap();
+    request.playback.cargo_lock.sha256 = hash(lock);
+    request.playback.cargo_lock.bytes = lock.len() as u64;
+    let raw = serde_json::to_vec(&request).unwrap();
+    let binding = RuntimeBinding::bind(&raw).unwrap();
+    binding.recheck().unwrap();
+    assert_eq!(
+        binding.runtime_path().canonicalize().unwrap(),
+        std::env::current_exe().unwrap().canonicalize().unwrap()
+    );
+    let gate = WorkerGate::new(binding.context(), std::process::id(), [1; 16]).unwrap();
+    match gate.hello() {
+        Output::Hello {
+            request_sha256,
+            runtime_sha256,
+            process_id,
+        } => {
+            assert_eq!(request_sha256, hash(&raw));
+            assert_eq!(runtime_sha256, f.runtime.sha256);
+            assert_eq!(process_id, std::process::id());
+        }
+        _ => panic!("unexpected player handshake"),
+    }
+    assert!(
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&request.playback.cargo_lock.path)
+            .is_err()
+    );
+    drop(binding);
+    assert!(
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&request.playback.cargo_lock.path)
+            .is_err()
+    );
+    drop(gate);
+    fs::write(
+        &request.playback.cargo_lock.path,
+        b"independently pinned incorrect lock",
+    )
+    .unwrap();
+    request.playback.cargo_lock.sha256 = hash(b"independently pinned incorrect lock");
+    request.playback.cargo_lock.bytes = b"independently pinned incorrect lock".len() as u64;
+    assert!(
+        RuntimeBinding::bind(&serde_json::to_vec(&request).unwrap())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("compiled lock")
+    );
+    fs::write(&request.playback.cargo_lock.path, lock).unwrap();
+    request.playback.cargo_lock.sha256 = hash(lock);
+    request.playback.cargo_lock.bytes = lock.len() as u64;
+    let alternate = f.root.join("byte-correct-other-player.exe");
+    fs::copy(std::env::current_exe().unwrap(), &alternate).unwrap();
+    request.playback.runtime.path = alternate;
+    assert!(
+        RuntimeBinding::bind(&serde_json::to_vec(&request).unwrap())
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("current retained image")
+    );
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+#[test]
 #[ignore = "explicit guarded source-worker qualification; no devices"]
 fn native_source_worker_retains_guards_and_checks_real_opaque_restart() {
     use api::native::{

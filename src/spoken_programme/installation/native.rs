@@ -14,6 +14,7 @@ pub mod output;
 #[cfg(windows)]
 mod owned;
 mod probe;
+pub mod protocol;
 #[cfg(windows)]
 pub mod source;
 pub use probe::{ProbeRequest, probe, probe_worker};

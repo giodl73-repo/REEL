@@ -43,8 +43,13 @@ pub struct CallbackEmission {
     pub snapshot: Snapshot,
     pub submitted_source_frames: u32,
 }
+#[derive(Clone, Copy)]
+struct QueuedCommand {
+    command: Command,
+    generation: Option<u64>,
+}
 pub struct CallbackControl {
-    commands: Producer<Command>,
+    commands: Producer<QueuedCommand>,
     reports: Consumer<CallbackReport>,
     returned: Consumer<Box<Transport>>,
     fatal: Arc<AtomicBool>,
@@ -52,7 +57,7 @@ pub struct CallbackControl {
 }
 pub struct Callback {
     transport: Option<Box<Transport>>,
-    commands: Consumer<Command>,
+    commands: Consumer<QueuedCommand>,
     reports: Producer<CallbackReport>,
     returned: Producer<Box<Transport>>,
     fatal: Arc<AtomicBool>,
@@ -96,6 +101,25 @@ impl CallbackControl {
         &mut self,
         command: Command,
     ) -> std::result::Result<(), CallbackCommandError> {
+        self.try_queued(QueuedCommand {
+            command,
+            generation: None,
+        })
+    }
+    pub fn try_command_for_generation(
+        &mut self,
+        command: Command,
+        generation: u64,
+    ) -> std::result::Result<(), CallbackCommandError> {
+        self.try_queued(QueuedCommand {
+            command,
+            generation: Some(generation),
+        })
+    }
+    fn try_queued(
+        &mut self,
+        command: QueuedCommand,
+    ) -> std::result::Result<(), CallbackCommandError> {
         if self
             .phase
             .compare_exchange(OWNED, WRITING, Ordering::AcqRel, Ordering::Acquire)
@@ -128,7 +152,7 @@ impl CallbackControl {
     }
 }
 fn enqueue_pending(
-    commands: &mut Consumer<Command>,
+    commands: &mut Consumer<QueuedCommand>,
     transport: &mut Transport,
     fatal: &AtomicBool,
 ) {
@@ -136,7 +160,13 @@ fn enqueue_pending(
         let Ok(command) = commands.pop() else {
             break;
         };
-        match transport.enqueue(command.as_str()) {
+        let enqueued = match command.generation {
+            Some(generation) => {
+                transport.enqueue_for_generation(command.command.as_str(), generation)
+            }
+            None => transport.enqueue(command.command.as_str()),
+        };
+        match enqueued {
             Ok(_) => {}
             // Terminal/closed cores refuse late controls without manufacturing
             // a new backend failure. Their owner reports the actual terminal
@@ -380,6 +410,30 @@ mod tests {
         t.enqueue("start").unwrap();
         assert_eq!(t.poll(0, Notice::None).open, Some(1));
         Box::new(t)
+    }
+    #[test]
+    fn stale_generation_commands_keep_their_scope_through_callback_and_teardown() {
+        let (mut control, mut callback) = callback_pair(engine());
+        control
+            .try_command_for_generation(Command::Pause, 0)
+            .unwrap();
+        callback.fill(1, None, &mut [0.0; 2]);
+        let report = control.report().unwrap();
+        assert_eq!(report.snapshot.state, State::Playing);
+        assert_eq!(
+            report.commands[0].unwrap().refusal,
+            Some(TransportError::StaleGeneration)
+        );
+        control
+            .try_command_for_generation(Command::Pause, 1)
+            .unwrap();
+        drop(callback);
+        let mut actual = control.returned().unwrap();
+        actual.poll(2, Notice::None);
+        assert_eq!(actual.snapshot().state, State::Paused);
+        actual.enqueue_for_generation("stop", 0).unwrap();
+        actual.poll(3, Notice::None);
+        assert_eq!(actual.snapshot().state, State::Stopped);
     }
     #[test]
     fn callback_preserves_pcm_and_returns_the_same_restart_context() {

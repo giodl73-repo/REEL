@@ -354,10 +354,14 @@ mod files {
 #[cfg(windows)]
 pub(crate) use files::LoadedProgramme;
 
+#[cfg(all(test, windows))]
+pub(super) fn fixture_request() -> SessionRequest {
+    tests::request()
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn request() -> SessionRequest {
+    pub(super) fn request() -> SessionRequest {
         let file = FileRef {
             path: std::env::current_exe().unwrap(),
             sha256: "a".repeat(64),

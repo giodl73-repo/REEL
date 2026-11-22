@@ -142,9 +142,10 @@ The reader checks the fixed header before reading its bounded body. A malformed,
 foreign, duplicated, truncated or closed stream poisons that receiver; it cannot
 resynchronize/reconnect with a later valid frame. Queue overflow is terminal.
 Generation metadata is preserved, not treated as a restart permit or blanket
-authority: strict body schemas, runtime/request-hash authentication, application
-state/generation checks and real text-display acknowledgement still need the
-session controller. Raw framing success alone does not satisfy those gates.
+authority. The strict message/admission components below now bind that metadata
+to commands; the complete session controller must connect them and obtain real
+text-display acknowledgement. Raw framing success alone does not satisfy those
+gates.
 
 Shutdown repeatedly calls `CancelSynchronousIo` on the actual owned thread
 handles until both threads finish, then joins them before dropping their I/O
@@ -154,6 +155,53 @@ closed peers, unread pipe backlog and both queue limits. A two-second cleanup
 success is reported only after those actual joins; a broken OS operation cannot
 be relabeled successful by abandoning its thread/buffers. This port's cleanup
 measurement does not replace the complete foreground/session cleanup deadline.
+
+### Guarded runtime and message admission
+
+`RuntimeBinding::bind` is an explicit blocking operation, separate from
+`validate-session` and original-source checking. It pins the declared player,
+requires that it is the current retained executable, and holds the declared
+Cargo.lock file under native read/path guards. The lock bytes must match those
+embedded in this compiled player. Expected request/image hashes are computed
+from those actual inputs. The declared source commit remains a declared build
+context, not an invented source attestation. Original compiler/producer identity
+is unchanged and is still independently checked by the source worker.
+
+Cloned admission contexts retain the runtime/lock guards, so dropping the initial
+binding cannot make those files mutable while a gate is still using its hashes.
+Binding this player does not read originals, probe an endpoint or admit playback.
+A real test succeeds with the original declaration absent, then rejects a
+byte-correct wrong player path and an independently pinned incorrect lock.
+
+The private JSON bodies use strict tagged enums and reject unknown fields and
+commands. They are bounded by the same frame limit:
+
+| Direction / message | Required relationship |
+| --- | --- |
+| Worker `hello` → parent `authorize` | Both actual OS pipe peers, random run context, exact request hash and actual image hash agree with the held runtime/worker. Bootstrap is accepted once. |
+| Worker `transcript` → parent `text_shown` | Exact admitted UTF-8 text/hash; acknowledgement names that same hash and at least 80×30 / UTF-8 input and output observations. Actual console measurement/display still belongs to the pending operator implementation. |
+| Parent `control` | Canonical command, consecutive unique ID and nondecreasing complete-receipt counter within the Run clock domain. At most eight IDs remain outstanding until actual worker/core application or refusal. |
+| Worker `ready`, `state`, `ack`, `ended` | Immutable bounded observations; snapshot generation agrees with the frame. They cannot deserialize or construct a transport, prepared programme or restart permit. |
+
+Before text acknowledgement, Status/Quit remain admissible and other supported
+controls receive an InvalidState refusal without advancing source state. Bad
+context, malformed messages, replay or an exhausted command budget end admission;
+the complete operator must present that failure and preserve its local
+Status/Quit/cleanup behavior. No parsed acknowledgement by itself proves that
+the console rendered the text or that the device played a frame.
+
+Stateful commands now retain their expected generation through the callback's
+queue and ownership return. The **actual core** checks it when applying the
+command, after earlier queued commands may have changed generations. A stale
+Pause/Resume/Start/Restart records StaleGeneration without changing state/cursors.
+Stop/Quit/Status are run-wide safety controls and survive an old observed
+generation. The controller must use this stamped path end to end and enforce
+the same eight outstanding IDs across its UI/IPC/core buffers; multiple bounded
+queues do not authorize additional unique commands.
+
+These are implemented admission components, not the complete session loop.
+Actual SourceWorker/OutputWorker orchestration, receipt-to-output deadlines,
+parent report ordering and persistent-console proofs still gate the Run command.
 
 ### Existing runner and output ports
 
@@ -228,7 +276,7 @@ checklists. These are review lenses, not independent reviewers or approvals.
 | Guarded original reads and strict bounded invocation | `held_original_input_denies_mutation_and_rename_without_executable_requirement`, request-shape/cancellation/deadline and CLI cases. Passed locally. |
 | Startup Stop retains the actual session | Native-ready handoff, Stop before first owned fill and cancelled blocked-open controlled-backend cases passed locally. Foreground/contained-process integration remains pending. |
 | Callback teardown returns pending ownership | Drop-before-first-fill, queued Stop, completion, preempted writer and racing return cases passed locally. Actual native error/close integration remains pending. |
-| Exact private wire context | Framing context/version/direction/sequence/bounds/truncation, actual peer PIDs, queue overflow and closed-peer cases passed locally. Strict message body/authentication, generation applicability and whole-session integration remain pending. |
+| Exact private wire context | Framing, actual peers, strict bodies, held runtime/request authentication and scope at actual core application passed locally. Whole-session orchestration, parent observation ordering and actual display proof remain pending. |
 | Aggregate clocks and source verification cancellation | Source port shares the Run origin and one initial/fresh-check deadline; queued cancellation/expiry and real original rechecks passed locally. Complete foreground Start/Restart aggregates, Stop/Quit integration and blocked-operation containment remain pending. |
 | Exact persistent text and line commands | Actual Windows console, Spanish cells, paste/scroll/resize, ordinary EOF/Ctrl+C, blocked I/O and bounded cleanup; pending. |
 | Real contained lifecycle and unchanged PCM | Controlled native output port passed source/interval sample oracles, allocation/free, cancelled handoff, oversized period/buffer and actual mock-stream close tests. Actual contained worker/driver lifecycle remains pending. |
@@ -236,9 +284,9 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest source/output/IPC checkpoint: 53 unit cases, five CLI cases and eight
-explicit original-input cases passed: **66 distinct focused cases**. The
-original-input invocation ran with zero ignored cases; the four ordinary ignored
+Latest source/output/admission checkpoint: 63 unit cases, five CLI cases and nine
+explicit original/runtime-input cases passed: **77 distinct focused cases**. The
+original-input invocation ran with zero ignored cases; the five ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains
 original file guards through Ready/rechecks, releases them at actual teardown,
