@@ -490,6 +490,7 @@ dependencies = [
  "git-asset",
  "git-asset-core",
  "git-asset-model",
+ "git-asset-store",
  "reel-publication",
  "reel-workflow",
  "serde",

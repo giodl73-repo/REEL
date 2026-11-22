@@ -14,6 +14,8 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
+pub mod claims;
+
 pub const SDK_COMMIT: &str = "3ddeab5572f9479475134e6b7334a26effcb9277";
 fn error(kind: ErrorKind, code: &str) -> Error {
     Error {
