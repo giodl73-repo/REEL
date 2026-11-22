@@ -146,14 +146,55 @@ all four observation cases passed again in 1.39 s; final package all-target
 Clippy passed in 3.67 s. Repeated cases are not additional passes. Formatting,
 whitespace, actionlint and changed-document relative links passed.
 
+## Private framing and actual local pipe checkpoint
+
+The same assistant applied Rights/Provenance and Platform/Audience checklists
+to `native::wire` and `native::pipe`. The [illustrated channel and byte layout](../installation-native-runtime-v1.md#private-local-channel)
+separate the implemented transport from the pending controller integration.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Rights/Provenance | Pipe names derive from a cryptographic per-run context; a protected current-user-only DACL and remote-client rejection constrain the actual local endpoints. The test queries the real pipe's OS descriptor, not just a constructed ACL. Both actual peers must match the held runner PID; client-side server verification is separate. No source, restart, voice or publication authority follows from framing, an invitation or a wire observation. |
+| Platform/Audience | Separate one-way file objects permit bidirectional progress with blocked readers. Commands/reports use bounded 8/256 queues and frames of at most 8192 bytes including the header. Header/version/direction/nonce/sequence/bounds are checked before reading a body. Errors poison the receiver and overflow faults the channel; no resynchronization or reconnect. |
+| Platform/Audience — cancellation | Repeated synchronous-I/O cancellation handles entry races; actual thread joins precede resource release and cleanup success. Tests cover unconnected waits, blocked reads, unread pipe backlog, EOF, wrong peers and cancelled readiness. Those port measurements do not establish the full 120 s/2 s foreground lifecycle or command acknowledgement gates. |
+| Sound/Editor | No PCM, source order, intervals, cue text or native output configuration changed. Existing source/output tests reran alongside these cases. Generation bytes remain metadata: message applicability and actual core/permit checks are still required. |
+
+The actual contained child exchanges exact Spanish text over both pipes after
+its peer PID matches the existing runner's held process. It uses the retained
+test image and actual job cleanup; its ordinary ignored child entry is launched
+explicitly by the parent case. This is not a production fake-success mode.
+Another native test holds a raw peer open after sending a malformed header and
+no body; the real reader faults from that header without waiting for EOF/body.
+
+Unit execution: **53 passed**, zero failed, in 3.72 s. Four ordinary ignored
+fixture entries were invoked by their parent cases and are not additional
+passes. This includes four portable framing cases and eight native pipe cases
+added to the previous 41 installation cases. All-target/all-feature checking
+passed before the tests (cold Windows feature build, 2m46s). Intermediate test
+compile findings (Win32 control-word pointer type and scoped-child capture)
+were corrected before the passing run. No actual audio endpoint was queried.
+Final all-target/all-feature Clippy passed with warnings denied in 51.21 s.
+All five native CLI cases passed in 0.83 s; all eight explicit original-input
+cases passed with zero ignored in 27.45 s against the expanded Windows build.
+That is **66 distinct focused passing cases**; prior runs and child fixtures
+are not counted again. Formatting, whitespace, actionlint and changed-document
+relative links passed.
+
+Strict message bodies, request/runtime-hash authentication, command IDs and
+generation applicability, original-text display acknowledgement, whole-session
+deadlines and the operator console remain open. The current pipe transports
+bounded bytes; it cannot be presented as a complete authenticated player.
+Other craft lenses remain outside this unchanged-media scope; no independent
+review, actual-device listening/usability or human authority is claimed.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
 move once into the callback and return intact through the actual backend.
 Primitive and controlled-output ownership/race cases above passed; complete
 native session integration remains open.
-Wire nonce/sequence/generation,
-closed-peer and bounded-I/O cancellation proof, actual console behavior,
+Framing/peer/closed-I/O cases passed; strict message authentication and
+generation/state applicability, actual console behavior,
 native open/drop/recheck cancellation and all aggregate deadlines remain open.
 Only after those components and full checks pass can M12b.2 be proposed for
 merge. M12c's actual station/capture/listening/usability gates remain separate.

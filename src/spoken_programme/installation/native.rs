@@ -17,7 +17,10 @@ mod probe;
 #[cfg(windows)]
 pub mod source;
 pub use probe::{ProbeRequest, probe, probe_worker};
+#[cfg(windows)]
+pub mod pipe;
 mod session;
+pub mod wire;
 pub use session::{
     MAX_REQUEST as MAX_SESSION_REQUEST_BYTES, OriginalProgramme, PlaybackBuild, SessionCheck,
     SessionRequest,

@@ -91,6 +91,72 @@ threads. A failed native cleanup remains a failed profile, not a timer success.
 
 ## Controller and operator obligations
 
+### Private local channel
+
+The low-level channel now uses two distinct one-way Windows named-pipe file
+objects. A blocked read therefore cannot serialize an unrelated write on the
+same synchronous handle. Its owned reader/writer threads exchange bounded
+packets; controller/callback code only polls queues. The dotted links below are
+the **still-pending session integration**, not an implemented Run command.
+
+```mermaid
+flowchart LR
+    accTitle: Separate one-way pipes isolate blocked command and report I/O
+    accDescr: A foreground controller and worker controller still need integration. Implemented bounded queues and owned I/O threads carry commands through one local pipe and reports back through another. Both actual worker pipe peers must match the PID held by the existing process runner.
+    fg["Foreground controller<br/>(integration pending)"] -.-> cq["8-command queue<br/>owned writer thread"]
+    cq --> cp["Local command pipe<br/>owned reader thread"]
+    cp -.-> worker["Worker controller<br/>(integration pending)"]
+    worker -.-> rq["256-report queue<br/>owned writer thread"]
+    rq --> rp["Local report pipe<br/>owned reader thread"]
+    rp -.-> fg
+```
+
+The server creates a cryptographically random 16-byte run context and derives
+both local pipe names from it. There is no caller-selected path/remote host.
+Pipes reject remote clients, require first-instance creation and use a protected
+DACL containing only the current process user's allow entry. The OS-visible
+pipe descriptor is checked in a native test. Clients request identification
+security quality of service. Neither an invitation nor a peer-ID observation
+grants programme, restart or release authority.
+
+The server must verify **both** actual pipe client PIDs against the child PID
+observed by the existing contained runner. The client checks each actual pipe
+server PID against its invitation. A contained-child test exercises that exact
+PID relationship with the retained test image; same-process tests additionally
+cover bidirectional progress while readers are blocked. No caller-provided PID
+file substitutes for the runner's held process handle.
+
+Each frame is at most **8192 bytes total**, with this 40-byte little-endian header:
+
+| Bytes | Meaning |
+| --- | --- |
+| 0–3 | `RIPC` magic |
+| 4 | Private framing version `1` |
+| 5 | Command/report direction |
+| 6–7 | Payload length, 1–8152 bytes |
+| 8–23 | Exact random run context |
+| 24–31 | Per-direction sequence, starting at 1; no gaps/replay/wrap |
+| 32–39 | Generation metadata; applicability still belongs to the session/core |
+
+The reader checks the fixed header before reading its bounded body. A malformed,
+foreign, duplicated, truncated or closed stream poisons that receiver; it cannot
+resynchronize/reconnect with a later valid frame. Queue overflow is terminal.
+Generation metadata is preserved, not treated as a restart permit or blanket
+authority: strict body schemas, runtime/request-hash authentication, application
+state/generation checks and real text-display acknowledgement still need the
+session controller. Raw framing success alone does not satisfy those gates.
+
+Shutdown repeatedly calls `CancelSynchronousIo` on the actual owned thread
+handles until both threads finish, then joins them before dropping their I/O
+resources. Repeating matters when cancellation races entry into a synchronous
+read/connection wait. Controlled tests cover unconnected waits, blocked reads,
+closed peers, unread pipe backlog and both queue limits. A two-second cleanup
+success is reported only after those actual joins; a broken OS operation cannot
+be relabeled successful by abandoning its thread/buffers. This port's cleanup
+measurement does not replace the complete foreground/session cleanup deadline.
+
+### Existing runner and output ports
+
 The existing contained process runner now offers an explicit observer port.
 It obtains the primary worker PID and peak working set from its own held process
 handle, rather than trusting a child-written PID or message. `exit_observed`
@@ -162,7 +228,7 @@ checklists. These are review lenses, not independent reviewers or approvals.
 | Guarded original reads and strict bounded invocation | `held_original_input_denies_mutation_and_rename_without_executable_requirement`, request-shape/cancellation/deadline and CLI cases. Passed locally. |
 | Startup Stop retains the actual session | Native-ready handoff, Stop before first owned fill and cancelled blocked-open controlled-backend cases passed locally. Foreground/contained-process integration remains pending. |
 | Callback teardown returns pending ownership | Drop-before-first-fill, queued Stop, completion, preempted writer and racing return cases passed locally. Actual native error/close integration remains pending. |
-| Exact private wire context | Foreign run/sequence/generation, oversize/unknown/truncated frames, queue overflow and closed-peer cases required; pending. |
+| Exact private wire context | Framing context/version/direction/sequence/bounds/truncation, actual peer PIDs, queue overflow and closed-peer cases passed locally. Strict message body/authentication, generation applicability and whole-session integration remain pending. |
 | Aggregate clocks and source verification cancellation | Source port shares the Run origin and one initial/fresh-check deadline; queued cancellation/expiry and real original rechecks passed locally. Complete foreground Start/Restart aggregates, Stop/Quit integration and blocked-operation containment remain pending. |
 | Exact persistent text and line commands | Actual Windows console, Spanish cells, paste/scroll/resize, ordinary EOF/Ctrl+C, blocked I/O and bounded cleanup; pending. |
 | Real contained lifecycle and unchanged PCM | Controlled native output port passed source/interval sample oracles, allocation/free, cancelled handoff, oversized period/buffer and actual mock-stream close tests. Actual contained worker/driver lifecycle remains pending. |
@@ -170,9 +236,9 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Local source/output checkpoint: 41 unit cases, five CLI cases and eight
-explicit original-input cases passed: **54 distinct focused cases**. The
-original-input invocation ran with zero ignored cases; the three ordinary ignored
+Latest source/output/IPC checkpoint: 53 unit cases, five CLI cases and eight
+explicit original-input cases passed: **66 distinct focused cases**. The
+original-input invocation ran with zero ignored cases; the four ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains
 original file guards through Ready/rechecks, releases them at actual teardown,
