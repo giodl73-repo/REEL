@@ -17,7 +17,9 @@ Additional source landings are [API/proxy transport #402](https://github.com/gio
 [cel-ID review copies #407](https://github.com/giodl73-repo/REEL/pull/407),
 [exact-baseline issue drafts #408](https://github.com/giodl73-repo/REEL/pull/408),
 [explicit issue submission #409](https://github.com/giodl73-repo/REEL/pull/409), and
-[image-candidate repair preparation #410](https://github.com/giodl73-repo/REEL/pull/410).
+[image-candidate repair preparation #410](https://github.com/giodl73-repo/REEL/pull/410),
+[checked large-film output routing #411](https://github.com/giodl73-repo/REEL/pull/411),
+and [owned-selection transactions #412](https://github.com/giodl73-repo/REEL/pull/412).
 These components do not complete W4: approved candidate application, exact
 parent-result rebinding and protected affected-consumer rebuilds remain open.
 The [board #405](https://github.com/giodl73-repo/REEL/pull/405) and
@@ -87,14 +89,14 @@ visible stable targets from an existing scene-delivery receipt, exact frame maps
 and unchanged audio/timestamps. Finding/issue/fix handling, affected rebuilds and
 protected workflow dispatch remain required before W4 is complete.
 
-The next W4 source slice is a Windows owned-selection Rust primitive: qualified
+The merged W4 [owned-selection primitive #412](https://github.com/giodl73-repo/REEL/pull/412) supplies qualified
 exact-base proposals plus expected-ref CAS, immutable operation intent and
 confirmed-completion readback. It has no film selection CLI and is not complete
 W4 acceptance. Wiring retained candidates, exact annex record/leaf replacement,
 project decision authority and protected affected-language/consumer rebuilds
 remains required. See the [scoped review](reviews/workflow-owned-selection-review.md).
 
-The retained-image adapter builds on that transaction: live retained ownership,
+The [retained-image adapter #413](https://github.com/giodl73-repo/REEL/pull/413) builds on that transaction: live retained ownership,
 project-supplied exact decision authority, immutable decision evidence in Git and
 prospective native record/leaf validation precede owned selection. It clears the
 old status and preserves stable authoring/metadata and exact historical approvals.

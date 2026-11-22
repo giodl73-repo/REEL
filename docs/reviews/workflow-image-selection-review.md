@@ -35,3 +35,21 @@ native fixture uses only an explicitly declared existing synthetic pool, one red
 PPM and an existing synthetic green PNG, with a synthetic authority implementation.
 It is not production authority, a corrected-film assembly, affected rebuild,
 600-resource/large-master qualification, adoption or rollback acceptance.
+
+The explicit native fixture completed on Windows/NTFS using the original
+admission and attempt. Its first test driver was correctly refused before
+handoff creation because it pinned the CLI while calling from the test executable.
+The continuation at source `5195ec9` invoked that original pinned CLI instead;
+no fresh admission, attempt, replacement lifecycle binary or pool was created.
+It published/retained the PNG, rejected a synthetic authority denial without
+selection, applied and resolved the exact record/leaf/decision proposal, replayed
+the original operation after source HEAD advanced, preserved the working record,
+closed the original slot and reopened both old/new native bytes afterward.
+The continuation passed in 244.05 seconds. This is not an actual process crash
+or a full film repair/rebuild acceptance run.
+
+A second explicit readback at source `8f1c6e2` passed in 18.48 seconds: after
+the original slot closed, the image adapter reacquired live retained proof and
+replayed the same selection without any ref changes. This does not admit a new
+slot generation or qualify reuse. The original roots, CLI and immutable receipts
+remain preserved; the retained authority used here is synthetic only.
