@@ -492,13 +492,23 @@ pub fn resume(
     if let (Some(result), Some(target)) = (&original, target)
         && prepared.has_retention_work(invocation.receipt, result, target)?
     {
-        crate::retention::retain_verified(
+        // Pending original retention must settle before acquiring new claim
+        // fences. Decode only exact, guarded original controls here, and drop
+        // their object gates before the native retention transaction.
+        let allowance = {
+            let mut controls = NativeInputs::open(packet, invocation.source)?;
+            crate::output_bounds::Allowance::film(
+                bind(packet, &mut controls)?.request.limits.output_bytes,
+            )?
+        };
+        crate::retention::retain_bounded(
             packet,
             invocation.source,
             profile,
             invocation.receipt,
             result,
             target,
+            allowance,
         )?;
     }
     let claims = if let Some(result) = &original {
