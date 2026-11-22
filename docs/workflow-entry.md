@@ -12,7 +12,7 @@ producing project's profile.
 | Protect manual work and retain external results | [`reel-workflow-native`](../crates/reel-workflow-native/README.md) | Explicit native admission, owned staging, immutable unselected ingress, retained readback and original-operation recovery/close |
 | Run an existing film producer | [Owned film CLI](../crates/reel-workflow-native/README.md#owned-film-cli-optional-windows-film-feature) | Optional Windows `film` feature: pinned prepare/run/resume/verify/close, existing media reuse, capacity and scratch preserved |
 | Call an API or workflow proxy | [`reel-workflow-http`](../crates/reel-workflow-http/README.md) | Pinned JSON POSTs, private original-operation evidence and offline resume; proxy result/returns files feed explicit native handoff/retention |
-| View cels, versions and language cues | [`reel-workflow-ui`](../crates/reel-workflow-ui/README.md) | Read-only pinned local board and explicit journal observations; browser acceptance and project projection remain open |
+| View cels, versions and language cues | [`reel-workflow-ui`](../crates/reel-workflow-ui/README.md) | Existing-film scene projection, read-only pinned local board and explicit journal observations; browser acceptance, native previews and episode adoption remain open |
 
 Use each crate's `capabilities` and `--help` commands to check the binary you
 actually built. The native and HTTP crates have separate manifests/lockfiles;

@@ -9,6 +9,7 @@
   const chosen = unit => versions(unit).find(v=>v.id===state.versions.get(unit.id)) || versions(unit).at(-1);
   const activeCue = () => state.data?.cues.find(c=>c.id===state.cue && c.language===state.language);
   const designation = v => v.designation==="candidate"?"Unselected candidate":v.designation==="selected"?"Selected reference":"Historical reference";
+  const exactSubject = (a,b) => !!a && !!b && a.logical_id===b.logical_id && a.sha256===b.sha256 && a.bytes===b.bytes && a.media_type===b.media_type;
   function image(version, cls) {
     const holder=node("div",cls||"preview-button");
     const empty=node("div","preview-empty");empty.append(node("b","",version?"◇":"＋"),node("span","",version?"Preview unavailable":"Awaiting artwork"));holder.append(empty);
@@ -49,7 +50,10 @@
     const span=unit.spans.find(s=>s.language===state.language),cue=state.data.cues.find(c=>c.id===span?.cue_id&&c.language===state.language);
     if(cue){root.append(node("h3","","CUE · "+cue.id),node("p","transcript",cue.text),node("p","muted",`Cel starts at ${clock(span.start_sample/cue.sample_rate)} on this cue’s clock.`));}
     const details=node("details");details.append(node("summary","","Source & lineage"));const list=node("dl");
-    for(const [label,value] of [["Story",unit.story_id],["Semantic event",unit.semantic_id],["Asset",version?.asset.logical_id],["SHA-256",version?.asset.sha256],["Approval",version?.approval_reference?"Reference recorded; authority not verified by this viewer.":"No approval reference on this version."]]){if(value){list.append(node("dt","",label),node("dd","",value));}}details.append(list);root.append(details);
+    const approvals=(state.data.approvals||[]).filter(a=>a.subject.logical_id===version?.asset.logical_id);
+    const recorded=version?.approval_reference || approvals.some(a=>exactSubject(a.subject,version?.asset));
+    for(const [label,value] of [["Story",unit.story_id],["Semantic event",unit.semantic_id],["Asset",version?.asset.logical_id],["SHA-256",version?.asset.sha256],["Approval",recorded?"Reference recorded; authority not verified by this viewer.":"No approval reference on this version."]]){if(value){list.append(node("dt","",label),node("dd","",value));}}details.append(list);root.append(details);
+    for(const approval of approvals){const exact=exactSubject(approval.subject,version?.asset);list.append(node("dt","",exact?"Approval reference · exact subject, authority unverified":"Approval reference · different subject, does not approve this version"),node("dd","",`${approval.subject.logical_id} · ${approval.subject.sha256}`),node("dt","","Evidence"),node("dd","",`${approval.evidence.logical_id} · ${approval.evidence.sha256}`));}
   }
   function setCue(id) {
     const cue=state.data.cues.find(c=>c.id===id&&c.language===state.language);
