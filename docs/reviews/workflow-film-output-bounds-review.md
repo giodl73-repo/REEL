@@ -39,8 +39,8 @@ drop before new index admission, as in the original qualified path.
 Validation must cover both default and film builds, arithmetic/count/overflow
 refusal, existing lifecycle/recovery cases and an actual above-128-MiB retained
 film. Metadata tests with large byte counts and the existing streamed-file test
-are not proof of that native publication lifecycle. The larger native fixture is
-an open qualification gate; keep this source PR draft until it passes. Full
+are not proof of that native publication lifecycle. The actual native lifecycle
+was completed by the same-operation continuation below on Windows/NTFS. Full
 Season 5 resource/master and interruption qualification remains separately open.
 
 The first actual fixture produced 384,177,485 payload bytes, with a largest
@@ -50,5 +50,16 @@ metadata loss then exposed a remaining generic allowance in `resume`. That path
 now decodes the checked original native controls and releases their object gates
 before reconciling retention with the same film allowance. The preserved original
 runtime, attempt, registration and retained owner are used by an explicit
-continuation; no fresh render/admission is started. Completion of that continuation
-and guarded close remains required before marking this qualification passed.
+continuation; no fresh render/admission was started. That continuation passed:
+the exact result and retained acknowledgement were recovered, movie modification
+times and technical completion bytes remained unchanged, an advanced source HEAD
+did not retarget history, staged close recovered into an idle slot, close replay
+remained idle, and historical native readback passed afterward. This is close
+replay, not an actual new-generation slot reuse test.
+
+The continuation driver source is commit
+`699e48ac1bf3728fe404fc78e63ada075bc05c0e`; it keeps the original runtime and
+native operation handles. That source commit remains an ancestor when current
+main is integrated. The native adapter files are unchanged by that integration.
+This evidence covers one 10-second synthetic scene and its 384 MB payload,
+not multi-GiB masters, 600-resource closure, episode composition or project adoption.

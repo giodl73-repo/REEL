@@ -12,6 +12,19 @@ adds protected manual work and retained close/recovery.
 Bounded film task execution and [owned CLI dispatch #399](https://github.com/giodl73-repo/REEL/pull/399)
 are landed. Episode-scale qualification remains a separate gate. No source merge
 adopts an actual project or production profile.
+
+Additional source landings are [API/proxy transport #402](https://github.com/giodl73-repo/REEL/pull/402),
+[cel-ID review copies #407](https://github.com/giodl73-repo/REEL/pull/407),
+[exact-baseline issue drafts #408](https://github.com/giodl73-repo/REEL/pull/408),
+[explicit issue submission #409](https://github.com/giodl73-repo/REEL/pull/409), and
+[image-candidate repair preparation #410](https://github.com/giodl73-repo/REEL/pull/410).
+These components do not complete W4: approved candidate application, exact
+parent-result rebinding and protected affected-consumer rebuilds remain open.
+The [board #405](https://github.com/giodl73-repo/REEL/pull/405) and
+[film projection #406](https://github.com/giodl73-repo/REEL/pull/406) remain drafts
+pending visual acceptance. Provider/speech integration, packaged tools,
+project-owned adoption/rollback and episode-scale qualification remain the W3b,
+W5 and W6 gates below.
 The [role review](reviews/workflow-pr-plan-review.md) records findings and their
 disposition. Roles are author-applied checklists, not independent reviewers.
 
