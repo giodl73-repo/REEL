@@ -1,11 +1,13 @@
 # Public git-asset workflow adapter (experimental)
 
-An isolated Rust integration for REEL's `publication::InputReader`. It pins
+An isolated Rust integration for REEL's exact input preparation and
+`handoff::Lifecycle` / `ProtectedJob` traits. It pins
 the candidate public git-asset at `0ccb137cf5a78416e780f8a3372017f642a5cb71`, with its own
 Cargo.lock. It preserves the existing private vendor and native workflow route.
 No existing job is upgraded or rebound by adding this package. The upstream pin passed hosted44995031081; the previous bridge passed
-hosted44995403521. The lifecycle changes below require their own consumer
-qualification and do not activate a production route.
+hosted44995403521. Lifecycle implementation5e52253 passed hosted45000757264
+on Windows/Linux. Native recovery qualification below does not activate a
+production route.
 
 1. Create `git_asset::source::Repository` with an explicit Git executable,
    repository and metadata listing/command limits.
@@ -351,13 +353,26 @@ Full joined child-exit/fault acceptance, production enrollment and activation re
 separate from implementation and the synthetic fixtures below.
 
 
-Current local checkpoint: 35 default tests and 10 explicit native cases pass,
-including complete ordinary/bare handoff, settled-input readback, lost workflow
-acknowledgement, actual uncertain native effect, retained controls and streamed
-257 MiB input. Strict Clippy/fmt/diff pass. Actual process-exit coverage of the
-joined lifecycle, complete client control-ingress setup, exact consumer hosted
-checks and project acceptance remain separate open gates. Source-level and
-SDK-native process-exit tests do not close that joined acceptance by themselves.
+The implementation checkpoint5e52253 passed 35 default tests, 10 explicit
+native cases and hosted45000757264 (Windows/Linux). Strict Clippy/fmt/diff pass.
+The subsequent test-only recovery qualification adds actual child exit83 without
+Rust destructors under the real Lifecycle guards:
+
+| Exit boundary | Fixture | Required recovery |
+| --- | --- | --- |
+| Manual waiting with original input/control guards held | Ordinary and bare | Waiting and durable claims survive; original work can reopen. |
+| ImportPending persisted, before candidate registration | Ordinary | Original result/plans complete through reconcile; no replacement operation. |
+| Original native effect already uncertain, child observes uncertainty then exits | Ordinary | ImportPending and original uncertainty survive; no effect replay or final acknowledgement. |
+| Results retained, input job settled, before workflow acknowledgement | Ordinary | Original retained cohort reopens with Git/producer/staging offline and no producer reads. |
+| Previously acknowledged retained result | Bare | Read-only verification survives exit with unchanged storage state. |
+
+The parent reopens namespace/ledger disk state before and after each child,
+requires unchanged checkpoints and then exercises original recovery. The child
+recipe is bounded private fixture data, not a new enrollment or product schema.
+This does not test abrupt exit DURING a native import command. Complete client
+control-ingress/enrollment entry, joined native-effect crash boundaries, exact
+consumer hosted checks and project acceptance remain separate gates.
+
 Native fixture setkey operations are explicit synthetic setup, not a shipped
 control-ingress command. Client control ingress uses existing qualified Publisher
 operations with separate ingress sources, then admits the composite control seed;

@@ -465,3 +465,64 @@ Next: original controls/metadata recovery after abrupt process exits across
 waiting/import/unknown/native-complete/workflow-ack boundaries; use the existing
 frozen operations and preserve all bytes/claims. Do not add another journal/cache
 engine, weaken uncertainty or replace the still-working private route.
+
+
+## Joined retained process-exit entry
+
+Input5e522534881d6fc852264b54e6e4d6aa2acaf997 passed exact hosted45000757264
+Windows/Linux. Committed-file/log pins: external reel-public-lifecycle-source.json.
+P4 WP-011/016; REQ-001/002/003/004/006/007/008/010;
+SPEC-002/003/004/005/007/008/010/011; IF-002/004/005/008/010/012;
+PKG-001/003/004/006; RUST/PROVIDER/INTEGRATION. Allowed scope: synthetic native
+lifecycle tests and evidence only, preserving runtime/dependencies/old route.
+Entry: qualified Lifecycle plus ordinary/bare original retained cohort. Exit:
+actual child exits holding real retained guards before Journal acknowledgement;
+parent proves original durable state, no producer access and original recovery.
+L0 fmt/diff and control/source pins; L1 default locked tests + strict Clippy;
+L2 explicit owned native ordinary/bare fixtures and child with bounded IO/time.
+Recovery/custody producer checklists apply; no independent/owner acceptance.
+Earlier waiting/import/uncertain effect process-exit boundaries and complete
+client ingress/enrollment remain separate OPEN gates.
+
+
+Joined recovery scope now includes actual exit83 in seven owned child invocations:
+waiting (ordinary/bare plus uncertainty fixture), import-pending before effects
+(ordinary), uncertainty observed on reopen (ordinary), native retained completion
+before workflow acknowledgement (ordinary), and existing retained verification
+(bare). The same qualified Lifecycle supplies all actual guards. Waiting and
+original input claims survive; pending recovery uses the original result/plans;
+uncertainty never becomes success; retained recovery needs no Git/producer/staging.
+The parent observes fresh namespace/ledger checkpoints on disk before/after child
+exit, rather than comparing with a stale cached namespace. Parent recovery proves
+process exit released live locks, while durable claims and bytes remain.
+
+Producer review: concurrency/custody checklists plus REEL provenance boundary.
+Two fixture findings corrected: compare fresh pre/post disk state (other admitted
+handles had advanced the parent's cache), and preserve the original result in the
+bounded recipe rather than reading scratch already consumed by native setkey.
+Neither required a runtime, SDK, namespace format, dependency or route change.
+The original public SDK pin remains0ccb137. Test recipes are synthetic/private,
+not caller authority or a product-control schema. A worker invoked without its
+owned recipe is inert and is not counted as a meaningful native acceptance case.
+
+Remaining scope is specific: actual process exit during the joined native effect,
+complete explicit client ingress/enrollment, integration of the unmerged workflow
+base, per-project reversible acceptance, and the P2 legacy handoff. Refreshed
+origin/main isf6d079c; this lane inherits unmerged ee8382b workflow work, so a
+main-target PR would currently include that unrelated base (595 files). Keep that
+integration separate; do not reset or publish the other active worktree as a side
+effect of this test checkpoint. Full P4 and initial-offering acceptance stay OPEN.
+
+
+Verification closeout: 35 default locked all-target cases PASS; strict Clippy,
+fmt and diff PASS. Consolidated native lifecycle profile PASS165.61 seconds:
+three meaningful ordinary/bare/uncertain cases plus the inert worker entry;
+seven real child exit83 invocations inside those cases. Runtime/source/lockfiles
+unchanged; previous implementation's other seven native cases retain5e52253
+qualification. Logs: reel-public-joined-exit-final-{all,clippy,native}.log under
+the original external evidence root. Exact new hosted result is pending push.
+Validation covers the boundaries above; trace connects original controls/plans,
+actual source/byte guards and fresh post-exit observations. Producer findings
+addressed; full P4, independent/human approval and production activation OPEN.
+Next implement/qualify explicit client control-ingress/enrollment through the
+existing Publisher and separate ingress sources, preserving the reserved seeds.
