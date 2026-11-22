@@ -381,6 +381,38 @@ pub fn close(
         request.source,
     )
 }
+/// Explicit, metadata-only preparation for an older retained layout. Preview
+/// exposes two bounded phases; application preserves coverage before aliases
+/// are removed. Reuse the original close key when reconciling either phase.
+pub fn prepare_close_layout(
+    request: Close<'_>,
+    apply: bool,
+) -> Result<crate::closing::LayoutOutcome> {
+    reel_workflow::check_result(request.packet, request.result)?;
+    if request
+        .packet
+        .task
+        .tool
+        .as_ref()
+        .is_none_or(|t| t.capability != ToolCapability::FilmRender)
+        || request.result.worker_receipt.is_none()
+    {
+        return Err(error(ErrorKind::Unsupported, "film-task-close-capability"));
+    }
+    admission::Prepared::open(
+        request.packet,
+        request.source,
+        request.profile,
+        &request.receipt.attempt_id,
+    )?
+    .prepare_close_layout(
+        request.receipt,
+        request.result,
+        request.acknowledgement,
+        request.operation,
+        apply,
+    )
+}
 
 /// Explicit action; neither inspection nor deserialization runs this adapter.
 #[derive(Clone, Copy)]

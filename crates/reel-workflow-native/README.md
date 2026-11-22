@@ -104,8 +104,10 @@ limit. Large native metadata can be inspected while an unqualified large job is
 refused before admission/production. Controls remain bounded to 1 MiB, with the
 SDK's stricter 64 KiB metadata-node bound applying to persisted control nodes.
 
-Composite graph jobs, producer receipts, actual renderer dispatch, large native
-episode execution, direct API/proxy calls and new voice takes are not enabled.
+Composite graph jobs, large native episode execution, direct API/proxy calls and
+new voice takes are not enabled. Optional film APIs provide bounded task-bound
+production and retained candidates; the CLI still has no owned film dispatch
+entry point. A caller must supply its own admitted workspace/capacity lifecycle.
 Accepted existing film producers remain in use. Further W3a producer/scale work,
 W3b providers, W4 review/rebuild and W5 owned adoption/rollback remain required;
 this is not Season 5 adoption or full episode-scale qualification.
@@ -163,9 +165,65 @@ scratch. Neither fixture qualifies a multi-GiB master or real episode.
 
 The internal `film-process-child ... --apply` command is a trusted process port,
 not a workflow admission/completion command. The `capabilities` response keeps
-`producer_execution` and episode-scale qualification false until task dispatch,
-producer receipts, retained publication and original-operation recovery are
-connected end to end. No project profile, asset selection or delivery is adopted.
+`producer_execution` and episode-scale qualification false for the generic CLI.
+The bounded Rust task API below adds those producer/retention steps; an owned
+dispatch entry point and project acceptance remain separate. No profile, asset selection or delivery is adopted.
+
+## Task-bound film production and retention (optional feature)
+
+`film_task::bind` reads the exact task request, compiled job and production
+controls. The request schema is `reel.workflow-film-task.v1`; it names the job
+and production aliases, exact output-name/path map and explicit process limits.
+All task inputs must have authored aliases, including the workflow request.
+The three evidence outputs are required: `execution-request` at
+`render-request.json`, `execution-result` at `render-result.json`, and
+`delivery-receipt` at `delivery/receipt.json`. Other outputs live under
+`delivery/`, with no case-folded aliases or file/directory collisions. The
+existing producer's planned output set must match before rendering.
+
+`film_task::run` consumes live native input authority for the original admission
+receipt. It freezes the original invocation in the existing coordination root,
+binding task/attempt, admission generation, source, runtime, media programs,
+workspace path and filesystem identity. A second workspace for the same attempt
+conflicts. Control-read gates are released before the path provider reopens those
+objects; durable input claims remain live throughout that transition.
+
+The returned `Generated` keeps actual outputs guarded. Its result includes a
+canonical worker receipt and exact executable provenance. `Generated::stage`
+records original registration work only; `ingest` protects and publishes the
+unselected bytes, including the worker receipt. `retain` reopens them, positively
+acknowledges retained ownership, then writes a durable technical completion
+receipt. A JSON worker receipt alone cannot construct `Generated`; public
+external-response APIs continue to refuse arbitrary tool responses.
+
+`film_task::resume` reads the original result from native work evidence. It may
+reconcile that original admitted response and, with the original target supplied,
+retention work before reopening inputs. It independently checks original media;
+it never renders. A completed check's exact request and output table can be
+reconciled without another launch. Missing result controls may be reconstructed
+from verified original outputs; partial or changed existing controls refuse.
+
+`verify_retained` checks native work, the worker receipt and actual retained
+bytes against the frozen task without accepting or rendering another job.
+`close` explicitly stages/applies/recovers the original retained-owner handoff.
+Persist its operation key before staging and reuse it on uncertainty. Close
+reopens outputs before clearing the original slot; it does not retire scratch,
+release retained history, select a candidate or approve a film.
+
+The existing native bounds still apply: a 1 GiB protected envelope, at most 32
+response objects including the worker receipt, and 128 MiB aggregate response
+bytes. Admission reserves one 64 KiB worker object for tool tasks and includes it
+in response/close headroom. Byte deduplication does not change logical result
+identity. This is not S5-scale execution or owned-profile adoption; five-hour
+process ceilings do not enlarge these native admission bounds.
+
+An explicit existing-pool qualification fixture exercises a small synthetic
+scene, interrupted native registration, lost result metadata, repeated recovery,
+retained readback after source advance and original slot close. It requires a
+new `REEL_NATIVE_FILM_EVIDENCE` directory, preserves all job/source/scratch roots
+and freezes its worker/media binaries. It initializes no native pool and uses
+no project assets. A failed qualification must continue those original handles,
+not start a new case and assume the first one had no effects.
 
 ## Validation
 

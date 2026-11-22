@@ -560,6 +560,81 @@ fn continue_original_native_film_task_after_control_gate_repair() {
     });
 }
 
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Continue only original retained legacy-layout close; two bounded explicit metadata phases, no rendering/publication/new admission"]
+fn continue_original_film_close_after_retained_layout_repair() {
+    use reel_workflow_native::{
+        closing::Action,
+        film_task::{self, Close},
+    };
+    use std::io::Write;
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_EVIDENCE").expect("Set ORIGINAL evidence directory"),
+    );
+    let locations: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("locations.json")).unwrap()).unwrap();
+    let original: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("close-operation.json")).unwrap()).unwrap();
+    let packet = serde_json::from_value(locations["packet"].clone()).unwrap();
+    let source = serde_json::from_value(locations["native"].clone()).unwrap();
+    let profile = serde_json::from_value(locations["admission_profile"].clone()).unwrap();
+    let receipt = serde_json::from_value(original["admission"].clone()).unwrap();
+    let result = serde_json::from_value(original["result"].clone()).unwrap();
+    let ack = serde_json::from_value(original["retained"].clone()).unwrap();
+    let operation = serde_json::from_value(original["operation"].clone()).unwrap();
+    let context = || Close {
+        packet: &packet,
+        source: &source,
+        profile: &profile,
+        receipt: &receipt,
+        result: &result,
+        acknowledgement: &ack,
+        operation: &operation,
+    };
+    let record = |name: &str, value: &serde_json::Value| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(evidence.join(name))
+            .unwrap();
+        file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
+        file.sync_all().unwrap();
+    };
+    let preview = film_task::prepare_close_layout(context(), false).unwrap();
+    assert!(preview.add_changes <= 128 && preview.cleanup_changes <= 128);
+    record(
+        "layout-preview.json",
+        &serde_json::to_value(&preview).unwrap(),
+    );
+    let applied = film_task::prepare_close_layout(context(), true).unwrap();
+    record(
+        "layout-applied.json",
+        &serde_json::to_value(&applied).unwrap(),
+    );
+    let replay = film_task::prepare_close_layout(context(), true).unwrap();
+    assert_eq!(applied.add, replay.add);
+    assert_eq!(applied.cleanup, replay.cleanup);
+    assert!(
+        !film_task::close(context(), Action::Stage)
+            .unwrap()
+            .slot_idle
+    );
+    let closed = film_task::close(context(), Action::Recover).unwrap();
+    assert!(closed.slot_idle && closed.original_clear_complete);
+    assert!(
+        film_task::close(context(), Action::Recover)
+            .unwrap()
+            .slot_idle
+    );
+    drop(film_task::verify_retained(&packet, &source, &profile, &receipt, &result, &ack).unwrap());
+    record("closed.json", &serde_json::to_value(&closed).unwrap());
+    record(
+        "complete.json",
+        &json!({"task_key":packet.task_key,"result":result,"candidate":ack.candidate,"retained":ack,"complete":true}),
+    );
+}
+
 fn git_path() -> PathBuf {
     if let Some(path) = std::env::var_os("REEL_TEST_GIT") {
         return PathBuf::from(path);

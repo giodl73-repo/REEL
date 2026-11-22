@@ -1,6 +1,8 @@
 //! Bounded positive input claims over an EXISTING effects-enabled index.
 //! No initialization, payload availability, publication, retention or selection.
 mod closing;
+#[cfg(all(windows, feature = "film"))]
+mod closing_layout;
 mod response;
 mod retention;
 use crate::{
