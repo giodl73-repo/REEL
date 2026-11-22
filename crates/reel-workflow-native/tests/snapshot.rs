@@ -12,6 +12,10 @@ use std::{
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 
+#[cfg(windows)]
+#[path = "support/image_selection.rs"]
+mod image_selection_cases;
+
 #[cfg(all(windows, feature = "film"))]
 #[path = "support/film_job.rs"]
 mod film_job;
@@ -1058,6 +1062,7 @@ struct Fixture {
     profile: SnapshotProfile,
     packet: Packet,
 }
+
 impl Fixture {
     fn new() -> Self {
         Self::with_object(Object::from_bytes(b"synthetic input"))

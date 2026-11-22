@@ -26,6 +26,26 @@ adoption or affected-consumer rebuilds. Those checks must precede its future
 film adapter. A decision artifact pin records lineage only; it grants no rights
 or creative approval. No existing approval transfers to replacement bytes.
 
+The Windows `image_selection` Rust adapter checks an actual retained
+`ImageCandidate` result against its original input snapshot. It accepts exactly
+three existing-path replacements: the explicitly enumerated logical record, its
+declared selected annex leaf and an owned `.reel-workflow/decisions/<name>.json`
+control. The record keeps its definition, logical ID, authored values, streams
+and metadata; its selected payload changes and its old status must be cleared.
+The exact prior record/approval remains in Git history. Decision bytes are pinned
+and committed with the replacement, not left only in scratch.
+
+The producing project supplies the `Authority` implementation for that exact
+decision and old/new subjects. No JSON flag, Git identity, inspection report or
+technical check creates this authority. Apply/recovery reopens native retained
+ownership and output bytes, holds the guard through CAS, and resolves the exact
+prospective record/leaf binding before any selection intent. A binding failure
+may leave a detached proposal, but cannot change the owned selection. Inspection
+reads metadata only and explicitly reports no custody or selection. Stream-slot
+selection, new-path registration, active-profile adoption, the project authority
+implementation and protected affected-consumer rebuilds remain separate work.
+There is no image-selection CLI until those producing-project controls are wired.
+
 It builds on [SDK intake PR #389](https://github.com/giodl73-repo/REEL/pull/389).
 The separate workspace/lock preserves the existing producer SDK and root lock.
 All original SDK/module source pins remain unchanged. The original slots module

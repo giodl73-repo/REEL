@@ -30,6 +30,8 @@ pub mod film_process;
 #[cfg(all(windows, feature = "film"))]
 pub mod film_task;
 pub mod handoff;
+#[cfg(windows)]
+pub mod image_selection;
 mod qualified;
 pub mod response;
 pub mod retention;
