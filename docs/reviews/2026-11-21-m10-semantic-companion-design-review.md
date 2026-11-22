@@ -59,7 +59,7 @@ Exclusive Cargo target: `F:/tmp/reel-builds/media-m10-isolated`; Windows/Rust 1.
 
 - Six explicit metadata/runtime cases: **6 passed, 0 failed, 0 ignored**, 167.45 seconds.
 - Two explicit native cases: **2 passed, 0 failed, 0 ignored**, 144.93 seconds. Three SVG/video outputs covered English, Spanish and replacement English. Every inherited artifact fixture retained its original 60-second outer budget.
-- Lexical unit results, relevant regressions, final all-target/all-feature Clippy and hosted outcomes remain pending.
+- At this initial checkpoint, lexical unit results, regressions, Clippy and hosted outcomes were pending. The final checkpoints below supersede that status.
 
 CI enrolls all six metadata cases in Linux/Windows core shard 2 and both native cases in Windows core shard 2, with explicit browser/FFmpeg enrollment. Ordinary ignores, absent runtimes and metadata planning alone cannot establish executed native qualification. Existing reading, lesson, native/media and required Rust/FFmpeg checks remain in place.
 
@@ -102,3 +102,16 @@ startup/metadata work and is not a standalone cryptographic benchmark.
 Application assertions and per-operation source/runtime identity checks remain
 unchanged. Final hosted checks must cover the latest main, which advanced with
 workflow PRs #393/#396 while the first M10 cycle ran.
+## First hosted checkpoint and current-base qualification
+
+Implementation head `87eb0ec15c57a6e28b45dcef50a35328325fd8ec` passed
+[full CI](https://github.com/giodl73-repo/REEL/actions/runs/44978510415)
+in 16m49s and
+[source/assembly qualification](https://github.com/giodl73-repo/REEL/actions/runs/44978510376)
+in 5m15s. Both platforms executed the companion metadata step; Windows also
+executed the native SVG/PCM step. Intentionally unenrolled platform steps are
+not counted as executed tests.
+
+The branch was subsequently rebased onto `dc16335` (#393/#396). Their guarded
+film/workflow changes are preserved. A fresh complete hosted cycle is required
+on that combined tree before merge; the first cycle alone does not qualify it.
