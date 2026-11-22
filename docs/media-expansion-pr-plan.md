@@ -101,7 +101,7 @@ cannot claim or inherit them for real performances or delivery.
 | 2 | M09: lesson/rehearsal package | M08 | Merged [PR #394](https://github.com/giodl73-repo/REEL/pull/394), `b95a6c2`; [contract](lesson-rehearsal-v1.md), [source/role/test review](reviews/2026-11-21-m09-lesson-design-review.md). Final required CI passed in 23m34s; assembly/source replay passed |
 | 2 checkpoint | M10: semantic visual companion | M09 | Merged [#395](https://github.com/giodl73-repo/REEL/pull/395), `d7602b2`; [contract](semantic-visual-companion-v1.md), [role/test evidence](reviews/2026-11-21-m10-semantic-companion-design-review.md); final required CI passed in 16m48s, assembly/source replay passed |
 | 3 — installations | M11: installation playback contract | M10 | Merged [#398](https://github.com/giodl73-repo/REEL/pull/398), `81be1db`; [profile](offline-installation-v1.md), [role/test map](reviews/2026-11-21-m11-installation-contract-review.md). Documentation-only CI passed in 16s; player/device gates remain open |
-| 3 checkpoint | M12: single-device offline player | M11 | M12a checked transport in [bounded branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m12-player); [scope/role/test map](reviews/2026-11-21-m12a-checked-transport-review.md). M12b native adapter and M12c actual device evidence remain required before M12 closes |
+| 3 checkpoint | M12: single-device offline player | M11 | M12a merged [#400](https://github.com/giodl73-repo/REEL/pull/400), `f6d079c`. [M12b.1 foundation](installation-native-foundation-v1.md) adds metadata/ownership ports; M12b.2 playback/operator loop and M12c actual station evidence remain required before M12 closes |
 | 4 — interaction | M13: branching/state contract | M12 | Planned |
 | 4 checkpoint | M14: bounded interactive player | M13 | Planned |
 | 5 — qualification | M15: cross-format compatibility and illustrated guides | M14 | Planned |
@@ -325,6 +325,15 @@ and runtime incompatibility fail visibly. Device and loop/listening review remai
 separate evidence; no unattended installation claim from a unit test. No fleet
 manager, remote control service or automatic content delivery. Lenses: M11 panel.
 
+Deliver M12 through bounded reviews without weakening that exit:
+
+| Component | Concrete scope / acceptance |
+| --- | --- |
+| M12a — merged #400 | Original-input checks, exact PCM/text and finite transport; deterministic state/sample tests. |
+| M12b.1 — native foundation | [Explicit endpoint metadata and callback ownership](installation-native-foundation-v1.md); strict private binding/runtime pins, bounded worker reaping, no callback allocation/free and intact transport return. No playback command or device pass. |
+| M12b.2 — operator and playback loop | Connect those ports to actual owned WASAPI open/close/reopen; terminal/text/commands, EOF/Ctrl+C, fresh source checks and measured control deadlines. Must satisfy every applicable M11 runtime obligation. |
+| M12c — station qualification | Actual enrolled Windows 11 endpoint, effective callback/buffer/control measurements and isolated capture, with separate listening/usability/authority evidence. Full M12 closes only with the required evidence. |
+
 ## Phase 4: interactive delivery
 
 ### M13 — define authored branches and state
@@ -394,4 +403,5 @@ remains not run; that is not a completed spoken-performance acceptance checkpoin
 | M09 | [PR #394](https://github.com/giodl73-repo/REEL/pull/394), merged `b95a6c2`, tested head `550dffe` | [Lesson contract](lesson-rehearsal-v1.md); [checklist/test map](reviews/2026-11-21-m09-lesson-design-review.md); [CI](https://github.com/giodl73-repo/REEL/actions/runs/44947459345) | Final required CI passed in 23m34s; all five lesson tests explicitly passed on Linux/Windows; musical, listening, authority and device review unperformed |
 | M10 | [PR #395](https://github.com/giodl73-repo/REEL/pull/395), merged `d7602b2`, tested head `3816901` | [Companion contract](semantic-visual-companion-v1.md); [role/test map](reviews/2026-11-21-m10-semantic-companion-design-review.md); [CI](https://github.com/giodl73-repo/REEL/actions/runs/44980260341) | 66 distinct local tests and all-feature Clippy pass; final required CI passed in 16m48s; six explicit companion tests on both OSs and two native cases on Windows; actual speech/listening and device review unperformed |
 | M11 | [PR #398](https://github.com/giodl73-repo/REEL/pull/398), merged `81be1db`, tested head `711acf1` | [Installation profile](offline-installation-v1.md); [role/test map](reviews/2026-11-21-m11-installation-contract-review.md); [CI](https://github.com/giodl73-repo/REEL/actions/runs/44981748053) | Documentation-only CI passed in 16s with compilation/media jobs correctly skipped. M12 implementation and device/listening/authority gates remain unperformed |
-| M12a | [Bounded branch](https://github.com/giodl73-repo/REEL/tree/feat/media-m12-player), merged M11 dependency `81be1db` | [Core / role / test map](reviews/2026-11-21-m12a-checked-transport-review.md); 60 distinct local tests and all-target/all-feature Clippy passed | Portable core only. M12b native CLI/output and M12c actual device/capture evidence are still required; full M12 and downstream M13 dependency remain open |
+| M12a | [PR #400](https://github.com/giodl73-repo/REEL/pull/400), merged `f6d079c`, tested head `d844abe` | [Core / role / test map](reviews/2026-11-21-m12a-checked-transport-review.md); 60 distinct local tests; [CI](https://github.com/giodl73-repo/REEL/actions/runs/44988336061) passed in 16m40s and [assembly](https://github.com/giodl73-repo/REEL/actions/runs/44988336013) in 6m09s; tested/merged trees match | Portable core only. Native playback/operator loop and actual device/capture evidence are still required; full M12 and downstream M13 dependency remain open |
+| M12b.1 | Native foundation, based on merged M12a | [Illustrated scope](installation-native-foundation-v1.md); [role / test map](reviews/2026-11-22-m12b1-native-foundation-review.md) | Explicit metadata and callback/process ownership only; M12b.2 and M12c remain open |

@@ -1,7 +1,8 @@
 # Media expansion: test and evidence matrix
 
 This matrix is normative for the [phased PR plan](media-expansion-pr-plan.md).
-All rows are future requirements, not completed tests. M00 must turn the core
+Rows state required evidence; execution and remaining gates are recorded in the
+linked reviews and the plan's progress table. M00 must turn the core
 rows into exact fixture/test IDs and runnable commands against the chosen source
 interfaces; M11/M13 do the same for playback/interaction before their runtime PRs.
 
@@ -67,6 +68,7 @@ call the producer and accept its own reported result as the oracle.
 | M10 | Two authored transitions with distinct EN/ES phrase times; decoded frame boundary checks, caption timing and audio-only path without picture inputs | Stale alignment, missing visual/alpha source, contradictory sample/frame boundary; new take changes only consuming outputs | Visual continuity/legibility and language review; automatic checks do not decide style quality |
 | M11 | [Pinned installation profile](offline-installation-v1.md), numeric clocks/limits, explicit states and normal/error traces; [I01–I09 obligations](reviews/2026-11-21-m11-installation-contract-review.md) | Missing/incompatible source/runtime; invalid loop/control state; interrupted playback and cancelled startup/restart policy | Contract only; device capture and listening procedure written before M12 implementation; no test execution claimed |
 | M12 | [M12a/b/c proof split](reviews/2026-11-21-m12a-checked-transport-review.md): checked portable state/sample core, contained native adapter, then actual bounded station/capture; measure loop/drift/control/restart limits | Missing media, device disconnect/runtime mismatch and interruption exercise declared failure/recovery states | M12 stays open until all three gates pass. Fake-clock pass is not device evidence; do not claim unattended reliability |
+| M12b.1 | [Native foundation tests](reviews/2026-11-22-m12b1-native-foundation-review.md): private metadata CLI, instrumented callback allocation and exact ownership, actual controlled child reaping | Default/foreign endpoint, wrong profile/runtime, queue overflow, cancelled/stalled worker, existing private output | Metadata/software boundary only. No native stream or station capture; M12b.2 operator/playback and M12c measurements remain required |
 | M13 | Finite graph examples with two authored paths, EN/ES policy, deterministic event order and accessible controls | Missing/unreachable node, undeclared cycle, ambiguous simultaneous input, incompatible edition and stale session state | Author/story and audience review; no inferred branches or automatic pedagogical approval |
 | M14 | Replay an identical input trace for identical route/selections/media-clock placements within M13's limits; keyboard-only completion of both paths | Input at transition/end, pause/re-entry, allowed language switch, missing branch and invalid persisted state follow explicit policy | Actual text/focus/control usability and device test required for those claims |
 | M15 | Compatibility/support matrix links exact checked fixtures, runtimes and review records for every claimed format | Regression probes for old supported fixtures and frozen contexts; identify skipped/unsupported combinations | Unperformed listening/device/adoption gates stay visible; docs checks cannot qualify media |
