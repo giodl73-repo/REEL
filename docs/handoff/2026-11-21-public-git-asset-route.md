@@ -87,11 +87,11 @@ minimum, owner/source, exact Select request and expected revision. There is no
 new journal/clock engine, automatic enrollment, predecessor retirement or byte
 removal. Historical receipt and current demand are reported separately.
 
-Local locked all-target suite: 12 PASS (7 claims + 5 snapshot); worker is ignored
+Local locked all-target suite: 13 PASS (8 claims + 5 snapshot); worker is ignored
 as a standalone test and invoked twice by its parent fixture. Actual child exits
 73 after admission and 74 after withdrawal bypass Rust Drop. Reopened namespace
 claims survive; exact retries do not append events; backup/history obligations
-remain after cancellation. Additional fixtures cover stale concurrent writers,
+remain after cancellation. Additional fixtures cover pending-generation fencing, stale concurrent writers,
 changed operation reuse, same-object retirement contention, unrelated enrollment,
 wrong owner/class/namespace, handle tampering, missing metadata and budget refusal.
 Strict locked all-target Clippy, package fmt and diff checks pass. Hosted results

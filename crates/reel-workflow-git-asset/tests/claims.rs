@@ -554,3 +554,61 @@ fn refusal_on_closure_budget_or_changed_operation_preserves_original_claim() {
     assert_eq!(f.namespace.checkpoint(), checkpoint);
     assert!(f.required("backup"));
 }
+
+#[test]
+fn pending_new_generation_makes_original_receipt_advanced_without_releasing_it() {
+    let mut f = Fixture::new();
+    let original = f.handle();
+    original
+        .admit(&mut f.namespace, &f.nodes, &limits())
+        .unwrap();
+    let current = f.namespace.source(&key("attempt")).unwrap().unwrap();
+    f.namespace
+        .apply(
+            key("pending-new-generation"),
+            Command::Prepare {
+                source: key("attempt"),
+                owner: key("owner"),
+                expected_revision: current.revision,
+                selection: Selection {
+                    root: f.selection.root.clone(),
+                    context: Digest::blob(b"pending binding"),
+                },
+            },
+            &f.nodes,
+            &limits(),
+        )
+        .unwrap();
+    let pending = f.namespace.source(&key("attempt")).unwrap().unwrap();
+    let checkpoint = f.namespace.checkpoint();
+    assert_eq!(
+        original.status(&mut f.namespace).unwrap().state,
+        State::Advanced
+    );
+    assert_eq!(
+        original
+            .admit(&mut f.namespace, &f.nodes, &limits())
+            .unwrap()
+            .state,
+        State::Advanced
+    );
+    assert_eq!(
+        original
+            .cancel(
+                &mut f.namespace,
+                key("old-generation-cancel"),
+                &f.nodes,
+                &limits()
+            )
+            .unwrap_err()
+            .kind,
+        ErrorKind::Stale
+    );
+    assert_eq!(
+        f.namespace.source(&key("attempt")).unwrap().unwrap(),
+        pending
+    );
+    assert_eq!(f.namespace.checkpoint(), checkpoint);
+    assert!(f.required("backup"));
+    assert!(f.required("working"));
+}
