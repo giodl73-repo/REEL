@@ -15,10 +15,10 @@ REEL's existing InputReader. No current/latest fallback, enrollment, hydration,
 transfer, selection, task completion or scratch deletion follows from construction.
 Metadata enumeration/read budgets are explicit; payload access is named only.
 
-This first input port is not a days-long durable job or retained-publication
-lifecycle. Persistent Job-class namespace admission, bounded owned preparation,
-immutable response ingress, retained reopen-before-completion, cancellation/
-restart/uncertain outcome recovery and complete P4 acceptance remain OPEN.
+The input reader is not a days-long durable job or retained-publication
+lifecycle. The declared-claim slice below adds persistent Job-class obligations.
+Native pool/roster binding, bounded owned preparation, immutable response ingress,
+retained reopen-before-completion and complete P4 Lifecycle acceptance remain OPEN.
 Neither this reader nor a passing metadata preview may be used as a custody
 acknowledgement. The old route/SDK and existing jobs remain unchanged.
 
@@ -57,3 +57,54 @@ Consume this route through the Rust SDK. Existing CLI metadata review remains
 available; this change adds no CLI publication command. REEL still owns prompts,
 provider attempts, language timing, triggers, invalidation, findings and closure.
 Media type is a validated REEL descriptor, not inferred native-media semantics.
+
+## Durable-claim slice entry
+
+Input REEL 72c1801a3f8fd60b7a539ba886c7ea71e04ee237; same public SDK pin.
+WP-004/008/009/011/016; REQ-001/003/004/006/007/008/010;
+SPEC-002/003/004/005/007/008/010/011; IF-002/004/005/008/010/012;
+PKG-001/003/004/006. Existing NATIVE-JOB-PROTECTION, source journal and mandatory
+admission contracts; no public provider/format change. Allowed: one new REEL
+Rust claims adapter, its pinned store dependency, synthetic finished-metadata /
+namespace / actual child-exit tests and consumer documentation. No namespace
+creation on resume, live enrollment, lease engine, clock expiry, physical deletion,
+rendering, provider calls or existing consumer-route activation.
+
+Entry: immutable original Select and externally pinned handle, pre-enrolled empty
+Job source and independently reopened finished metadata. Exit: desired claims
+survive child exit/worktree-handle closure; exact receipt recovery stays separate
+from current demand; stale owners/revisions/wrong namespace and incomplete
+metadata refuse; cancellation retains predecessor obligations. L0 source/pins/
+fmt/diff; L1 negative cases and locked tests/strict Clippy; L2 synthetic disk-backed
+metadata/namespace plus abrupt child exit. Native pool/roster, prepared workspace,
+retained-publication and complete Lifecycle integration remain separate gates.
+
+## Declared-claim checkpoint
+
+`claims::Handle` now uses existing Namespace select/status/withdraw and a finished
+MetadataReader. The bounded, hash-pinned handle fixes the original namespace
+minimum, owner/source, exact Select request and expected revision. There is no
+new journal/clock engine, automatic enrollment, predecessor retirement or byte
+removal. Historical receipt and current demand are reported separately.
+
+Local locked all-target suite: 12 PASS (7 claims + 5 snapshot); worker is ignored
+as a standalone test and invoked twice by its parent fixture. Actual child exits
+73 after admission and 74 after withdrawal bypass Rust Drop. Reopened namespace
+claims survive; exact retries do not append events; backup/history obligations
+remain after cancellation. Additional fixtures cover stale concurrent writers,
+changed operation reuse, same-object retirement contention, unrelated enrollment,
+wrong owner/class/namespace, handle tampering, missing metadata and budget refusal.
+Strict locked all-target Clippy, package fmt and diff checks pass. Hosted results
+for the input-only head 72c1801 passed on Windows and Ubuntu; the new head must be
+qualified separately.
+
+Review (producer): identity/concurrency requires external handle pins and exact
+original operation IDs (implemented); custody requires that claims not stand in
+for native bytes/full roster/execution guards (explicit remaining gate); privacy
+keeps namespace/source hashes in private controls (documented); adoption keeps
+existing routes/jobs unchanged. No independent or human acceptance is implied.
+
+This closes the declared-claim adapter component, not P4. Reusing the actual
+native pool roster, holding managed bytes through claim admission, materializing
+an owned workspace, binding a full task/attempt ticket, candidate ingestion and
+retained verify-before-completion are still required before activating a route.
