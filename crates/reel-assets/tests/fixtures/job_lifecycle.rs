@@ -63,6 +63,20 @@ fn main() {
             }
             fs::write("allocation.complete",bytes.len().to_string()).unwrap();
         }
+        "observed" => {
+            fs::write("observed.pid", std::process::id().to_string()).unwrap();
+            let bytes = vec![7u8; 32 * 1024 * 1024];
+            std::hint::black_box(&bytes);
+            fs::write("observed.allocated", bytes.len().to_string()).unwrap();
+            for _ in 0..1000 {
+                if std::path::Path::new("observed.release").is_file() {
+                    std::hint::black_box(&bytes);
+                    return;
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+            panic!("observer did not release measured child");
+        }
         _ => panic!("unknown synthetic mode"),
     }
 }

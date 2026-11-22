@@ -102,6 +102,50 @@ complexity) were corrected. No actual endpoint, playback or capture was used.
 Final all-target/all-feature Clippy passed with warnings denied in 1m29s.
 Formatting, whitespace, actionlint and changed-document relative links passed.
 
+## Held worker identity and resource observations
+
+The same assistant used Platform/Audience and Rights/Provenance checklists for
+the narrow process-runner extension. The existing native launcher and shutdown
+barriers are reused. Its optional observer obtains the worker PID and peak
+working set from the held primary-process handle. It distinguishes observed
+primary exit from completed job/descendant reaping, and errors cancel through
+the same existing cleanup. Existing quiet-runner callers use no observer and
+make no additional process-memory queries.
+
+Controlled native-child tests check actual PID/handle agreement, a retained
+32 MiB allocation measured before release, cancellation with the held process
+already signaled on return, refusal before process creation, failed handle
+observation, and a live descendant becoming signaled before Reaped is delivered.
+An intermediate test assumption used `-1` as invalid; Windows accepts that as
+the current-process pseudo-handle. The rejection test now uses null.
+
+The metrics stay in-process: no private PID/path/resource receipt or portable
+identity was introduced. A zero or unavailable measurement cannot establish the
+profile's memory gate. Primary peak working set, tree committed-memory limit and
+combined foreground/worker envelope remain distinct. The observer runs off the
+controller at the existing runner cadence; it does not establish command
+acknowledgement, audio quiescence or complete cleanup deadlines. Sound/Editor
+have no new media/timing changes in this extension; their existing runtime
+obligations above still apply. Other craft lenses remain outside this scope.
+
+Runner execution: `cargo test --locked -p reel-assets -j2` passed **342 cases**,
+zero failed. Its three ordinary ignored native fixture entries were invoked
+by their parent tests; they are not extra passes. The library portion passed
+240 cases in 18.11 s; binaries and integration targets passed another 102.
+This includes all four new observation cases and the existing timeout, memory,
+descendant, custody and CLI regressions. Package all-target Clippy passed with
+warnings denied in 18.49 s. Root all-target/all-feature checking passed in
+1m52s after the Windows ProcessStatus feature addition.
+The 41 installation unit regressions also passed in 3.00 s against the changed
+runner; final root all-target/all-feature Clippy passed with warnings denied in
+1m56s. The allocation fixture waits for an explicit allocation marker as well
+as the OS peak measurement, so process startup memory cannot stand in for the
+known retained allocation.
+After making that marker check tolerate an incomplete in-progress file write,
+all four observation cases passed again in 1.39 s; final package all-target
+Clippy passed in 3.67 s. Repeated cases are not additional passes. Formatting,
+whitespace, actionlint and changed-document relative links passed.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then

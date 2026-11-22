@@ -8,7 +8,7 @@ use std::{
 };
 use windows_sys::Win32::{
     Foundation::*,
-    System::{JobObjects::*, Threading::*},
+    System::{JobObjects::*, ProcessStatus::*, Threading::*},
 };
 
 fn wide(value: &OsStr) -> Vec<u16> {
@@ -209,7 +209,7 @@ pub fn run(
     let stdout = OpenOptions::new().write(true).create_new(true).open(log)?;
     let stdin = File::open("NUL")?;
     execute(
-        program, args, workspace, &stdin, &stdout, timeout, None, check,
+        program, args, workspace, &stdin, &stdout, timeout, None, check, None,
     )
     .map_err(|error| format!("{error}; inspect {}", log.display()).into())
 }
@@ -231,6 +231,38 @@ impl QuietLimits {
         Ok(())
     }
 }
+/// Observations from the runner's held primary-process handle. These are not
+/// child assertions, aggregate job memory, or a substitute for source guards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct QuietProcess {
+    pub process_id: u32,
+    pub peak_working_set_bytes: usize,
+    /// The runner has observed the process handle signaled, not merely a PID
+    /// file or a child's claimed completion. Descendants may still need reaping.
+    pub exit_observed: bool,
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum QuietEvent {
+    BeforeStart,
+    Process(QuietProcess),
+    /// The existing job shutdown and member-handle barriers actually completed.
+    Reaped,
+}
+fn observe_process(process: HANDLE, exit_observed: bool) -> Result<QuietProcess> {
+    let mut counters = PROCESS_MEMORY_COUNTERS::default();
+    counters.cb = std::mem::size_of_val(&counters) as u32;
+    let process_id = unsafe { GetProcessId(process) };
+    if process_id == 0
+        || unsafe { K32GetProcessMemoryInfo(process, &mut counters, counters.cb) } == 0
+    {
+        return Err(std::io::Error::last_os_error().into());
+    }
+    Ok(QuietProcess {
+        process_id,
+        peak_working_set_bytes: counters.PeakWorkingSetSize,
+        exit_observed,
+    })
+}
 /// Internal trusted execution primitive. Caller supplies held program/source
 /// guards, an admitted existing workspace and cancellation/authority checks.
 /// Atomically joins a kill-on-close job; suppresses stdout/stderr to NUL, without
@@ -244,6 +276,46 @@ pub fn run_quiet(
     limits: QuietLimits,
     check: impl Fn() -> Result<()>,
 ) -> Result<()> {
+    quiet(program, args, workspace, timeout, limits, check, None)
+}
+/// The same owned runner with explicit primary-process observations. Called on
+/// the runner thread before spawn, immediately after spawn, on monitor ticks,
+/// after observed primary exit, and after actual tree reaping. The observer must
+/// be prompt; it is not an I/O/controller loop. Its error cancels the owned tree
+/// and returns only after the existing cleanup barriers. No Reaped event or
+/// successful final measurement is invented on an error path.
+///
+/// Peak working set is for the held primary process only. A zero observation
+/// remains zero (e.g. before first scheduling); callers requiring a measured
+/// nonzero peak must enforce that gate. Tree committed-memory limits remain a
+/// different measurement. This creates no files, cache or telemetry storage.
+pub fn run_quiet_observed(
+    program: &Path,
+    args: &[String],
+    workspace: &Path,
+    timeout: Duration,
+    limits: QuietLimits,
+    observe: impl Fn(QuietEvent) -> Result<()>,
+) -> Result<()> {
+    quiet(
+        program,
+        args,
+        workspace,
+        timeout,
+        limits,
+        || Ok(()),
+        Some(&observe),
+    )
+}
+fn quiet(
+    program: &Path,
+    args: &[String],
+    workspace: &Path,
+    timeout: Duration,
+    limits: QuietLimits,
+    check: impl Fn() -> Result<()>,
+    observer: Option<&dyn Fn(QuietEvent) -> Result<()>>,
+) -> Result<()> {
     limits.validate()?;
     if !program.is_absolute()
         || !workspace.is_absolute()
@@ -254,6 +326,9 @@ pub fn run_quiet(
         return Err("Invalid contained child paths or deadline".into());
     }
     check()?;
+    if let Some(observer) = observer {
+        observer(QuietEvent::BeforeStart)?;
+    }
     let stdin = File::open("NUL")?;
     let stdout = OpenOptions::new().write(true).open("NUL")?;
     execute(
@@ -265,6 +340,7 @@ pub fn run_quiet(
         timeout,
         Some(limits),
         check,
+        observer,
     )
 }
 
@@ -278,6 +354,7 @@ fn execute(
     timeout: Duration,
     bounded: Option<QuietLimits>,
     check: impl Fn() -> Result<()>,
+    observer: Option<&dyn Fn(QuietEvent) -> Result<()>>,
 ) -> Result<()> {
     let program = wide(program.as_os_str());
     let cwd = wide(workspace.as_os_str());
@@ -404,6 +481,12 @@ fn execute(
         handles.process = process.hProcess;
         handles.thread = process.hThread;
         let started = Instant::now();
+        if let Some(observer) = observer {
+            observer(QuietEvent::Process(observe_process(
+                handles.process,
+                false,
+            )?))?;
+        }
         loop {
             match WaitForSingleObject(handles.process, 250) {
                 WAIT_OBJECT_0 => break,
@@ -414,6 +497,15 @@ fn execute(
                 return Err("Job step timed out; process group terminated".into());
             }
             check()?;
+            if let Some(observer) = observer {
+                observer(QuietEvent::Process(observe_process(
+                    handles.process,
+                    false,
+                )?))?;
+            }
+        }
+        if let Some(observer) = observer {
+            observer(QuietEvent::Process(observe_process(handles.process, true)?))?;
         }
         let mut code = 0;
         if GetExitCodeProcess(handles.process, &mut code) == 0 {
@@ -442,6 +534,9 @@ fn execute(
             return Err(message.into());
         }
         handles.stop()?;
+        if let Some(observer) = observer {
+            observer(QuietEvent::Reaped)?;
+        }
     }
     check()?;
     Ok(())
@@ -450,6 +545,10 @@ fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn quiet_observation_refuses_an_invalid_process_handle() {
+        assert!(observe_process(ptr::null_mut(), false).is_err());
+    }
     #[test]
     fn windows_arguments_preserve_quotes_and_trailing_backslashes() {
         assert_eq!(quote("plain"), "\"plain\"");

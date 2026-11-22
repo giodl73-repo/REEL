@@ -91,6 +91,23 @@ threads. A failed native cleanup remains a failed profile, not a timer success.
 
 ## Controller and operator obligations
 
+The existing contained process runner now offers an explicit observer port.
+It obtains the primary worker PID and peak working set from its own held process
+handle, rather than trusting a child-written PID or message. `exit_observed`
+means the runner observed that process handle signaled; a separate `Reaped`
+event follows actual job shutdown and descendant-handle barriers. An observer
+error cancels through the existing tree cleanup before the call returns. The
+original `run_quiet` callers keep their existing path and incur no new process
+memory queries. No second launcher, cache or telemetry store was added.
+
+These observations supply the ownership facts needed for private-pipe peer
+verification; that integration is still pending. They measure only the primary
+process's peak working set. A zero/failed observation cannot qualify memory use,
+and the session must still measure its foreground process and enforce the
+combined 512 MiB envelope. Job committed-memory limits are a different metric.
+The observer runs on the existing runner thread, whose 250 ms monitor cadence
+cannot replace the session's 20 ms controller or 100 ms acknowledgement rules.
+
 The Windows output port now implements explicit probe/open/close on one serial
 backend thread. Construction opens no endpoint. Real opens resolve the bound
 WASAPI endpoint again, request 480 stereo float32 frames at 48 kHz and check the
