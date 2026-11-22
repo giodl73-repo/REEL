@@ -66,3 +66,24 @@ cargo test --locked --all-features --test spoken_programme_media installation:: 
 
 The isolated workflow SDK's locked/offline Windows-target metadata resolution
 also passed. No SDK lockfile, workflow implementation or active lane changed.
+
+### First hosted cycle and current-base refresh
+
+[CI 45036548394](https://github.com/giodl73-repo/REEL/actions/runs/45036548394)
+completed in 19m32s. Both OS Clippy and ordinary test jobs passed; downloaded
+job logs confirmed the new callback/metadata cases and all three CLI cases on
+each OS, plus the actual owned-process case on Windows.
+[Assembly/source qualification](https://github.com/giodl73-repo/REEL/actions/runs/45036548357)
+passed in 5m14s.
+
+The overall CI result was **failed**: the unchanged reel-assets
+`installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures`
+case exceeded its existing 30 s synthetic PowerShell deadline. Running that
+exact case locally passed in 4.88s, adding one distinct investigation case to
+the 24 focused cases above. No source, deadline or gate was relaxed.
+
+Meanwhile documentation-only main PR #404 advanced the base to `fb8ac7b`.
+After the complete first cycle, rebase onto that base and require a fresh full
+qualification before merge. First-cycle component passes are not an overall
+current-base pass. The PR records the exact final head and result; no run was
+cancelled and no actual endpoint was used.
