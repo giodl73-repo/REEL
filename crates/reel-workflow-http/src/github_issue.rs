@@ -1,6 +1,8 @@
 //! Explicit issue submission over the existing owned HTTP operation. The pinned
 //! request authorizes its text; this adapter does not authenticate a film review.
-use crate::{Config, Prepared, error};
+#[cfg(windows)]
+use crate::Prepared;
+use crate::{Config, error};
 use reel_workflow::{ErrorKind, Result};
 use serde::{Deserialize, Serialize};
 
@@ -204,6 +206,7 @@ impl Spec {
         )
     }
 }
+#[cfg(windows)]
 impl Prepared {
     pub(crate) fn github_issue_headers(mut self) -> Self {
         use reqwest::header::HeaderValue;
