@@ -130,6 +130,7 @@ impl Controller {
             sent: false,
             sequence: None,
         });
+        self.check_ack_deadlines();
         self.dispatch(now);
         Ok(())
     }
@@ -171,6 +172,19 @@ impl Controller {
         self.source_ticket = None;
         self.deadline = None;
     }
+    fn check_ack_deadlines(&mut self) {
+        // Use controller visibility, not the rounded core trace timestamp.
+        // Check before consuming a late delivery/record: removing its pending
+        // entry must not erase a missed foreground-receipt deadline.
+        let expired = self.clock.now_us().is_none_or(|now| {
+            self.pending
+                .iter()
+                .any(|pending| now.saturating_sub(pending.received_us) > 100_000)
+        });
+        if expired {
+            self.fail(Failure::Deadline);
+        }
+    }
     fn effects(&mut self, effects: Effects) {
         if effects.close {
             self.close = true;
@@ -193,6 +207,7 @@ impl Controller {
         }
     }
     fn record(&mut self, record: Trace) {
+        self.check_ack_deadlines();
         if record.snapshot.command_sequence <= self.seen_sequence {
             return;
         }
@@ -210,7 +225,7 @@ impl Controller {
             self.fail(Failure::Ownership);
             return;
         }
-        if record.refusal.is_none() {
+        if record.refusal.is_none() && self.failure.is_none() {
             let span = match (pending.command, record.snapshot.state) {
                 (Command::Start, State::Starting) => Some(2_000_000),
                 (Command::Restart, State::Restarting) => Some(35_000_000),
@@ -261,6 +276,7 @@ impl Controller {
         }
         self.effects(effects);
         if snapshot.session_closed {
+            self.check_ack_deadlines();
             while let Some(pending) = self.pending.pop_front() {
                 self.emit(Event::Refused {
                     id: pending.id,
@@ -289,6 +305,7 @@ impl Controller {
                         self.poll_core(now);
                     }
                     Err(reason) => {
+                        self.check_ack_deadlines();
                         let pending = self.pending.remove(index).unwrap();
                         let snapshot = self.core.as_ref().unwrap().snapshot();
                         self.emit(Event::Refused {
@@ -419,6 +436,7 @@ impl Controller {
     }
     pub fn tick(&mut self) -> Result<()> {
         let now = self.now()?;
+        self.check_ack_deadlines();
         if self.callback.is_some() {
             while let Some(report) = self.callback.as_mut().and_then(CallbackControl::report) {
                 self.deliveries();
@@ -567,6 +585,7 @@ impl Controller {
     }
     fn deliveries(&mut self) {
         while let Some(delivery) = self.callback.as_mut().and_then(CallbackControl::delivery) {
+            self.check_ack_deadlines();
             let Some(index) = self
                 .pending
                 .iter()
@@ -634,6 +653,79 @@ mod tests {
             assert!(Instant::now() < until, "controlled controller deadline");
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+    #[test]
+    fn paused_callback_stall_faults_pending_resume_before_source_can_move() {
+        let (mut controller, harness, clock) = fixture();
+        let _release = harness.release_guard();
+        controller
+            .command(1, Command::Start, 0, clock.now_us().unwrap())
+            .unwrap();
+        wait(&mut controller, &harness, |controller| {
+            controller.observed.state == State::Playing
+        });
+        controller
+            .command(2, Command::Pause, 1, clock.now_us().unwrap())
+            .unwrap();
+        wait(&mut controller, &harness, |controller| {
+            controller.observed.state == State::Paused
+        });
+        let cursor = controller.observed.source_frame;
+        controller
+            .command(3, Command::Resume, 1, clock.now_us().unwrap())
+            .unwrap();
+        std::thread::sleep(Duration::from_millis(120));
+        controller.tick().unwrap();
+        assert_eq!(controller.failed(), Some(Failure::Deadline));
+        assert!(harness.fill(480).iter().all(|sample| *sample == 0.0));
+        wait(&mut controller, &harness, |controller| {
+            controller.core.is_some() && controller.observed.state == State::Fault
+        });
+        assert_eq!(controller.observed.source_frame, cursor);
+        controller
+            .command(4, Command::Status, 0, clock.now_us().unwrap())
+            .unwrap();
+        assert!(matches!(controller.event(), Some(Event::Ack { id: 4, .. })));
+        controller
+            .command(5, Command::Quit, 0, clock.now_us().unwrap())
+            .unwrap();
+        assert!(controller.observed.session_closed);
+    }
+    #[test]
+    fn late_callback_ack_does_not_erase_the_receipt_deadline_failure() {
+        let (mut controller, harness, clock) = fixture();
+        let _release = harness.release_guard();
+        controller
+            .command(1, Command::Start, 0, clock.now_us().unwrap())
+            .unwrap();
+        wait(&mut controller, &harness, |controller| {
+            controller.observed.state == State::Playing
+        });
+        controller
+            .command(2, Command::Pause, 1, clock.now_us().unwrap())
+            .unwrap();
+        harness.fill(1);
+        std::thread::sleep(Duration::from_millis(120));
+        controller.tick().unwrap();
+        assert_eq!(controller.failed(), Some(Failure::Deadline));
+        assert!(controller.pending.is_empty());
+        assert!(matches!(
+            controller.event(),
+            Some(Event::Fault(Failure::Deadline))
+        ));
+        assert!(matches!(controller.event(), Some(Event::Ack { id: 2, .. })));
+    }
+    #[test]
+    fn expired_start_receipt_cannot_open_a_stream() {
+        let (mut controller, harness, _) = fixture();
+        let _release = harness.release_guard();
+        std::thread::sleep(Duration::from_millis(2100));
+        controller.command(1, Command::Start, 0, 0).unwrap();
+        controller.tick().unwrap();
+        assert_eq!(controller.failed(), Some(Failure::Deadline));
+        assert_eq!(controller.observed.state, State::Fault);
+        assert_eq!(controller.observed.source_frame, 0);
+        assert_eq!(harness.opened.load(Ordering::Acquire), 0);
     }
     #[test]
     fn faulted_enqueue_refusal_cannot_steal_the_following_status_ack() {

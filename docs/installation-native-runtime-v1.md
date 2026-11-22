@@ -240,6 +240,15 @@ through probing; the real core consumes it just before stream opening, so the
 core's two-second open window is not spent on the preceding probe. The external
 Start/Restart aggregate remains tied to complete foreground command receipt.
 
+The controller also checks each pending command against that original receipt
+with a 100 ms acknowledgement deadline, including while Paused. It checks before
+consuming actual records or refusals, so a late arrival cannot erase the missed
+deadline. Failure cancels startup and requests callback/native teardown; a late
+actual acknowledgement may still be reported as history after the Fault notice.
+It cannot clear the failure or authorize reopening. Status/Quit remain usable.
+This is the controller-side gate; foreground display and IPC delivery still need
+to enforce the same original receipt budget end to end.
+
 Callback delivery records now carry fixed-size command tags and the actual
 enqueue sequence/refusal. This prevents a rejected command during Fault from
 stealing a later Status acknowledgement. The 16-entry delivery-record channel
@@ -343,8 +352,8 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest controller/admission checkpoint: 70 unit cases, five CLI cases and ten
-explicit original/runtime-input cases passed: **85 distinct focused cases**. The
+Latest controller/admission checkpoint: 73 unit cases, five CLI cases and ten
+explicit original/runtime-input cases passed: **88 distinct focused cases**. The
 original-input invocation ran with zero ignored cases; the five ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains

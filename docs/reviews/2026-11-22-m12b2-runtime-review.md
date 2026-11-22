@@ -273,6 +273,30 @@ off-callback attachment-refusal representation were corrected before final
 qualification. Formatting, whitespace, actionlint and changed-document links
 passed. No actual endpoint, playback, capture, listening or release is claimed.
 
+## Controller acknowledgement deadline checkpoint
+
+The same assistant applied the Platform/Audience, Sound, Editor and
+Rights/Provenance checklists to the receipt watchdog change. These are checklist
+findings, not independent reviews or human approvals.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Platform/Audience | The 250 ms playback watchdog did not cover a queued Resume while Paused. The controller now checks every pending command against its original receipt with a 100 ms budget. It checks before removing actual records or refusals, including teardown, so a late observation cannot erase a missed deadline. Foreground visibility and IPC remain separate unfinished obligations. |
+| Sound/Editor | Timeout marks callback failure, cancels startup and requests real native close. The stalled-Paused test proves subsequent fill is silent and the source cursor stays fixed through actual core return. Late actual acknowledgements remain historical observations after Fault; they cannot clear failure or revive startup. Status/Quit remain usable. |
+| Rights/Provenance | The change neither admits new originals nor bypasses player/lock checks. Tests use private controlled engineering output only; no endpoint, private media, capture or creative/release authority is inferred. |
+
+Three new controller regressions passed: a stalled Paused Resume, a callback
+acknowledgement produced before the controller reads it after the deadline, and
+an expired Start receipt that opens no stream. The complete installation unit
+filter passed **73 cases**, zero failed, in 7.58 s; the same five ordinary ignored
+fixtures were launched by parent cases. All-target/all-feature Clippy passed
+with warnings denied in 44.23 s. The explicit original/runtime-input integration
+filter passed **ten cases**, zero failed or ignored, in 33.01 s; the native CLI
+passed **five cases**, zero failed or ignored, in 0.11 s. This is **88 distinct
+focused passing cases**, not an addition of reruns or fixture children.
+Formatting, whitespace and actionlint passed. No actual endpoint, audio output,
+capture, listening or release was performed.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
@@ -285,9 +309,10 @@ routing, parent observation ordering, global command-window accounting, console
 behavior, native cancellation through the complete contained worker and all
 aggregate deadlines remain open. The new pre-transport observations must be
 integrated without inventing a Ready transport to acknowledge those controls.
-The complete command path still needs a receipt-to-controller/foreground
-acknowledgement watchdog, including a stalled callback while Paused; the
-250 ms Playing/LoopWait output watchdog alone does not establish the 100 ms
-control-acknowledgement gate.
+The controller now enforces the receipt-to-controller acknowledgement budget,
+including a stalled callback while Paused. The complete foreground/IPC path
+still needs the same original receipt deadline, actual visibility/order proof
+and rejection of late observations as qualification success. These controller
+tests do not establish the end-to-end 100 ms control-acknowledgement gate.
 Only after those components and full checks pass can M12b.2 be proposed for
 merge. M12c's actual station/capture/listening/usability gates remain separate.
