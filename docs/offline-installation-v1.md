@@ -1,7 +1,7 @@
 # A checked programme on one offline listening station
 
 **Status: M11 contract merged in [#398](https://github.com/giodl73-repo/REEL/pull/398), `81be1db`.**
-M12a's checked transport core is under qualification; the native output adapter
+M12a provides the checked transport core; the native output adapter
 and measured station demonstration remain M12b/M12c. See the
 [bounded implementation and test map](reviews/2026-11-21-m12a-checked-transport-review.md).
 M12 implements and measures this profile; this specification is not a device,

@@ -1,6 +1,6 @@
 # M12a: checked transport core and remaining output gates
 
-Status: implementation under local qualification, based on merged M11
+Status: checked portable transport implementation, based on merged M11
 [#398](https://github.com/giodl73-repo/REEL/pull/398), `81be1db`.
 One assistant applied the repository role checklists. This is not independent
 review, human acceptance or permission to exhibit a programme.
@@ -118,3 +118,14 @@ separately and explicitly above. This is **60 distinct passing local tests**
 (10 unit + 6 installation + 20 declaration/compiler + 24 ordinary media), not
 including repeated earlier checkpoints. Final Clippy/hosted checks remain to
 be recorded.
+
+### Final local qualification
+
+All-target/all-feature Clippy passed with warnings denied (6m03s). Formatting,
+whitespace, actionlint and relative documentation links passed. The frozen
+implementation is recorded in `127fa9e`; subsequent documentation checkpoints
+do not change the tested Rust code. The branch is rebased onto the latest main
+before hosted qualification, preserving the separate workflow lane's changes.
+Required current-base CI must pass before merge; its live checks and exact head
+are linked from the PR. M12b/c and all device/listening/authority gates remain
+open regardless of those software results.
