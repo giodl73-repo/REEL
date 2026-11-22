@@ -51,3 +51,18 @@ and the exact derived control referencing it, retained its own result and closed
 its slot while preserving both histories. These are synthetic external/manual
 steps, not a real film rebuild, human authority or production adoption. Film
 producer integration is qualified separately before that capability is claimed.
+
+The explicit existing-renderer film child at source `7a89009` passed in 1002.96
+seconds. It used the completed image parent's exact PNG together with declared
+synthetic scene/contract/cue controls, acquired its own claims in the same index,
+rendered through the contained existing producer, and retained its exact worker
+and outputs. Interrupted native preparation reconciled the original work. Lost
+local result metadata recovered without another render; repeated recovery,
+source-HEAD advancement, staged close recovery, close replay and historical
+readback passed. A decode of the 64x64 FFV1 picture's first center pixel returned
+RGB (20,171,40), confirming the green replacement rather than the original red.
+Original roots, runtime, claims and receipts remain preserved.
+
+This is one short synthetic scene with newly authored controls, not automatic
+derivation of a project's affected controls, a full finding-to-rebuild command,
+actual bilingual assembly, episode-scale capacity, profile adoption or rollback.

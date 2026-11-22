@@ -96,13 +96,23 @@ W4 acceptance. Wiring retained candidates, exact annex record/leaf replacement,
 project decision authority and protected affected-language/consumer rebuilds
 remains required. See the [scoped review](reviews/workflow-owned-selection-review.md).
 
-The [retained-image adapter #413](https://github.com/giodl73-repo/REEL/pull/413) builds on that transaction: live retained ownership,
+The merged [retained-image adapter #413](https://github.com/giodl73-repo/REEL/pull/413) builds on that transaction: live retained ownership,
 project-supplied exact decision authority, immutable decision evidence in Git and
 prospective native record/leaf validation precede owned selection. It clears the
 old status and preserves stable authoring/metadata and exact historical approvals.
 It is a Rust integration component, not the complete film issue/fix/rebuild flow;
 project policy/CLI integration and protected affected-consumer rebuilds are still
 open. See its [scoped review](reviews/workflow-image-selection-review.md).
+
+[Retained child inputs #414](https://github.com/giodl73-repo/REEL/pull/414) adds
+exact parent-output/worker bindings, live retained-parent proof, child-owned
+claims and original-operation recovery in the existing index. Explicit native
+fixtures cover new slot generations and shared retained owners. An actual short
+film child consumed the retained image through the existing contained renderer
+and retained/recovered/closed its result. This supplies protected dependency
+inputs; real-project control derivation, affected-language scheduling and the
+complete issue/fix/rebuild application remain open. See its
+[scoped review](reviews/workflow-retained-children-review.md).
 
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:
