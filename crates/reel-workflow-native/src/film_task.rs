@@ -284,6 +284,23 @@ pub fn verify_retained(
     result: &ReturnedResult,
     acknowledgement: &crate::retention::Acknowledgement,
 ) -> Result<crate::retention::RetainedGuard> {
+    let allowance = retained_allowance(packet, source, receipt, result)?;
+    crate::retention::verify_bounded(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        acknowledgement,
+        allowance,
+    )
+}
+pub(crate) fn retained_allowance(
+    packet: &Packet,
+    source: &NativeProfile,
+    receipt: &admission::Receipt,
+    result: &ReturnedResult,
+) -> Result<crate::output_bounds::Allowance> {
     use std::io::Read;
     reel_workflow::check_result(packet, result)?;
     let mut inputs = NativeInputs::open(packet, source)?;
@@ -330,15 +347,7 @@ pub fn verify_retained(
         ));
     }
     drop(inputs);
-    crate::retention::verify_bounded(
-        packet,
-        source,
-        profile,
-        receipt,
-        result,
-        acknowledgement,
-        allowance,
-    )
+    Ok(allowance)
 }
 /// Explicit close of the original job slot into retained coverage. Persist the
 /// operation key before staging; recovery must reuse it. No workspace is retired.

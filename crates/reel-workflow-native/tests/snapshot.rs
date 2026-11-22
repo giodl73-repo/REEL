@@ -15,6 +15,9 @@ use tig_git::{annex::identity::Key, source::native::annex::Binding};
 #[cfg(windows)]
 #[path = "support/image_selection.rs"]
 mod image_selection_cases;
+#[path = "support/upstream.rs"]
+#[cfg(windows)]
+mod upstream_cases;
 
 #[cfg(all(windows, feature = "film"))]
 #[path = "support/film_job.rs"]
@@ -1137,6 +1140,7 @@ impl Fixture {
             )]),
             input_streams: BTreeMap::from([("input/source".into(), None)]),
             budget: None,
+            upstream: None,
         };
         let task = Task {
             upstream_inputs: None,

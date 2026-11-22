@@ -696,3 +696,4 @@ fn portable_source(path: &str) -> bool {
         && !path.contains('\\')
         && path.split('/').all(reel_publication::valid_id)
 }
+pub mod upstream;

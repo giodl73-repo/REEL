@@ -68,6 +68,13 @@ pub struct Receipt {
     pub index_checkpoint: source_claims::Checkpoint,
     pub metadata_checkpoint: metadata::Checkpoint,
 }
+/// One fence per exact retained actor/controller for a parent-read session.
+/// Never reconstructed from serialized acknowledgements.
+#[derive(Default)]
+pub(crate) struct RetainedFences {
+    identities: BTreeSet<(Digest, PathBuf, String)>,
+    held: Vec<reel_assets::admission::MetadataLock>,
+}
 #[derive(Serialize)]
 pub struct Preview {
     pub declared_objects: usize,
@@ -527,6 +534,15 @@ impl Prepared {
     /// Explicitly apply original qualified slot work. On uncertainty retry this
     /// exact profile/task/attempt/operation; never choose a replacement identity.
     pub fn accept(&self) -> Result<Receipt> {
+        if self.snapshot.packet.task.upstream_inputs.is_some() {
+            return Err(error(
+                ErrorKind::Denied,
+                "admission-live-parent-proof-required",
+            ));
+        }
+        self.accept_verified_upstream()
+    }
+    pub(crate) fn accept_verified_upstream(&self) -> Result<Receipt> {
         if !self.preview()?.response_close_bound_ok {
             return Err(error(
                 ErrorKind::Budget,
