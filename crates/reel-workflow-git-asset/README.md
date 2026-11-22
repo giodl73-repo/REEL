@@ -44,7 +44,7 @@ privacy-safe public receipts. Store expanding control/evidence asset-side.
 
 **This is not complete production adoption.** Shared byte guards end at process
 exit. The claims and candidate adapters below add durable declared obligations
-and retained publication. Owned workspace preparation, complete original task
+and retained publication. Owned preparation is covered by the component below. Complete original task
 control retention and the generation-fenced handoff Lifecycle are still open. This
 package does not acknowledge task completion or retire scratch.
 
@@ -200,3 +200,60 @@ raw reply in ordinary/bare pools, then reopen both with the old producer and
 project locations offline. Completed apply/recovery must avoid reopening producer
 input or appending another registration. These are local opt-in component checks;
 normal hosted CI runs their bounded parser/control counterparts.
+
+## Owned named input preparation
+
+`workspace::Preparation::capture(snapshot, preview, bindings, budget)` checks the
+exact original input set, portable destination mapping, logical bytes and worst
+case file-data allowance before filesystem or source I/O. Bindings map every
+logical ID once to an ASCII relative filename beneath `inputs/`. Traversal,
+reserved names, case aliases and file/directory prefix collisions are refused.
+Limits: 128 inputs, 512 named directories, 200-byte relative names, 64 GiB per
+file and 1 TiB aggregate. The preparation control is at most 256 KiB.
+
+`Workspace::create(existing_parent, new_name, preparation)` explicitly creates
+only new caller-owned scratch. It reuses REEL's existing guarded directory
+identity API; it does not create a cache or capacity service. Persist the returned
+`Ticket::encode()` bytes and preparation control asset-side with independent
+original Object pins BEFORE materializing. Tickets are private locators and
+ownership controls, at most 16 KiB; copying owner.json into a replacement
+directory does not reproduce its physical identity.
+
+`Workspace::materialize(byte_source)` streams each missing named input with a
+64 KiB buffer using the existing SDK ByteSource port. For native pools use
+`annex::managed::Reader` with the admitted full roster. Copies are checked by
+hash and length before a no-overwrite hard link publishes the destination, then
+checked again under held read guards. Existing matching files are verified and
+reused without opening the source. Differing bytes are preserved and refused.
+Only declared paths and four deterministic partial slots per input are inspected;
+no directory inventory or unrelated asset hydration occurs.
+
+An interrupted prefix is preserved; retry uses another unused slot. A complete
+verified partial can publish without producer input. Four incomplete slots or a
+corrupt complete partial require explicit recovery. No error, timeout or Drop
+sweeps partials, overwrites files, deletes scratch, releases claims or marks task
+completion. One workspace gate excludes competing preparation while other owned
+workspaces remain usable. Named directory and file guards block replacement and
+mutation during use. Keep the Workspace alive while consumers use its paths.
+
+Recover with `Preparation::restore(control, original_object)`,
+`Ticket::decode(ticket_bytes, original_ticket_object)` and `Workspace::reopen`.
+`verify` reopens the exact staged inputs without Git metadata or cache access.
+Control pins must come from the original admitted operation, not self-hashed
+submitted JSON. Namespace/ownership guards require Windows; other platforms refuse
+filesystem operations before I/O, while pure planning remains portable.
+
+`Budget` fixes `logical_bytes`, `peak_file_data` and cooperative `millis` (1..300000)
+for one materialize/verify pass. The conservative file-data bound counts four
+partial slots plus final copies and bounded control bytes; hard-link sharing can
+reduce actual allocation. This is not a total filesystem quota or capacity
+reservation: directory/FS overhead and other writers need separately admitted
+headroom. Native source verification and command budgets also still apply.
+Time checks cannot interrupt a blocked kernel I/O. Exceeding a budget preserves
+all data and never expires persistent job claims.
+
+Windows fixtures cover actual child exit during copying, exact-ticket retry,
+foreign bytes, stale directory identity, junction refusal, scoped exclusion,
+source corruption, exhausted slots and cooperative time refusal. The native
+ordinary/bare input fixtures compose exact historical resolution, managed reads,
+durable claims and owned streaming preparation/reopen. No renderer runs.

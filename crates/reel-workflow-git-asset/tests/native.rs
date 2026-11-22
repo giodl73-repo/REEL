@@ -570,6 +570,46 @@ fn exercise(bare: bool) {
         .admit_claim(&f.handle, &mut f.nodes, &limits())
         .unwrap();
     assert_eq!(status.state, State::Active);
+    // Compose exact Git snapshot -> native guarded bytes -> durable claim ->
+    // owned streaming workspace, without another cache/provider implementation.
+    use reel_workflow_git_asset::workspace::{Budget, Preparation, Ticket, Workspace};
+    let preparation = Preparation::capture(
+        &f.source,
+        &f.preview,
+        BTreeMap::from([(f.artifact.logical_id.clone(), "binary/item.bin".into())]),
+        Budget {
+            logical_bytes: 1024 * 1024,
+            peak_file_data: 8 * 1024 * 1024,
+            millis: 60000,
+        },
+    )
+    .unwrap();
+    let control = preparation.control().to_vec();
+    let control_pin = Object::from_bytes(&control);
+    let parent = f.temp.path().join("owned-workspaces");
+    fs::create_dir(&parent).unwrap();
+    let (ticket, mut workspace) = Workspace::create(&parent, "original", preparation).unwrap();
+    let ticket_raw = ticket.encode().unwrap();
+    let ticket_pin = Object::from_bytes(&ticket_raw);
+    let mut native_source = managed::Reader::new(f.profile.clone()).unwrap();
+    assert!(
+        !workspace
+            .materialize(&mut native_source)
+            .unwrap()
+            .already_complete
+    );
+    assert_eq!(
+        fs::read(workspace.input_path(&f.artifact.logical_id).unwrap()).unwrap(),
+        vec![37u8; 256 * 1024]
+    );
+    drop(workspace);
+    drop(native_source);
+    let preparation = Preparation::restore(&control, &control_pin).unwrap();
+    let ticket = Ticket::decode(&ticket_raw, &ticket_pin).unwrap();
+    let mut workspace = Workspace::reopen(&ticket, preparation).unwrap();
+    assert!(workspace.verify().unwrap().already_complete);
+    drop(workspace);
+
     assert!(
         f.shadow
             .source(&key("attempt"))
