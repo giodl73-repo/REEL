@@ -261,6 +261,14 @@ fn native_origin_changes_admission_archive_without_retargeting_logical_parent_id
 #[test]
 #[ignore = "Explicit completed original synthetic parent only; admits a NEW bounded child generation in its existing index, retains exact outputs and closes the child; no cache initialization, project selection or parent retirement"]
 fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() {
+    qualify_child(false);
+}
+#[test]
+#[ignore = "Explicit two completed synthetic parents only; verifies shared retained-owner fence, admits NEW child generation and closes it; no parent release or project adoption"]
+fn two_retained_parents_share_fence_and_transfer_exact_input_claims_to_child() {
+    qualify_child(true);
+}
+fn qualify_child(two_parents: bool) {
     use reel_workflow_native::{closing, handoff, retention};
     let parent_root = PathBuf::from(
         std::env::var_os("REEL_CHILD_PARENT").expect("Set completed synthetic image qualification"),
@@ -277,7 +285,7 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
     let parent_profile: handoff::Profile =
         serde_json::from_slice(&fs::read(parent_root.join("profile-control.json")).unwrap())
             .unwrap();
-    let controls = upstream::Parents {
+    let mut controls = upstream::Parents {
         schema: "reel.workflow-native-parents.v1".into(),
         parents: BTreeMap::from([(
             parent_request.packet.task.id.clone(),
@@ -289,13 +297,52 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
             },
         )]),
     };
+    if two_parents {
+        let extra = PathBuf::from(
+            std::env::var_os("REEL_CHILD_EXTRA_PARENT")
+                .expect("Set completed original derived-control parent"),
+        );
+        let complete: serde_json::Value =
+            serde_json::from_slice(&fs::read(extra.join("complete.json")).unwrap()).unwrap();
+        assert_eq!(complete["child_slot_closed"], true);
+        let packet: Packet =
+            serde_json::from_slice(&fs::read(extra.join("packet.json")).unwrap()).unwrap();
+        let result: ReturnedResult =
+            serde_json::from_slice(&fs::read(extra.join("result.json")).unwrap()).unwrap();
+        let profile: handoff::Profile =
+            serde_json::from_slice(&fs::read(extra.join("handoff.json")).unwrap()).unwrap();
+        let ack_path = profile.acknowledgements.join(format!(
+            "retained-{}-{}.json",
+            profile.binding.admission.task_key, profile.binding.admission.attempt_id
+        ));
+        let acknowledgement = serde_json::from_slice(&fs::read(ack_path).unwrap()).unwrap();
+        controls.parents.insert(
+            packet.task.id.clone(),
+            upstream::ParentControl {
+                packet,
+                result,
+                profile,
+                acknowledgement,
+            },
+        );
+    }
+    let packet_id = if two_parents {
+        "review-controls"
+    } else {
+        "derived-controls"
+    };
     let (packet, source) = child(
-        "derived-controls",
+        packet_id,
         &parent_request.source,
         controls.borrowed().unwrap(),
     );
     let mut profile = parent_request.admission.clone();
-    profile.scope.operation = tig_store::Key::parse("derive-controls-v1").unwrap();
+    profile.scope.operation = tig_store::Key::parse(if two_parents {
+        "review-controls-v1"
+    } else {
+        "derive-controls-v1"
+    })
+    .unwrap();
     let index_before = tig_store::source_claims::protection::Index::open(
         &profile.index_root,
         &profile.index_minimum,
@@ -398,11 +445,28 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
         .unwrap();
     let mut inputs =
         reel_workflow_native::NativeInputs::from_claims(&packet, &source, claims).unwrap();
-    let selected = &packet.task.inputs[0];
+    let selected = packet
+        .task
+        .inputs
+        .iter()
+        .find(|a| a.media_type == "image/png")
+        .unwrap();
     let image =
         reel_workflow_native::InputReader::read(&mut inputs, selected, 1024 * 1024).unwrap();
     assert!(image.starts_with(b"\x89PNG\r\n\x1a\n"));
     assert_eq!(digest(&image), selected.sha256);
+    if two_parents {
+        let control = packet
+            .task
+            .inputs
+            .iter()
+            .find(|a| a.media_type == "application/json")
+            .unwrap();
+        let raw = reel_workflow_native::InputReader::read(&mut inputs, control, 4096).unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        assert_eq!(value["picture"], serde_json::to_value(selected).unwrap());
+        assert_eq!(value["cel_id"], "C101");
+    }
     drop(inputs);
     assert!(
         admission::Prepared::open(
@@ -453,7 +517,12 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
         artifacts: BTreeMap::from([(
             "control".into(),
             Artifact {
-                logical_id: "derived/control".into(),
+                logical_id: if two_parents {
+                    "review/control"
+                } else {
+                    "derived/control"
+                }
+                .into(),
                 sha256: digest(&control),
                 bytes: control.len() as u64,
                 media_type: "application/json".into(),
@@ -531,7 +600,12 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
         receipt,
         result: result.clone(),
         acknowledgement: ack.clone(),
-        operation: tig_store::Key::parse("close-derived-controls-v1").unwrap(),
+        operation: tig_store::Key::parse(if two_parents {
+            "close-review-controls-v1"
+        } else {
+            "close-derived-controls-v1"
+        })
+        .unwrap(),
         original_lifecycle_tool,
         runtime: handoff.runtime.clone(),
     };
@@ -561,6 +635,6 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
     drop(retention::verify(&packet, &source, &profile, &close.receipt, &result, &ack).unwrap());
     saved(
         "complete.json",
-        &json!({"slot_reused_as_new_child_generation":true,"child_input_claims_verified":true,"exact_parent_png_read":true,"parent_history_preserved":true,"child_retained":true,"child_slot_closed":true,"producer_executed":false,"production_adopted":false}),
+        &json!({"native_parent_count":controls.parents.len(),"slot_reused_as_new_child_generation":true,"child_input_claims_verified":true,"exact_parent_png_read":true,"exact_parent_control_read":two_parents,"parent_history_preserved":true,"child_retained":true,"child_slot_closed":true,"producer_executed":false,"production_adopted":false}),
     );
 }
