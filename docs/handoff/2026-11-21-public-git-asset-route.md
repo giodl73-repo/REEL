@@ -600,3 +600,64 @@ inside its unmerged comic/publication module; only that generic seam is needed
 by this adapter. Next qualify a narrow main-based integration of owned adapter
 commits plus a generic InputReader seam, rather than merging the595-file ancestry.
 Keep the old route and every other active worktree untouched.
+
+
+## Narrow main-based integration entry
+
+Input REEL mainf6d079cf94058b2231819fedd42787856787560f plus the ten owned
+adapter commits throughb3babf6, replayed without unrelated workflow/comic/vendor
+changes. New worktree F:/src/REEL-worktrees/public-git-asset-main. Same P4 controls
+and L0/L1/L2 as client ingress. Allowed: generic InputReader seam in the existing
+workflow crate, corresponding adapter imports, lock resolution for main's actual
+package graph, explicit docs/CI integration and synthetic qualification. Exit:
+only owned integration files differ from main; actual main contracts build and
+pass current tests/native fixtures. Old qualified lane and active worktrees stay
+intact. No renderer/provider invocation or old-vendor replacement.
+
+
+Main integration implementation: added generic `reel_workflow::input::InputReader`
+(ten lines), changed two adapter imports, and linked its optional SDK entry from
+the existing workflow README. Main's handoff journal and workspace guards remain
+byte-for-byte unchanged. The standalone adapter lock only removes reel-publication's
+unused serde_json edge; no registry version or public SDK revision changes.
+Main's actual task/Artifact contracts compile. No unmerged comic/task runtime or
+private vendor changes are needed. A future publication module should reexport
+this generic reader trait rather than introduce a second trait identity.
+
+Local setup refusals were sparse-checkout/test invocation issues: new worktree
+needed its initial index populated; workflow package formatting/test metadata
+required root workspace manifests; film-inspection tests needed their declared
+scene-authoring JSON fixtures. All were resolved by including existing immutable
+main source/fixtures, without changing tests or other worktrees. The workflow
+package is tested from its own root workspace, not as a non-member dependency of
+the standalone adapter. No root renderer/provider tests or cache operations run.
+
+Main checkpoint so far: 38 adapter default tests and38 existing workflow tests
+PASS, strict adapter Clippy and both package format checks PASS. Full explicit
+native suite is running against main's actual dependency code. Qualification of
+old laneb3babf6 also passed exact hosted45003799082 Windows/Linux; its completed
+manifest remains external. Do not confuse that source pin with this main port.
+
+
+Main verification closeout: 38 locked adapter default tests and38 main workflow
+cases PASS; strict adapter Clippy and both package format checks/diff PASS. Full
+explicit Windows native suite PASS294.40s: ten substantive cases plus inert
+worker entry, including nine real child exits, actual post-import uncertainty,
+ordinary/bare full SDK client ingress/readback and streamed257 MiB input.
+No changed runtime file in main's other packages except the ten-line generic
+reader trait and its module export. Public SDK pin0ccb137 and registry versions
+stay unchanged. Main root lock, vendor, assembly/assets/publication code unchanged.
+External logs: reel-public-main-final-{all,clippy,native}.log and
+reel-public-main-workflow-final.log. Exact committed source/hosted pins follow.
+
+Producer six-role disposition for this main port: identity/root/version checks
+retain their exact scope; placement limits are per object plus explicit caller
+budgets; actual Ready/source guards span composite retention and journal append;
+process exits preserve original pending state and never repeat unknown effects;
+control/plan pins do not grant authority and diagnostics remain bounded/private;
+Git adoption adds an isolated SDK route and a generic read seam without replacing
+old APIs/vendors or activating production. These checks close producer review of
+the component, not independent/human review, shared-pruning or project acceptance.
+Next source integration is a narrow main-target P4 draft, with hosted exact-head
+qualification and normal review. P3 merge placement, P2 legacy handoff, P5 release
+candidate and P6 official use remain separate planned gates; no live cutover.

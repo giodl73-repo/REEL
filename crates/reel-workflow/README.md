@@ -80,3 +80,10 @@ Validation:
 cargo clippy -p reel-publication -p reel-workflow --all-targets --locked -- -D warnings
 cargo test -p reel-publication -p reel-workflow --all-targets --locked
 ```
+
+
+`input::InputReader` is a small generic named-Artifact read seam for optional
+storage adapters. It adds no media/rendering or native SDK dependency to this
+crate. The isolated [public git-asset adapter](../reel-workflow-git-asset/README.md)
+supplies exact snapshot preparation and the existing handoff Lifecycle over a
+pinned public SDK. Construction is no job admission or production activation.

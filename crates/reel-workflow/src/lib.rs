@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod film_inspect;
 pub mod handoff;
+pub mod input;
 pub mod manual;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";

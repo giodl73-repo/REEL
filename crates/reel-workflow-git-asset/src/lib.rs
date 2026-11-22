@@ -1,5 +1,5 @@
 //! Public git-asset adapter. No implicit enrollment, transfer or task completion.
-//! This input port is not durable job admission or retained publication authority.
+//! Explicit claim/control/lifecycle methods compose the pinned native SDK.
 #![forbid(unsafe_code)]
 use git_asset::{
     annex,
@@ -7,7 +7,7 @@ use git_asset::{
 };
 use git_asset_core::{Digest, LogicalPath, Object};
 use git_asset_model::resolve::AssetResolver;
-use reel_workflow::{Artifact, Error, ErrorKind, Result, publication::InputReader};
+use reel_workflow::{Artifact, Error, ErrorKind, Result, input::InputReader};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,

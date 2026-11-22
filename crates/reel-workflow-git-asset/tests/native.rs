@@ -18,7 +18,7 @@ use git_asset_store::{
     },
     store_protection::{Binding, Member},
 };
-use reel_workflow::{Artifact, ErrorKind, publication::InputReader};
+use reel_workflow::{Artifact, ErrorKind, input::InputReader};
 use reel_workflow_git_asset::{
     GuardedInputs, Preview, Snapshot,
     claims::{Handle, State},
