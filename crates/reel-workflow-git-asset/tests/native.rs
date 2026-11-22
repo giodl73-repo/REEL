@@ -627,3 +627,8 @@ fn ordinary_native_input_guards_become_original_durable_claims() {
 fn bare_native_input_guards_become_original_durable_claims() {
     exercise(true)
 }
+
+#[path = "common/mod.rs"]
+mod common;
+#[path = "native/returns.rs"]
+mod returns;
