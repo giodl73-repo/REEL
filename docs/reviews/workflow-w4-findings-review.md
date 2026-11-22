@@ -20,9 +20,14 @@ production/creative authority is asserted.
   for record binding and protection; no storage engine or claim lifecycle is added.
 
 Portable tests and the actual native-scene review-to-finding test must pass on
-the PR head. Shared metadata preserves v1 JSON. The root re-exports it and keeps
+the PR head. Shared publication metadata preserves v1 JSON. The root re-exports it and keeps
 its `InputFiles` boundary. Its new workflow dependency is test-only; the portable
 workflow gains no renderer/provider dependency.
+
+The frozen `reel-assembly` foundation remains unchanged. Publication owns the
+shared serialized review contracts; no freeze gate or browser dependency pin
+is relaxed. The root consumes publication metadata without adding a renderer
+dependency to the portable workflow.
 
 The explicit synthetic Rust walkthrough shares the real-media fixture and emits
 a movie/map/issue package into one new owned directory. It uses colors/silence

@@ -2,8 +2,8 @@
 use super::{Clocks, Time, clocks_using, file_hash, hash, movie_timescale};
 use crate::scene_delivery::{self, FileRef, InputFiles, MediaProgram};
 use anyhow::{Context, Result, ensure};
-use reel_assembly::film_review::SourceFile;
-pub use reel_assembly::film_review::{Receipt, ReviewMap, Target};
+use reel_publication::film_review::SourceFile;
+pub use reel_publication::film_review::{Receipt, ReviewMap, Target};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},

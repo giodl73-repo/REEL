@@ -52,7 +52,7 @@ fn real_native_receipt_drives_visible_frame_exact_ids_with_unchanged_audio_and_t
         ),
         (0, 24, 24, 48)
     );
-    reel_assembly::film_review::check_map(&map).unwrap();
+    reel_publication::film_review::check_map(&map).unwrap();
     // Exercise the portable workflow consumer on actual producer bytes, rather
     // than a separately copied review schema or a pretend media fixture.
     let descriptor = |name: &str, mime: &str| {

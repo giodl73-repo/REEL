@@ -1,5 +1,5 @@
 //! Portable review-map wire contracts. No media, storage, viewing or authority.
-use anyhow::{Result, ensure};
+use super::{Error, ErrorKind, Result};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -9,6 +9,16 @@ use std::{
 pub const MAP_SCHEMA: &str = "reel.film-cel-review-map.v1";
 pub const RECEIPT_SCHEMA: &str = "reel.film-cel-review-receipt.v1";
 pub const MAX_MAP_BYTES: usize = 4 * 1024 * 1024;
+macro_rules! ensure {
+    ($condition:expr, $code:literal) => {
+        if !$condition {
+            return Err(Error {
+                kind: ErrorKind::Invalid,
+                code: $code,
+            });
+        }
+    };
+}
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct SourceFile {
@@ -96,6 +106,7 @@ fn producer_path(v: &SourceFile) -> Option<String> {
     }
     Some(normalized)
 }
+/// Validate typed shape/coverage. Readers/writers enforce MAX_MAP_BYTES on bytes.
 pub fn check_map(map: &ReviewMap) -> Result<()> {
     ensure!(
         map.schema == MAP_SCHEMA
@@ -119,7 +130,7 @@ pub fn check_map(map: &ReviewMap) -> Result<()> {
             && file(&map.source_film)
             && file(&map.delivery_receipt)
             && file(&map.job),
-        "invalid film review map"
+        "film-review-map-shape"
     );
     ensure!(
         producer_path(&map.source_film)
@@ -132,7 +143,7 @@ pub fn check_map(map: &ReviewMap) -> Result<()> {
                     None => "review.mp4".into(),
                 }
             ),
-        "review source namespace mismatch"
+        "film-review-source-namespace"
     );
     let mut ids = BTreeSet::new();
     let mut cursor = 0;
@@ -147,13 +158,10 @@ pub fn check_map(map: &ReviewMap) -> Result<()> {
                 && target.start_frame == cursor
                 && target.end_frame > cursor
                 && target.end_frame <= map.frame_count,
-            "invalid film review target"
+            "film-review-target"
         );
         cursor = target.end_frame;
     }
-    ensure!(
-        cursor == map.frame_count && serde_json::to_vec(map)?.len() <= MAX_MAP_BYTES,
-        "film review map coverage or budget"
-    );
+    ensure!(cursor == map.frame_count, "film-review-coverage");
     Ok(())
 }

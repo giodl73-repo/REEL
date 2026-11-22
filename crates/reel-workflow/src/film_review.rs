@@ -1,7 +1,7 @@
 //! Private reported findings -> exact-baseline issue drafts. No issue delivery,
 //! authenticated viewing, repair execution, selection, or retained ownership.
 use crate::*;
-use reel_assembly::film_review::{self as wire, Receipt, ReviewMap, Target};
+use reel_publication::film_review::{self as wire, Receipt, ReviewMap, Target};
 use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},

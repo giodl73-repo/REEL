@@ -964,6 +964,7 @@ dependencies = [
  "image",
  "reel-assembly",
  "reel-music",
+ "reel-publication",
  "same-file",
  "serde",
  "serde_json",

@@ -25,7 +25,7 @@ the directory. The example shares its fixture with the real-media regression.
 This is a developer walkthrough of these components, not Season 5 acceptance or
 an installed/retained production workflow.
 
-The v1 map/receipt contracts live in `reel-assembly::film_review`, shared by the
+The v1 map/receipt contracts live in `reel-publication::film_review`, shared by the
 [review-copy producer](film-cel-review-v1.md) and portable workflow consumer. The
 producer re-exports those metadata types; JSON fields are unchanged. Its native
 `InputFiles` access boundary remains separate. `reel-workflow` acquires no media

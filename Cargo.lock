@@ -1748,6 +1748,7 @@ dependencies = [
  "reel-assets",
  "reel-music",
  "reel-print",
+ "reel-publication",
  "reel-workflow",
  "rtrb",
  "same-file",
