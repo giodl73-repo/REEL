@@ -1,6 +1,9 @@
 //! Controlled signals only; these tests do not establish speech/listening approval.
 #[path = "support/spoken_checking.rs"]
 mod checking;
+#[cfg(feature = "tig-publication")]
+#[path = "support/spoken_companion.rs"]
+mod companion;
 #[path = "support/spoken_layers.rs"]
 mod layers;
 #[cfg(feature = "print")]

@@ -51,6 +51,7 @@ reel-assembly = { path = "crates/reel-assembly" }
 reel-assets = { path = "crates/reel-assets", optional = true }
 reel-print = { path = "crates/reel-print", optional = true }
 flate2 = "1"
+
 tig-core = { path = "vendor/tig/crates/tig-core", optional = true }
 tig-assets = { path = "vendor/tig/crates/tig-assets", optional = true }
 tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional = true }
@@ -138,3 +139,11 @@ resolver = "3"
 [dev-dependencies]
 reel-assets = { path = "crates/reel-assets" }
 flate2 = "1"
+
+# Repeated immutable-media/runtime hashing should not dominate qualification.
+# Optimize only the cryptographic kernel; application assertions stay enabled.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3

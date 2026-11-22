@@ -97,6 +97,7 @@ pub struct CheckSummary {
     pub publication: &'static str,
 }
 
+#[derive(Clone, Copy)]
 pub struct CheckRequest<'a> {
     pub document: &'a Document,
     pub plan_bytes: &'a [u8],
@@ -106,11 +107,17 @@ pub struct CheckRequest<'a> {
 }
 
 pub struct CheckedPackage {
+    plan: compiler::CompiledPlan,
     access: AccessPackage,
     transcripts: Vec<Vec<u8>>,
     summary: CheckSummary,
 }
 impl CheckedPackage {
+    /// Recomputed from the original controls, before independent PCM checking.
+    /// Private subjects remain private; this grants no listening/rights authority.
+    pub fn compiled_plan(&self) -> &compiler::CompiledPlan {
+        &self.plan
+    }
     pub fn access(&self) -> &AccessPackage {
         &self.access
     }
@@ -385,6 +392,7 @@ pub fn check(
     )?;
     tick()?;
     Ok(CheckedPackage {
+        plan,
         summary: CheckSummary {
             schema: "reel.spoken-check.v1",
             editions: access.editions.len(),

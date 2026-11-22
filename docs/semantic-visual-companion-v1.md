@@ -1,102 +1,75 @@
-# Semantic visual companion: M10 contract draft
+# Semantic visual companions
 
-**Status:** source audit and test design only, based on merged M09 [#394](https://github.com/giodl73-repo/REEL/pull/394), `b95a6c2`. No M10 implementation, picture render, speech recording or human review is claimed here.
+**Status:** M10 implementation under qualification, based on merged M09 [#394](https://github.com/giodl73-repo/REEL/pull/394), `b95a6c2`. Local execution and required hosted results are recorded in the [role/test review](reviews/2026-11-21-m10-semantic-companion-design-review.md). Actual speech/listening, linguistic accuracy, device acceptance and release remain separate gates.
 
-The [role/test review](reviews/2026-11-21-m10-semantic-companion-design-review.md)
-maps proposed bounds and executable expectations to C01–C07.
+A companion connects shared authored events to language-specific phrase entrances, then to an existing SVG/browser composition. Replacing an English take changes its consuming visual clock while preserving the event IDs and the unchanged Spanish companion. Audio-only production remains independent of picture inputs.
 
-A companion connects the same authored event intent to language-specific measured phrases, then to an existing SVG/browser composition. An audio edition remains useful and independently producible when no companion is requested.
+## Two events, two language clocks
 
-## Reuse before adding an interface
-
-| Existing code | Responsibility retained |
-| --- | --- |
-| `spoken_programme::compiler::{compile_with_inputs, CompiledEdition}` | Recompile exact selected takes, script/alignment subjects, joins and placed markers using the existing programme clock |
-| `AlignmentEvidence`, `WordBinding`, `check_alignment` | Keep word evidence, selected-script text, source recording and phrase-marker ranges bound together; engineering markers do not establish spoken words |
-| `spoken_programme::checker::{check, CheckedPackage}` | Independently check the produced audio and access package against original source inputs and the caller-bound runtime |
-| `browser_composition::source_clock_event` | Validate exact clock/audio/evidence subjects and derive shared frame boundaries once with integer arithmetic |
-| `reel.presentation-source-clock.v1` | Existing audio hash, sample rate/count, evidence reference and named sample anchors |
-| `tig_browser::{Prepared, capture, render::native}` | Existing admitted resources, no-network capture and bounded Windows worker; preserve host enrollment, held inputs/programs and cancellation requirements |
-| Existing transcript/access outputs | Preserve wording and distinguish authored script, recognition evidence and engineering signals; a diagram is not a substitute for text access |
-
-Sources: [spoken compiler](../src/spoken_programme/compiler.rs), [independent checker](../src/spoken_programme/checker.rs), [measured browser clock](browser-source-clock.md), [authored native triggers](authored-native-triggers-v1.md), [native browser worker](../src/tig_browser/render.rs). Do not route this through the unbounded legacy browser renderer or start a production cache/daemon to make a fixture work.
-
-## Two events, independently resolved in two languages
-
-The original authored intent contains two event IDs. Each language supplies its own exact phrase and explicit occurrence where necessary. A performance replacement changes derived sample/frame positions, not the event ID or the author's visual intention.
-
-| Event | English phrase | Spanish phrase | Planned EN sample / frame | Planned ES sample / frame |
+| Shared event | English phrase | Spanish phrase | EN sample / frame | ES sample / frame |
 | --- | --- | --- | --- | --- |
 | `follow-rhythm` | “Now follow the rhythm” | “Ahora sigue el ritmo” | 48000 / 24 | 60000 / 30 |
 | `begin-again` | “Then begin again” | “Después vuelve a empezar” | 96000 / 48 | 120000 / 60 |
 
-This is a hand-derived **test-design oracle**, not measured speech. At 48 kHz and 24 fps, these positions are respectively 1/2 seconds in English and 1.25/2.5 seconds in Spanish. The eventual fixture must preserve actual alignment subjects and exact source words; it must never describe a synthetic signal as a recording of these phrases. Actual speech/listening acceptance remains an explicitly separate gate.
+This hand-derived oracle uses 48 kHz audio and 24 fps: the English entrances are at 1/2 seconds and the Spanish entrances at 1.25/2.5 seconds. The lexical metadata cases check the phrases through the existing compiler and phrase matcher. The render fixtures use **synthetic signals and explicitly labeled engineering markers** at those positions. They do not claim that synthetic PCM contains these words.
 
 ```mermaid
 flowchart LR
     accTitle: Independent language clocks drive shared visual intent
-    accDescr: The same two authored events resolve through exact English and Spanish phrase bindings into different sample and frame positions. Existing checked audio and text access remain independent of the visual companion.
-    intent["Authored events<br/>follow-rhythm · begin-again"] --> en["English phrase bindings<br/>exact selected take + alignment"]
-    intent --> es["Spanish phrase bindings<br/>its own take + alignment"]
-    en --> ec["Checked EN programme clock<br/>sample anchors → frame 24 / 48"]
-    es --> sc["Checked ES programme clock<br/>sample anchors → frame 30 / 60"]
-    ec --> browser["Existing admitted SVG/browser adapter"]
+    accDescr: Two authored events resolve through exact English and Spanish phrase bindings into different sample and frame positions. Checked audio and text access remain independent of the visual companion.
+    intent["Authored intent<br/>follow-rhythm · begin-again"] --> en["English selected take<br/>its original phrase evidence"]
+    intent --> es["Spanish selected take<br/>its own phrase evidence"]
+    en --> ec["Checked EN clock<br/>frames 24 / 48"]
+    es --> sc["Checked ES clock<br/>frames 30 / 60"]
+    ec --> browser["Existing admitted SVG adapter<br/>red → green → blue fixture"]
     sc --> browser
-    audio["Checked audio + transcript<br/>independent audio-only output"] --> ec
+    audio["Checked audio + text access<br/>independent audio-only output"] --> ec
     audio --> sc
 ```
 
-Resolve a phrase with the existing `reel_assembly::scene_authoring::spoken_phrase_sample` operation against the existing word-evidence representation. The binding must select exactly one language/cue/performance/marker occurrence; repeated phrases without explicit disambiguation refuse. Do not infer timing from translated character counts, copy EN timing into ES or trust a receipt's own replacement hashes as the original oracle.
+For the replacement English fixture, the first entrance moves from sample 48000/frame 24 to sample 50000/frame 25. The second entrance stays at frame 48. Its checked audio and consuming evidence change; Spanish clock/evidence bytes remain identical. No translated character-count estimate or copied English timing is used.
 
-The first visual profile should use an opaque original SVG with three simple states and two visible changes. No inferred alpha, generative asset work, new compositor, camera grammar or animation engine belongs in M10. Existing SVG frame listeners consume the validated source-clock event. If a later profile supports overlays, require an explicitly compatible alpha source and exact derivation evidence.
+## What the bridge reuses
 
-## Qualification obligations before implementation
-
-| ID | Evidence required |
+| Existing interface | Responsibility retained |
 | --- | --- |
-| C01 | Two authored IDs map to distinct EN/ES phrases and independently derived sample/frame positions. Test exact source subject, script/observation word sequence and marker word ranges through the existing compiler; preserve uncertainty about actual acoustic word fidelity. |
-| C02 | Replace only the EN take/alignment. Recompile and independently check audio; EN consuming clock/picture/text timing changes, ES and event intent remain unchanged. Reopening the old companion uses the old retained subjects; missing bytes refuse. |
-| C03 | Explicit real native browser qualification captures the before/between/after SVG states. Independently inspect decoded frames around both boundaries and decoded PCM against the checked audio. A successful metadata plan alone is insufficient. Public synthetic signals may qualify clock/picture/PCM plumbing, with no spoken-performance claim. |
-| C04 | Missing/ambiguous phrases or markers, wrong language/take, stale alignment/audio/clock, unknown visual input and changed SVG/evidence refuse. Include a changed receipt/hash case checked against original caller-held controls. |
-| C05 | Preserve exact language text and usable transcript/caption access. Test silent-context textual access and distinguish engineering-signal labels from spoken captions. Actual font size, reading pace, language and device review remain open until inspected. |
-| C06 | Fix bounded geometry/frame count, input/control bytes, workspace/output/process limits and cooperative deadlines before the first render. Exercise cancellation after output reservation, no-clobber output and cleanup of owned intermediates. No real cache initialization, census, hydration, upload, selection or eviction. |
-| C07 | Portable summaries omit private titles, phrases, speaker/authority identities, paths and private hashes. Original scope declarations stay private and pinned; technical success never grants voice, translation or release authority. |
+| `spoken_programme::compiler` | Recompile exact selected takes, language/script/alignment subjects, joins and placed markers on the programme clock |
+| `checker::check` and sealed `CheckedPackage::compiled_plan()` | Independently check original PCM and expose the plan recomputed from caller-held original controls |
+| `checker::verify_access` | Verify the original access manifest and transcript bytes; engineering signals retain a signal label instead of a spoken transcript |
+| `scene_authoring::spoken_phrase_sample` | Match the language-local phrase against original source/word evidence; require an occurrence when repeated phrases are ambiguous |
+| `reel.presentation-source-clock.v1` and browser clock adapter | Bind exact audio/evidence hashes to named sample anchors and round shared frame boundaries once using integer arithmetic |
+| `tig_browser::{Prepared,capture,render::native}` | Use the existing admitted resource view, no-network browser capture, bounded native worker and original held input/program guards |
 
-Use an isolated M10 Cargo target, not M09's target directory. Enroll explicit runtime qualification in CI; ordinary ignored tests must not be mistaken for executed coverage. Keep required Linux/Windows checks and the under-30-minute CI objective visible. Set concrete profile limits and name executable tests in the review record before claiming C01–C07 satisfied.
+Sources: [spoken compiler](../src/spoken_programme/compiler.rs), [independent checker](../src/spoken_programme/checker.rs), [measured browser clock](browser-source-clock.md), [authored triggers](authored-native-triggers-v1.md), [native worker](../src/tig_browser/render.rs). The bridge adds no audio renderer, phrase matcher, compositor, player or asset store.
 
-## Role checklist findings
+## API and trust boundary
 
-This is one assistant applying repository checklists, not independent review.
+The module is `spoken_programme::companion`, behind `tig-publication`. `Inputs` borrows the original `checker::CheckRequest`, source/candidate/visual/access providers and exact access-manifest bytes. It accepts no arbitrary unverified compiled edition as checked evidence.
 
-- Animation: reuse one opaque SVG and its existing deterministic frame listener. Prove actual visible state changes; no diagram-only render claim.
-- Story: preserve the same two authored intentions across languages and take replacement.
-- Editor: language-local measured entrances control transitions; inspect boundary frames and preserve original leading silence/tails.
-- Sound: derive picture from checked audio without changing the selected signal or pause/overlap contract.
-- Platform/Audience: keep transcript/text access and audio-only delivery independent; device acceptance stays open.
-- Vocal Adaptation: bind exact phrases to original language evidence. Synthetic timing data is no proof of words, pronunciation, translation or listening approval.
-- Rights/Provenance: preserve original scopes, held subjects and private identities; do not activate a voice provider, manufacture consent or publish by default.
+| Operation | Behavior |
+| --- | --- |
+| `prepare(request, inputs, timeout)` | Recheck original audio/access, resolve the two per-edition bindings, validate the derived clock and seal expected private controls |
+| `produce(prepared, output, control)` | Recheck original inputs, reserve a new directory and write exact clock/evidence controls before the final private `companion.json` index |
+| `check(prepared, output, timeout)` | Re-derive from original controls and compare the complete output namespace and bytes; rewritten self-reported hashes are insufficient |
+| `validate_browser(prepared, edition, plan, files, timeout)` | Match an existing lowered browser plan and its actual original SVG/audio/control bytes to the sealed expected composition |
+| Windows `render(...)` | Recheck originals and the admitted plan, then delegate one edition to the existing bounded native worker |
 
-Open implementation decision: choose the narrow companion API that bridges a recompiled/independently checked spoken package to the existing source-clock/browser adapter, without allowing an arbitrary unverified `CompiledEdition` or self-reported receipt to establish lineage. Document that seam and its trust boundary before runtime work.
-### Candidate seam from source inspection
+Original programme filenames and admitted asset IDs are separate namespaces. For example, `edition-000.wav` may be admitted as `speech/en/opening`. The bridge matches SHA-256 and byte length, then verifies actual provider bytes; original references stay unchanged in the private evidence. Matching content grants no admission or authority by itself.
 
-The independent checker already recompiles `CompiledPlan` from the original
-`CheckRequest` and source inputs, then compares the exact supplied plan bytes
-before checking the PCM. Prefer exposing that internally computed plan through a
-read-only accessor on sealed `CheckedPackage`, rather than accepting a freely
-constructed compiled edition or decoding a receipt as an authority.
+Each stable event has one explicit binding per selected edition. A `phrase` binding requires original word evidence, a named phrase marker, exact phrase and optional occurrence. An `engineering-marker` binding requires an engineering signal and grants no spoken-word claim. A missing or ambiguous performance/marker, mismatched language closure, stale source or coincident/reversed transition frame refuses.
 
-A companion preparation operation can retain the original borrowed check request,
-source/candidate providers and exact visual pins. Preparation and reopening must
-run the independent checker, then derive events from its recomputed plan and the
-original pinned alignment. Existing `spoken_phrase_sample` resolves exact
-language-local phrases and repeated occurrences. Convert the resolved source
-entrance through the selected take placement, then emit the existing browser
-source-clock vocabulary bound to the checked edition WAV. Validate the resulting
-clock with the existing adapter before a worker receives it.
+The private evidence preserves original per-edition recipe, text/access relationships, SVG and resolved events. Portable summaries contain counts and fixed flags; private words, titles, paths, speaker/authority names and hashes stay out. Acoustic fidelity, authority, device and release flags remain false.
 
-The initial exact-PCM profile should require the full selected audio duration to
-fit a whole number of picture frames. Refuse unsupported duration geometry rather
-than silently pad/trim the checked audio. Distinct language editions may have
-different frame counts. Frame/sample rounding is performed once by the existing
-clock adapter. Concrete API, resource caps and executable test names remain a
-pre-implementation obligation; this candidate seam is not implemented evidence.
+The caller admits exact generated controls through its existing asset system. The bridge checks an existing `tig_browser::Prepared`; it creates no asset checkpoint, asset definition, custody claim or production cache. New project definitions/versions remain Melena work. Validation and metadata publication start no browser, voice service, player, hydration, census, daemon or upload.
+
+## Bounded first profile
+
+- One original full-frame SVG, two stable event IDs and one or two selected editions; exactly four browser aliases: SVG, checked audio, source clock and evidence. Extra visual resources refuse in v1. No alpha-overlay support is inferred.
+- 48 kHz stereo PCM24, 24 fps, at most ten seconds/240 frames per edition and 640×360 pixels. Audio duration must fit a whole frame count; no implicit padding or trimming. An explicit full-source, zero-fade PCM window invokes the existing native exact-audio check.
+- Request/SVG/source-clock controls are at most 64 KiB each, evidence at most 1 MiB and the private index at most 1 MiB. Binding counts and bounded names/phrases are checked before request serialization or provider access. Original spoken checks retain their own input/processing limits.
+- Metadata operations have a maximum 30-second cooperative deadline. Each single-edition render has a 90-second cooperative aggregate: up to 30 seconds for checking and at most 60 for the existing worker. Two editions render in two separate operations, not an atomic two-language transaction.
+- Existing worker envelope: 2 GiB/64 browser processes, 256 MiB/four encoder processes, 128 MiB scratch and 16 MiB output; 30-second I/O wait, 32 resource requests, 4 MiB served bytes/messages, 4096 messages and 1 MiB PNG bounds. Audio is separately held. Trusted synchronous providers must return; host reservation/enrollment and byte/program guards remain required.
+
+Earlier companions reopen with their original retained inputs after a replacement is introduced. Missing retained bytes refuse without automatic restoration or source substitution. Both metadata and native outputs refuse overwrite and retain owned cleanup/cancellation behavior.
+
+The [role/test review](reviews/2026-11-21-m10-semantic-companion-design-review.md) maps C01–C07 to lexical metadata, real synthetic PCM, independently decoded native frames, replacement/retention, stale evidence, text access and interruption cases. Pixel/clock correctness is distinct from human musical, linguistic, visual, listening or device acceptance.

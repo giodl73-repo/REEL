@@ -8,6 +8,8 @@ use sha2::{Digest, Sha256};
 use crate::{cue_relative::CueMarker, scene_delivery::FileRef};
 
 pub mod checker;
+#[cfg(feature = "tig-publication")]
+pub mod companion;
 pub mod compiler;
 #[cfg(feature = "tig-history")]
 pub mod history;

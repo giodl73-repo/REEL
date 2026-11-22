@@ -1,59 +1,81 @@
-# M10 semantic companion: pre-implementation review
+# M10 semantic companion: source, role and qualification review
 
-Status: design only, based on merged M09 PR #394 (`b95a6c2`). M10 runtime implementation and qualification remain open. This is one assistant applying `.roles` checklists, not independent review or creative approval. The [contract draft](../semantic-visual-companion-v1.md) records source inspection and the hand-derived EN/ES example.
+Status: implementation under qualification on merged M09 `b95a6c2`, [PR #395](https://github.com/giodl73-repo/REEL/pull/395). Eight explicit runtime cases pass locally. Lexical unit tests, regression/lint completion and required hosted qualification remain to be recorded. This is one assistant applying repository `.roles` checklists, not independent review or creative approval.
 
-## Scoped API decision
+The [illustrated contract](../semantic-visual-companion-v1.md) describes the language example, supported API, bounds and evidence distinctions.
 
-Retain the original `checker::CheckRequest`, source/candidate providers and exact visual/access pins. The independent checker already recomputes the plan before checking audio. A read-only accessor on its sealed `CheckedPackage` is the preferred seam; do not accept an arbitrary caller-created `CompiledEdition` as checked evidence. Reuse `spoken_phrase_sample` and the existing browser source-clock adapter. No new phrase matcher, audio renderer, compositor or cache facade.
+## Source audit and selected boundary
 
-Before runtime implementation, finalize concrete borrowed types and identify exactly which original pins are rechecked on reopen and after cancellation callbacks. No whole-filesystem fallback or self-reported receipt may establish the original expected subject. A checked metadata relationship does not prove that a recording acoustically contains words.
+The independent spoken checker already recompiles the original controls before comparing the produced PCM. `CheckedPackage::compiled_plan()` now exposes that internally recomputed plan through a read-only accessor. No freely constructed compiled edition or self-reported receipt establishes the original subject.
 
-## Proposed fixed qualification profile
+`companion::Inputs` borrows the original `CheckRequest`, source/candidate/visual/access providers and access-manifest bytes. `prepare`, `produce` and `check` recheck those original relationships. The native path validates an existing lowered browser plan and its actual provider bytes; it creates no asset definitions, cache engine, checkpoint or custody claim. Existing host enrollment, capacity and held byte/program guards remain required. Original programme filenames and admitted asset IDs are distinct namespaces: SHA-256/length and actual bytes establish object correspondence, while original references remain unchanged. The browser fixtures intentionally use different SVG/audio asset IDs. A self-consistent different admitted audio object still refuses against original controls.
 
-These are proposed limits, not implemented promises. Confirm them against existing worker invariants before its first fixture:
+Phrase bindings reuse `spoken_phrase_sample` against original word evidence and the named phrase marker, then apply the real compiler's selected-take placement. Engineering markers require an engineering signal and explicitly claim no words. These paths are intentionally separate: lexical fixtures have metadata only and no audio files; real PCM/render fixtures keep engineering-signal classification.
 
-- One original SVG, two authored event IDs, one or two selected editions, at most two language bindings per event.
-- 48 kHz stereo PCM24 checked programme, 24 fps, at most ten seconds per edition; full audio duration must equal an integer frame count. No implicit padding, trimming, fades or resampling.
-- SVG/control resources at most 64 KiB each; source clock at most its existing 64 KiB; clock evidence at most its existing 1 MiB. Original spoken checks retain their own declared bounds.
-- At most 240 picture frames and 640×360 canvas pixels. The synthetic pixel-oracle fixture uses a much smaller canvas and shorter clock; it makes no readable-device or spoken-performance claim.
-- Reuse the existing qualified Windows fixture envelope: 2 GiB browser / 256 MiB encoder memory, at most 64 browser / four encoder processes, 128 MiB workspace and at most 16 MiB companion output. Each existing worker invocation has a 60-second deadline and 30-second I/O wait; cold hosted Edge startup is already documented in its fixture. Metadata operations retain a separate 30-second cooperative deadline. Do not label the multi-operation package as globally 30 seconds. Finalize an aggregate package deadline before implementation. No invocation without explicitly bound programs and held inputs.
-- Index publication uses the existing owned no-clobber writer and final marker. No production cache, daemon, hydration, census, upload, deletion or player starts.
+The first native profile is a full-frame SVG with two events, one/two editions, 48 kHz stereo PCM24, 24 fps, ten seconds/240 frames and at most 640×360 pixels. Its explicit full-source zero-fade window reuses the native exact-PCM comparison before output publication. No implicit padding, trimming or alpha-overlay claim.
 
-If a proposed bound conflicts with the current worker, record the conflict and revise this contract before execution. Do not enlarge it silently to pass a fixture.
+Metadata operations have a 30-second cooperative deadline. One single-edition render has a 90-second cooperative aggregate, with at most 60 seconds for the existing worker. Two language renders are separate operations. Existing worker limits retain 2 GiB/64 browser processes, 256 MiB/four encoder processes, 128 MiB scratch, 16 MiB output and 30-second I/O wait. Cold hosted Edge startup is already accounted for in the existing fixture envelope. These are host/operation bounds, not a new sandbox or memory-custody guarantee.
 
-## Requirements and expected test names
+## Requirement-to-test map
 
-| ID | Planned executable case | Independent expectation |
-| --- | --- | --- |
-| C01 | `bilingual_phrase_clock_uses_sealed_checked_package` | Same two event IDs; exact EN phrases at samples 48000/96000, frames 24/48; ES at 60000/120000, frames 30/60. Original take, language, script, observation and marker ranges must match through existing compiler/phrase resolution. Synthetic metadata is labeled as such. |
-| C02 | `changing_english_take_moves_only_english_companion` | A replacement EN recording/alignment changes EN consuming hashes/times and leaves ES/event intent unchanged. Keep all old and new subjects distinct. |
-| C03 | `real_native_bilingual_svg_transitions_keep_exact_pcm` | Explicit enrolled browser/FFmpeg fixture inspects independently decoded frames before/between/after both transitions and exact decoded PCM. Keep synthetic signal classification; do not manufacture recorded-speech evidence. |
-| C04 | `ambiguous_phrase_stale_subject_and_missing_visual_refuse` | Diagnostic classes for repeated phrase without occurrence, unknown marker/edition, wrong language/take, stale alignment/audio, missing SVG, unsupported geometry and nonintegral duration. |
-| C04 | `altered_clock_receipt_cannot_replace_original_alignment` | Rewritten clock and receipt hashes still fail against original caller-held controls and regenerated expected anchors. |
-| C05 | `companion_text_access_preserves_language_and_signal_basis` | Exact Spanish/English text and independent transcript/caption access; engineering signals never become spoken captions. A pixel fixture does not establish readable typography or human accessibility acceptance. |
-| C06 | `interrupted_companion_publication_is_owned_and_no_clobber` | Cancellation after reservation leaves no committed marker, existing output is untouched, deadline/bounds failures do not start work, only owned intermediates are cleaned. |
-| C06 | `earlier_companion_reopens_with_original_inputs_after_replacement` | Re-prepare/reopen retained v1 after v2 with original source directories absent; exact retained callbacks suffice, missing v1 bytes refuse, v2 still checks. Test provider is not a production store/custody claim. |
-| C07 | `portable_companion_summary_omits_private_subjects` | Canary phrases, titles, speaker/authority names, paths and private hashes absent; acoustic/linguistic/authority/device/release flags remain false. |
-
-The names above are planned, not executed tests. Runtime qualification must explicitly run real browser tests in CI; no successful skip or ordinary ignore establishes coverage. Final source and test names must agree before merge.
-
-## Checklist findings and remaining gates
-
-| Lens | Finding |
+| IDs | Actual cases and independent oracle |
 | --- | --- |
-| Animation | Existing SVG/frame-event pipeline is sufficient for three deterministic visual states. Actual decoded frames must prove two visible transitions. |
-| Story | Event IDs preserve intent across independently phrased languages. Source text and narrative order stay upstream. |
-| Editor | Keep leading silence, tails, language-specific pacing and the original audio signal; derive frame boundaries once from integer samples. |
-| Sound | Independent PCM checking must stay upstream of picture. Do not make an audio-only package depend on visual sources. |
-| Platform/Audience | Export text access alongside the companion. Font size, reading pace and real device acceptance remain unperformed. |
-| Vocal Adaptation | Reuse exact source/word matching; timing is not translation or listening approval. Need actual source recordings for a real spoken checkpoint. |
-| Rights/Provenance | Keep immutable scopes and private subjects separate from portable counts/flags. No inferred voice, language, performance or release authority. |
+| C01 | `lexical_metadata_resolves_independent_english_and_spanish_entrances` checks original phrases, missing/ambiguous phrases and explicit occurrences. `lexical_metadata_uses_real_compiler_take_placements_without_media` uses the real compiler, including a 2000-sample source trim, while its provider refuses media access. Both are lexical metadata only. `bilingual_markers_use_sealed_audio_and_keep_text_access_signal_basis` independently checks actual produced synthetic PCM/access with engineering labels. |
+| C02 | `changing_english_take_moves_only_english_companion`: English clock/evidence changes, Spanish remains byte-identical and event IDs stay stable. The native case also renders replacement English and expects frame 25 instead of 24. |
+| C03 | `native::real_native_bilingual_svg_transitions_keep_exact_pcm_and_follow_replacement`: independent RGB decode checks every pixel/frame against red/green/blue states; independent PCM decode compares the original fixture samples. |
+| C04 | `invalid_bindings_stale_audio_text_and_interrupted_publication_refuse` checks closure, edition/performance/marker identity, evidence-kind confusion, geometry, coincident frames, stale text/audio and deadlines with diagnostic-class assertions. `altered_clock_and_browser_pins_cannot_replace_original_checked_controls` rejects fully rehashed false clock subjects and terminal provider refusal while the original SVG genuinely exists on disk. `nonintegral_duration_and_rehashed_false_candidate_receipt_refuse` checks whole-frame duration, byte bounds and independently detected wrong PCM despite rewritten audio/receipt hashes. |
+| C04 | `phrase_binding_cannot_turn_engineering_markers_into_spoken_words` refuses wrong observation kind and changed native word evidence. |
+| C05/C07 | Bilingual marker golden preserves the exact authored Spanish/English text separately from checked engineering access labels. It asserts the exact signal label, null spoken text basis, private canary absent from summary and all acoustic/authority/device/release flags false. |
+| C06 | Invalid/publication case cancels after directory reservation and leaves no committed marker or owned directory. `native::native_companion_cancellation_prevents_final_output` interrupts after a worker intermediate appears and verifies cleanup. Native/golden cases refuse overwrite and preserve original output bytes. |
+| C06 | `earlier_companion_reopens_with_retained_inputs_after_replacement` removes original source directories, re-prepares retained test bytes, reopens v1 after v2 and refuses missing v1 data while v2 still checks. The copied test provider is not a production asset store, migration or custody claim. |
 
-Unused score/arrangement and music-reconstruction lenses: no score alteration, transcription, note clock, stem repair or musical arrangement occurs in M10. The lesson score remains its already-checked upstream reference.
-Source-audit correction: the first proposed 256 MiB/eight-process browser and
-30-second render envelope was lower than the existing qualified native fixture.
-Inspection of `src/tig_browser/render/tests.rs::limits` found 2 GiB/64 browser
-processes and a 60-second worker deadline with 30-second I/O wait. The proposal
-above now retains those established bounds rather than inventing an unmeasured
-startup promise. Aggregate two-language operation limits remain explicitly open
-before runtime work; this draft does not claim completed resource qualification.
+The hand-derived native visual oracle is:
+
+| Edition | Red frames | Green frames | Blue frames | Source sample entrances |
+| --- | --- | --- | --- | --- |
+| English v1 | [0,24) | [24,48) | [48,72) | 48000 / 96000 |
+| Spanish v1 | [0,30) | [30,60) | [60,84) | 60000 / 120000 |
+| English replacement | [0,25) | [25,48) | [48,72) | 50000 / 96000 |
+
+These are synthetic signal and SVG fixtures, not recordings of the example phrases. The separate lexical metadata oracle uses the exact English/Spanish phrases in the contract.
+
+## Checklist findings
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Animation | Existing SVG/frame-event pipeline produces three visible states. Actual decoded pixels, rather than an index or render status, are the oracle. No new compositor or animation grammar. |
+| Story | Two authored event IDs preserve intent across independently phrased languages and take replacement; original wording/order stays upstream. |
+| Editor | Original sample positions resolve through selected-take placement and one shared rounding operation. Distinct interior frames are required; no silent padding or reordered event intent. |
+| Sound | Independently checked audio stays upstream of picture. The explicit zero-fade whole-source window checks exact PCM before publication; picture is unnecessary for audio-only production. |
+| Platform/Audience | Verify original transcript/access bytes. Engineering sources remain labeled signals. Typography, reading pace and real-device acceptance are unperformed. |
+| Vocal Adaptation | Exact phrases match source/word metadata; engineering markers cannot masquerade as words. No synthetic signal is treated as recorded speech or proof of pronunciation/translation/listening acceptance. |
+| Rights/Provenance | Preserve original pins/scopes, held subjects and private identities. Portable counts/flags grant no voice, language, performance or release authority. No real project media/provider/cache was used. |
+
+Unused score/arrangement and music-reconstruction lenses: no score alteration, transcription, note clock, stem repair or musical arrangement occurs in M10. The existing lesson score remains its upstream checked reference.
+
+## Local execution and hosted enrollment
+
+Exclusive Cargo target: `F:/tmp/reel-builds/media-m10-isolated`; Windows/Rust 1.98.0, dev/test debug symbols disabled. All-feature type checking passed.
+
+- Six explicit metadata/runtime cases: **6 passed, 0 failed, 0 ignored**, 167.45 seconds.
+- Two explicit native cases: **2 passed, 0 failed, 0 ignored**, 144.93 seconds. Three SVG/video outputs covered English, Spanish and replacement English. Every inherited artifact fixture retained its original 60-second outer budget.
+- Lexical unit results, relevant regressions, final all-target/all-feature Clippy and hosted outcomes remain pending.
+
+CI enrolls all six metadata cases in Linux/Windows core shard 2 and both native cases in Windows core shard 2, with explicit browser/FFmpeg enrollment. Ordinary ignores, absent runtimes and metadata planning alone cannot establish executed native qualification. Existing reading, lesson, native/media and required Rust/FFmpeg checks remain in place.
+
+Actual acoustic/linguistic accuracy, human listening, visual/device acceptance, authority, selection and project adoption remain separate and unperformed. This engineering qualification does not close M06's real spoken-performance listening gate.
+## Runtime-hash qualification performance finding
+
+The initial wider reading regression reached its content assertions but three
+cases failed their inherited 60-second fixture guard at cleanup. That guard is
+unchanged. The unoptimized 46,131,200-byte CLI runtime-identity probe took 2.97s
+before its expected missing-alignment refusal; platform SHA-256 of the same file
+took 0.50s. No probe output was created.
+
+The dev/test profiles now optimize only the SHA-2 dependency at level 3. No
+application optimization, assertion removal, identity caching or test skipping
+is introduced. Every runtime/input identity is still read and checked. Repeated
+byte verification therefore retains its semantics while avoiding an unnecessary
+cryptographic debug-build cost. Final reading/lesson/companion reruns and hosted
+results remain required before merge; the earlier failed timing run is not a
+passing qualification claim.
