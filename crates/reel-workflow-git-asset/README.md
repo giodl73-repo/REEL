@@ -1,9 +1,11 @@
 # Public git-asset workflow adapter (experimental)
 
 An isolated Rust integration for REEL's `publication::InputReader`. It pins
-public git-asset at `3ddeab5572f9479475134e6b7334a26effcb9277`, with its own
+the candidate public git-asset at `0ccb137cf5a78416e780f8a3372017f642a5cb71`, with its own
 Cargo.lock. It preserves the existing private vendor and native workflow route.
-No existing job is upgraded or rebound by adding this package.
+No existing job is upgraded or rebound by adding this package. This candidate
+pin is under source/consumer qualification; do not activate a production route
+from this update.
 
 1. Create `git_asset::source::Repository` with an explicit Git executable,
    repository and metadata listing/command limits.
@@ -257,3 +259,28 @@ foreign bytes, stale directory identity, junction refusal, scoped exclusion,
 source corruption, exhausted slots and cooperative time refusal. The native
 ordinary/bare input fixtures compose exact historical resolution, managed reads,
 durable claims and owned streaming preparation/reopen. No renderer runs.
+
+
+## Exact original source-generation use
+
+`Handle::hold(namespace)` requires the original admitted Select receipt, owner,
+source revision and full selected Version, then returns the actual SDK source-use
+guard. Equal bytes/revision from another operation do not satisfy the original
+handle. Keep the guard alive for active work; new source mutations return Busy.
+It performs no admission or publication. Drop/process exit releases only live
+use; durable claims remain, and cancellation stays explicit. Old namespaces
+return Unsupported and are not upgraded. This API does not authenticate an owner,
+bind a native pool's actual roster root, or verify/retain payload bytes. Complete
+ProtectedJob/Lifecycle still requires those separate joined protections and
+original task/control retention. Retained-result verification after settlement
+must not revive an old active generation.
+
+
+`GuardedInputs::protect_claim(handle, metadata, limits)` consumes the already
+verified input reader, repeats actual roster/policy/coverage checks, and acquires
+the exact original claim's source use at that configured root. ProtectedInputs
+owns both source-generation and actual managed byte/config/namespace guards until
+Drop; it still implements InputReader with the original byte budget. It accepts
+no caller substitute namespace path and performs no claim admission or payload
+acquisition. All named inputs must already be held. This is a protection bridge,
+not complete task/request/control retention or retained-result Lifecycle.

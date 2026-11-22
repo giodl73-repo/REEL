@@ -13,10 +13,10 @@ description = "Isolated public git-asset workflow preparation, claims and retain
 reel-workflow = { path = "../reel-workflow" }
 reel-assets = { path = "../reel-assets" }
 reel-publication = { path = "../reel-publication" }
-git-asset = { git = "https://github.com/giodl73-repo/git-asset", rev = "3ddeab5572f9479475134e6b7334a26effcb9277", features = ["assets", "annex-publish"] }
-git-asset-core = { git = "https://github.com/giodl73-repo/git-asset", rev = "3ddeab5572f9479475134e6b7334a26effcb9277" }
-git-asset-store = { git = "https://github.com/giodl73-repo/git-asset", rev = "3ddeab5572f9479475134e6b7334a26effcb9277" }
-git-asset-model = { git = "https://github.com/giodl73-repo/git-asset", rev = "3ddeab5572f9479475134e6b7334a26effcb9277" }
+git-asset = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71", features = ["assets", "annex-publish"] }
+git-asset-core = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71" }
+git-asset-store = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71" }
+git-asset-model = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.11.0"

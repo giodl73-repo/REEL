@@ -18,7 +18,7 @@ pub mod candidates;
 pub mod claims;
 pub mod workspace;
 
-pub const SDK_COMMIT: &str = "3ddeab5572f9479475134e6b7334a26effcb9277";
+pub const SDK_COMMIT: &str = "0ccb137cf5a78416e780f8a3372017f642a5cb71";
 fn error(kind: ErrorKind, code: &str) -> Error {
     Error {
         kind,
@@ -329,6 +329,40 @@ impl GuardedInputs {
         nodes: &mut git_asset_store::metadata::MetadataReader,
         limits: &git_asset_store::protection::Limits,
     ) -> Result<claims::Status> {
+        let (mut namespace, remaining) = self.claim_namespace(handle, nodes, limits)?;
+        handle.admit(&mut namespace, nodes, &remaining)
+    }
+    /// Consume actual managed input guards and hold the original admitted source
+    /// generation at the pool's real roster location. Does not admit or publish.
+    pub fn protect_claim(
+        self,
+        handle: &claims::Handle,
+        nodes: &mut git_asset_store::metadata::MetadataReader,
+        limits: &git_asset_store::protection::Limits,
+    ) -> Result<ProtectedInputs> {
+        let started = std::time::Instant::now();
+        let (mut namespace, _) = self.claim_namespace(handle, nodes, limits)?;
+        let generation = handle.hold(&mut namespace)?;
+        if started.elapsed().as_millis() >= u128::from(limits.millis) {
+            return Err(error(
+                ErrorKind::Budget,
+                "public-git-asset-source-use-budget",
+            ));
+        }
+        Ok(ProtectedInputs {
+            inputs: self,
+            _generation: generation,
+        })
+    }
+    fn claim_namespace(
+        &self,
+        handle: &claims::Handle,
+        nodes: &mut git_asset_store::metadata::MetadataReader,
+        limits: &git_asset_store::protection::Limits,
+    ) -> Result<(
+        git_asset_store::source_claims::admission::Namespace,
+        git_asset_store::protection::Limits,
+    )> {
         use git_asset_core::tree::{Tree, TreeError, TreeLimits};
         use git_asset_store::source_claims::{Kind, admission::Namespace};
         let start = std::time::Instant::now();
@@ -354,7 +388,7 @@ impl GuardedInputs {
             .iter()
             .find(|m| m.minimum.identity() == &member.namespace)
             .ok_or_else(|| error(ErrorKind::Denied, "public-git-asset-claim-roster"))?;
-        let mut namespace =
+        let namespace =
             Namespace::open(&location.root, &location.minimum).map_err(claims::admission_error)?;
         let places = namespace
             .policy()
@@ -410,6 +444,18 @@ impl GuardedInputs {
         if remaining.reads == 0 || remaining.read_bytes == 0 || remaining.millis == 0 {
             return Err(error(ErrorKind::Budget, "public-git-asset-claim-budget"));
         }
-        handle.admit(&mut namespace, nodes, &remaining)
+        Ok((namespace, remaining))
+    }
+}
+/// Owns actual managed byte/config/namespace guards together with the exact
+/// original source generation. No serialization, clone or timer-based release.
+/// Complete task/control retention and retained publication remain separate.
+pub struct ProtectedInputs {
+    inputs: GuardedInputs,
+    _generation: git_asset_store::source_claims::admission::source_use::Use,
+}
+impl InputReader for ProtectedInputs {
+    fn read(&mut self, artifact: &Artifact, max_bytes: u64) -> Result<Vec<u8>> {
+        self.inputs.read(artifact, max_bytes)
     }
 }
