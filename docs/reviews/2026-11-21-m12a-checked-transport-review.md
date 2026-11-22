@@ -159,3 +159,16 @@ regressions remain recorded at the previous implementation checkpoint; the
 complete hosted suite must qualify the final compatibility head. No producer,
 PCM, source-check, deadline, queue or callback rule changed. The first cycle is
 allowed to finish; no manual cancellation or premature merge is used.
+
+### Merged qualification
+
+[PR #400](https://github.com/giodl73-repo/REEL/pull/400) merged as
+`f6d079cf94058b2231819fedd42787856787560f`, from tested head
+`d844abeafa65fe067a8e590868d56fecc75ce90d`. Both trees are
+`bfcd99fa0ae84fe7bd271525329ea814347e6f83`.
+[Current-base CI](https://github.com/giodl73-repo/REEL/actions/runs/44988336061)
+passed in 16m40s;
+[assembly/source qualification](https://github.com/giodl73-repo/REEL/actions/runs/44988336013)
+passed in 6m09s. Hosted logs confirmed ten unit and six explicitly executed
+installation cases on each OS. Native adapter and actual station gates remain
+separate; this merges only M12a.

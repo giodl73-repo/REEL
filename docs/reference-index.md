@@ -145,6 +145,7 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 - [Source-bound lesson and rehearsal package](lesson-rehearsal-v1.md)
 - [Semantic visual companions](semantic-visual-companion-v1.md)
 - [Single-device offline installation contract](offline-installation-v1.md)
+- [Native endpoint metadata and callback ownership](installation-native-foundation-v1.md) — M12b.1 software foundation; playback/operator loop and station qualification remain open.
 - [Native short editions](NATIVE-SONG-EDITION.md)
 - [Original-song masked materialization](original-song-masked-repair.md)
 - [Bounded provider execution from original song evidence](original-song-repair-provider.md)

@@ -82,5 +82,3 @@ checklists to these boundaries; no independent review or approval is claimed.
 Animation remains unused for this audio/text profile. The source findings above
 are requirements for implementation, not reasons to widen M11's limits or to
 claim a qualified installation from M12a's portable tests.
-
-
