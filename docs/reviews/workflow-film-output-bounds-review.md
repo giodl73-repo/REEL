@@ -42,3 +42,13 @@ film. Metadata tests with large byte counts and the existing streamed-file test
 are not proof of that native publication lifecycle. The larger native fixture is
 an open qualification gate; keep this source PR draft until it passes. Full
 Season 5 resource/master and interruption qualification remains separately open.
+
+The first actual fixture produced 384,177,485 payload bytes, with a largest
+artifact of 187,625,580 bytes. Native publication, retained acknowledgement and
+technical completion were recorded. Replaying after deliberate local result
+metadata loss then exposed a remaining generic allowance in `resume`. That path
+now decodes the checked original native controls and releases their object gates
+before reconciling retention with the same film allowance. The preserved original
+runtime, attempt, registration and retained owner are used by an explicit
+continuation; no fresh render/admission is started. Completion of that continuation
+and guarded close remains required before marking this qualification passed.
