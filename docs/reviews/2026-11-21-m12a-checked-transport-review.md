@@ -88,6 +88,20 @@ results, warnings-denied Clippy, formatting, actionlint and hosted evidence will
 be recorded after execution. Existing ordinary media, reading, lesson, companion
 and required Rust/FFmpeg checks remain enrolled. No timeout is relaxed.
 
+Reproduce the focused gates from the repository root (set an exclusive Cargo
+target and `CARGO_PROFILE_DEV_DEBUG=0` / `CARGO_PROFILE_TEST_DEBUG=0` first):
+
+```text
+cargo test --locked --all-features --lib spoken_programme::installation:: -j2 -- --test-threads=1
+cargo test --locked --all-features --test spoken_programme_media installation:: -j2 -- --ignored --test-threads=1
+cargo test --locked --all-features --test spoken_programme -j2
+cargo test --locked --all-features --test spoken_programme_media -j2 -- --test-threads=1
+cargo clippy --locked --all-targets --all-features -j2 -- -D warnings
+```
+
+These commands open no sound device. Runtime/device tests for the later gates
+must have their own explicit enrollment and cannot be inferred from this run.
+
 Earlier checkpoints: eight initial unit cases passed, then nine cases passed
 after isolating the PCM24 rail oracle. Six original-input cases passed in
 29.79s, including the real concurrent-check/Stop handoff. The current
@@ -129,3 +143,19 @@ before hosted qualification, preserving the separate workflow lane's changes.
 Required current-base CI must pass before merge; its live checks and exact head
 are linked from the PR. M12b/c and all device/listening/authority gates remain
 open regardless of those software results.
+
+### Hosted compiler compatibility follow-up
+
+The first hosted cycle used Rust 1.100.0; local qualification used 1.98.0. Its
+warnings-denied Clippy rejected `AtomicU64::fetch_update`, renamed/deprecated
+by the newer standard library. Replace that convenience method with a checked
+`compare_exchange_weak` loop: retain unique nonwrapping session identities and
+the declared Rust 1.85 compatibility, without suppressing warnings.
+
+After that change, all ten focused unit cases passed again (0.02s), all six
+explicit original-input cases passed again (23.79s), and all-target/all-feature
+warnings-denied Clippy passed (45.40s). The earlier 44 declaration/media
+regressions remain recorded at the previous implementation checkpoint; the
+complete hosted suite must qualify the final compatibility head. No producer,
+PCM, source-check, deadline, queue or callback rule changed. The first cycle is
+allowed to finish; no manual cancellation or premature merge is used.

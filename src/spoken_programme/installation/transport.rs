@@ -9,6 +9,26 @@ use std::{
 
 static NEXT_SESSION: AtomicU64 = AtomicU64::new(1);
 
+fn next_session() -> Outcome<u64> {
+    // Compatible with the declared MSRV and newer toolchains; neither wrap the
+    // identity counter nor rely on a renamed/deprecated update convenience API.
+    let mut current = NEXT_SESSION.load(Ordering::Relaxed);
+    loop {
+        let next = current
+            .checked_add(1)
+            .ok_or(TransportError::SessionExpired)?;
+        match NEXT_SESSION.compare_exchange_weak(
+            current,
+            next,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return Ok(current),
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 pub enum State {
     Ready,
@@ -140,9 +160,7 @@ impl Transport {
             return Err(TransportError::SessionExpired);
         }
         Ok(Self {
-            session: NEXT_SESSION
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
-                .map_err(|_| TransportError::SessionExpired)?,
+            session: next_session()?,
             samples,
             transcript,
             seal,
