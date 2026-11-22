@@ -36,8 +36,8 @@ fn save(root: &Path, name: &str, raw: &[u8]) -> FileRef {
     fs::write(root.join(name), raw).unwrap();
     pinned(name, raw)
 }
-struct ReadingFixture {
-    f: Fixture,
+pub(super) struct ReadingFixture {
+    pub(super) f: Fixture,
     assets: Assets,
     dialogue: PathBuf,
     access: PathBuf,
@@ -46,7 +46,7 @@ struct ReadingFixture {
     request: Request,
 }
 impl ReadingFixture {
-    fn new(version_two: bool) -> Self {
+    pub(super) fn new(version_two: bool) -> Self {
         let mut f = Fixture::new();
         if version_two {
             let module = &mut f.document.modules[1];
@@ -261,7 +261,7 @@ impl ReadingFixture {
             layered: &self.layers,
         }
     }
-    fn prepare(&self) -> Result<reading::Prepared<'_>> {
+    pub(super) fn prepare(&self) -> Result<reading::Prepared<'_>> {
         reading::prepare(self.request.clone(), self.inputs(), Duration::from_secs(30))
     }
 }

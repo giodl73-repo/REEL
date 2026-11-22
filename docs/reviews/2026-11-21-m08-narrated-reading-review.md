@@ -1,10 +1,11 @@
 # M08 narrated reading: checklist and qualification record
 
-Status: implementation in an isolated worktree; qualification in progress.
+Status: bounded engineering qualification completed; merged as
+[#391](https://github.com/giodl73-repo/REEL/pull/391), `d48c427`.
 M07 merged as `1db7679d26229984c4d57389544ea9883f08bb24` in
 [#387](https://github.com/giodl73-repo/REEL/pull/387), after
 [CI 44933453094](https://github.com/giodl73-repo/REEL/actions/runs/44933453094)
-passed in 21 minutes 7 seconds. M08 is being qualified on that merged dependency.
+passed in 21 minutes 7 seconds. M08 was qualified on that merged dependency.
 The complete
 [M08 contract](../narrated-reading-v1.md) fixes scope and limits.
 
@@ -95,8 +96,17 @@ separating the authored request and generated index schema IDs. The focused
 bilingual test then passed in 17.41 seconds, asserting both wire IDs and refusal
 to use an index schema for a request. This rechecks the final serialization
 change without repeating unrelated media work. Formatting, changed-document
-links, actionlint 1.7.12 and diff checks passed. M08 current-head hosted
-qualification remains pending.
+links, actionlint 1.7.12 and diff checks passed. On the merged M07 parent, root
+all-target/all-feature Clippy passed again and all five explicit reading cases
+passed again in 147.15 seconds, preserving every fixture limit.
+
+[CI 44935951265](https://github.com/giodl73-repo/REEL/actions/runs/44935951265)
+passed on exact M08 head `aee988c` in 22 minutes 33 seconds. The two hosted reading
+steps executed every named case successfully: Windows 46 seconds, Linux 73
+seconds. Their completed jobs are `136942512216` and `136942512197`. All required
+regression gates and the separate workbench qualification passed. The merged
+`d48c427` tree matches that qualified head exactly. This closes M08 engineering
+qualification without closing the human/scope boundaries recorded above.
 
 The principal commands are:
 
@@ -109,7 +119,8 @@ cargo clippy --locked --all-targets --all-features -- -D warnings
 
 The legacy Sonic real-render case and four M07 runtime cases retain their
 separate explicit hosted invocations; ordinary-run ignores do not close them.
-M08's current-head hosted checks are still required; the M07 merge is recorded above.
+Those required hosted invocations passed in the qualified run above. Their
+presence does not turn the local ordinary-run ignores into local media evidence.
 
 Every operation retains a cooperative maximum 30-second deadline; source/text,
 print, producer and package limits are fixed in the contract. Trusted synchronous
