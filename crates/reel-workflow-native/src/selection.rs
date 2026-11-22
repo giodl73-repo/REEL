@@ -197,6 +197,17 @@ fn reference(request: &Request, name: &str) -> Result<Option<String>> {
 /// An uncertain original operation is reconciled, never blindly applied again.
 /// `apply=false` only preflights; it writes no proposal or references.
 pub fn run(request: &Request, apply: bool) -> Result<Outcome> {
+    run_checked(request, apply, |_| Ok(()))
+}
+
+/// Internal semantic adapters inspect the exact detached proposal before any
+/// selection intent/CAS, including recovery. Their live custody guards outlive
+/// this call. A failing check leaves only a detached proposal, never selection.
+pub(crate) fn run_checked(
+    request: &Request,
+    apply: bool,
+    check: impl FnOnce(&GitId) -> Result<()>,
+) -> Result<Outcome> {
     validate(request)?;
     let raw = serde_json::to_vec(request)
         .map_err(|_| error(ErrorKind::Invalid, "selection-request-json"))?;
@@ -257,6 +268,7 @@ pub fn run(request: &Request, apply: bool) -> Result<Outcome> {
         });
     }
     let proposal = prepared.create().map_err(git_error)?;
+    check(proposal.commit())?;
     let commit = proposal.commit().as_str();
     let completed = format!("refs/reel-workflow/applied/{}", request.operation);
     if let Some(original) = reference(request, &marker)? {
