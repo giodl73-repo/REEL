@@ -1,6 +1,6 @@
 # Semantic visual companions
 
-**Status:** M10 implementation under qualification, based on merged M09 [#394](https://github.com/giodl73-repo/REEL/pull/394), `b95a6c2`. Local execution and required hosted results are recorded in the [role/test review](reviews/2026-11-21-m10-semantic-companion-design-review.md). Actual speech/listening, linguistic accuracy, device acceptance and release remain separate gates.
+**Status:** M10 merged in [#395](https://github.com/giodl73-repo/REEL/pull/395), `d7602b2`; tested head `3816901`. Final required CI passed in 16m48s, and source/assembly qualification passed. Local execution and exact hosted evidence are recorded in the [role/test review](reviews/2026-11-21-m10-semantic-companion-design-review.md). Actual speech/listening, linguistic accuracy, device acceptance and release remain separate gates.
 
 A companion connects shared authored events to language-specific phrase entrances, then to an existing SVG/browser composition. Replacing an English take changes its consuming visual clock while preserving the event IDs and the unchanged Spanish companion. Audio-only production remains independent of picture inputs.
 
