@@ -2,8 +2,10 @@
 
 Status: reviewed implementation plan, not a production-readiness declaration.
 Source landing: [W1 #386](https://github.com/giodl73-repo/REEL/pull/386),
-[W2 #388](https://github.com/giodl73-repo/REEL/pull/388), and
-[W3a SDK intake #389](https://github.com/giodl73-repo/REEL/pull/389) are merged.
+[W2 #388](https://github.com/giodl73-repo/REEL/pull/388),
+[W3a SDK intake #389](https://github.com/giodl73-repo/REEL/pull/389),
+[native film inputs #393](https://github.com/giodl73-repo/REEL/pull/393), and
+[contained production #396](https://github.com/giodl73-repo/REEL/pull/396) are merged.
 The merged [native lifecycle #392](https://github.com/giodl73-repo/REEL/pull/392)
 adds protected manual work and retained close/recovery.
 W3a's producer execution and episode-scale gates remain open; no source merge
@@ -49,8 +51,11 @@ Concrete W3a slices:
   file inputs for the existing film renderer; no producer dispatch.
 - [#396](https://github.com/giodl73-repo/REEL/pull/396): contained producer process
   port with guarded streaming outputs and original render/check intent; caller-owned admission.
-- Next: task dispatch, bounded output registration and actual producer
-  receipt/retained recovery checks. The process port alone does not complete this acceptance.
+- [#397](https://github.com/giodl73-repo/REEL/pull/397): bounded task dispatch,
+  actual producer receipts, retained publication/completion, original-operation
+  recovery and explicit retained-owner close through Rust APIs.
+- Next: one owned CLI dispatch path with workspace/capacity admission and a
+  project example, then API/proxy execution and film issue/fix/rebuild integration.
 - Before advertised S5 use: qualify episode resource/large-master admission,
   streaming composition, long execution and interruption with exact retained outputs.
 

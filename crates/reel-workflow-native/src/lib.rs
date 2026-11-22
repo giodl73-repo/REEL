@@ -24,6 +24,8 @@ pub mod film_inputs;
 pub mod film_metadata;
 #[cfg(all(windows, feature = "film"))]
 pub mod film_process;
+#[cfg(all(windows, feature = "film"))]
+pub mod film_task;
 pub mod handoff;
 mod qualified;
 pub mod response;

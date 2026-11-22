@@ -12,6 +12,629 @@ use std::{
 use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 
+#[cfg(all(windows, feature = "film"))]
+#[path = "support/film_job.rs"]
+mod film_job;
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Explicit existing synthetic native pool and media tools only; publishes owned synthetic inputs/results with isolated metadata, no setup/hydration/project selection"]
+fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_result() {
+    use reel_workflow_native::{admission::Prepared, film_inputs::Programs, film_task};
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(
+            std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set explicit native fixture"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let native: tig_git::annex::workflow::reader::Profile =
+        serde_json::from_value(value["source"].clone()).unwrap();
+    let pin = |path: PathBuf| {
+        let raw = fs::read(&path).unwrap();
+        Tool {
+            path,
+            sha256: digest(&raw),
+            bytes: raw.len() as u64,
+        }
+    };
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_EVIDENCE")
+            .expect("Set a NEW evidence directory; original roots are preserved"),
+    );
+    assert!(evidence.is_absolute());
+    fs::create_dir(&evidence).unwrap();
+    fs::copy(
+        env!("CARGO_BIN_EXE_reel-workflow-native"),
+        evidence.join("reel-workflow-native.exe"),
+    )
+    .unwrap();
+    let runtime = pin(evidence.join("reel-workflow-native.exe"));
+    for (variable, name) in [
+        ("REEL_TEST_FFMPEG", "ffmpeg.exe"),
+        ("REEL_TEST_FFPROBE", "ffprobe.exe"),
+    ] {
+        fs::copy(
+            PathBuf::from(std::env::var_os(variable).expect("Set exact media tools")),
+            evidence.join(name),
+        )
+        .unwrap();
+    }
+    let programs = Programs {
+        ffmpeg: pin(evidence.join("ffmpeg.exe")),
+        ffprobe: pin(evidence.join("ffprobe.exe")),
+    };
+    let mut fixture = Fixture::new();
+    fixture.profile.git = pin(native.pool.git.clone());
+    let root = fixture.temp.path();
+    let local = evidence.join("local");
+    fs::create_dir(&local).unwrap();
+    film_job::fixture(&local);
+    let mut paths: BTreeMap<String, String> = [
+        "picture.mkv",
+        "D.wav",
+        "M.wav",
+        "E.wav",
+        "mix.wav",
+        "master.mkv",
+        "review.mp4",
+    ]
+    .into_iter()
+    .map(|name| (name.replace('.', "-"), format!("delivery/{name}")))
+    .collect();
+    paths.extend([
+        ("execution-request".into(), "render-request.json".into()),
+        ("execution-result".into(), "render-result.json".into()),
+        ("delivery-receipt".into(), "delivery/receipt.json".into()),
+    ]);
+    let request = film_task::Request {
+        schema: "reel.workflow-film-task.v1".into(),
+        job_path: "job.json".into(),
+        production_path: "production.json".into(),
+        output_paths: paths.clone(),
+        limits: reel_workflow_native::film_process::Limits {
+            timeout_seconds: 180,
+            memory_bytes: 2 * 1024 * 1024 * 1024,
+            processes: 16,
+            workspace_bytes: 32 * 1024 * 1024,
+            output_bytes: 16 * 1024 * 1024,
+            frames: 24,
+            samples: 48000,
+            raw_rgb_bytes: 16 * 1024 * 1024,
+        },
+    };
+    fs::write(
+        local.join("workflow-request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    let original: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("records/input.tig")).unwrap()).unwrap();
+    fixture.profile.records.clear();
+    fixture.profile.bindings.clear();
+    fixture.profile.input_streams.clear();
+    fixture.packet.task.inputs.clear();
+    let mut aliases = BTreeMap::new();
+    let mut inputs = BTreeMap::new();
+    let mut publications = Vec::new();
+    for (index, name) in [
+        "job.json",
+        "production.json",
+        "contract.json",
+        "red.ppm",
+        "a.wav",
+        "workflow-request.json",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let raw = fs::read(local.join(name)).unwrap();
+        let selected = Object::from_bytes(&raw);
+        let id = format!("film/input-{index}");
+        let record_path = format!("records/film-{index}.tig");
+        let leaf = format!("payloads/film-{index}.bin");
+        let mut record = original.clone();
+        record["id"] = json!(id);
+        record["selected"] = json!(selected);
+        record["streams"] = json!([]);
+        write(root, &record_path, record);
+        fs::write(
+            root.join(&leaf),
+            Key::from_object(&selected).unlocked_pointer(),
+        )
+        .unwrap();
+        fixture.profile.records.push(record_path);
+        fixture.profile.bindings.insert(
+            id.clone(),
+            Binding {
+                selected: LogicalPath::parse(&leaf).unwrap(),
+                streams: BTreeMap::new(),
+            },
+        );
+        fixture.profile.input_streams.insert(id.clone(), None);
+        let artifact = Artifact {
+            logical_id: id.clone(),
+            sha256: selected.sha256.as_str().into(),
+            bytes: selected.bytes,
+            media_type: match name.rsplit('.').next().unwrap() {
+                "json" => "application/json",
+                "wav" => "audio/wav",
+                _ => "image/x-portable-pixmap",
+            }
+            .into(),
+        };
+        aliases.insert(name.into(), id);
+        inputs.insert(name, artifact.clone());
+        fixture.packet.task.inputs.push(artifact);
+        publications.push((name, selected));
+    }
+    git(root, &["add", "."]);
+    git(root, &["commit", "-m", "synthetic native film task"]);
+    fixture.profile.commit = git(root, &["rev-parse", "HEAD"]);
+    let executable = |id: &str, tool: &Tool| Artifact {
+        logical_id: id.into(),
+        sha256: tool.sha256.clone(),
+        bytes: tool.bytes,
+        media_type: "application/octet-stream".into(),
+    };
+    fixture.packet.task.operation = Operation::DeterministicTool;
+    fixture.packet.task.prompt.clear();
+    fixture.packet.task.tool = Some(ToolContract {
+        schema: "reel.workflow-tool.v1".into(),
+        capability: ToolCapability::FilmRender,
+        executable: executable("runtime/producer", &runtime),
+        auxiliary_executables: BTreeMap::from([
+            (
+                "ffmpeg".into(),
+                executable("runtime/ffmpeg", &programs.ffmpeg),
+            ),
+            (
+                "ffprobe".into(),
+                executable("runtime/ffprobe", &programs.ffprobe),
+            ),
+        ]),
+        publication: inputs["job.json"].clone(),
+        request: inputs["workflow-request.json"].clone(),
+        edition_id: "synthetic-es".into(),
+        source_bindings: aliases,
+        part: None,
+    });
+    fixture.packet.task.outputs = paths
+        .iter()
+        .map(|(name, path)| {
+            (
+                name.clone(),
+                OutputContract {
+                    media_type: match path.rsplit('.').next().unwrap() {
+                        "json" => "application/json",
+                        "mp4" => "video/mp4",
+                        "mkv" => "video/x-matroska",
+                        _ => "audio/wav",
+                    }
+                    .into(),
+                    max_bytes: 1024 * 1024,
+                    required: true,
+                },
+            )
+        })
+        .collect();
+    fixture.repin();
+    let mut case = AdmissionCase::with_store(&fixture, native.store.clone());
+    let control = case.source.source.pool.control.clone();
+    case.source.source = native;
+    case.source.source.pool.control = control;
+    case.source.annex = serde_json::from_value(value["annex"].clone()).unwrap();
+    fixture.temp.disable_cleanup(true);
+    case.temp.disable_cleanup(true);
+    let record = |name: &str, value: &serde_json::Value| {
+        use std::io::Write;
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(evidence.join(name))
+            .unwrap();
+        file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
+        file.sync_all().unwrap();
+    };
+    record(
+        "locations.json",
+        &json!({"source_root":fixture.temp.path(),"case_root":case.temp.path(),"packet":fixture.packet,
+        "native":case.source,"admission_profile":case.profile,"runtime":runtime,"programs":programs}),
+    );
+    let prepared = Prepared::open(
+        &fixture.packet,
+        &case.source,
+        &case.profile,
+        "film-attempt-1",
+    )
+    .unwrap();
+    let preview = prepared.preview().unwrap();
+    assert!(preview.response_budget_ok);
+    assert!(preview.response_close_bound_ok);
+    let receipt = prepared.accept().unwrap();
+    record("admission.json", &serde_json::to_value(&receipt).unwrap());
+    for (name, object) in publications {
+        let published = tig_git::annex::workflow::publication::publish(
+            &tig_git::annex::workflow::publication::Profile {
+                schema: "tig.annex-file-publication.experimental-1".into(),
+                pool: case.source.source.pool.clone(),
+                store: case.profile.scope.store.clone(),
+                source_root: local.clone(),
+                source: LogicalPath::parse(name).unwrap(),
+                source_owned: true,
+                expected: Some(object),
+                include_private_location: false,
+                maximum_bytes: 1024 * 1024,
+                minimum_free_bytes: 100 * 1024 * 1024,
+            },
+        )
+        .unwrap();
+        assert!(published.report().reopened_verified);
+    }
+    let workspace = case.temp.path().join("film");
+    fs::create_dir(&workspace).unwrap();
+    exercise_original_film(FilmCase {
+        packet: &fixture.packet,
+        source: &case.source,
+        profile: &case.profile,
+        receipt: &receipt,
+        runtime: &runtime,
+        programs: &programs,
+        workspace: &workspace,
+        evidence: &evidence,
+    });
+}
+
+#[cfg(all(windows, feature = "film"))]
+struct FilmCase<'a> {
+    packet: &'a Packet,
+    source: &'a reel_workflow_native::NativeProfile,
+    profile: &'a reel_workflow_native::admission::Profile,
+    receipt: &'a reel_workflow_native::admission::Receipt,
+    runtime: &'a Tool,
+    programs: &'a reel_workflow_native::film_inputs::Programs,
+    workspace: &'a Path,
+    evidence: &'a Path,
+}
+#[cfg(all(windows, feature = "film"))]
+fn exercise_original_film(case: FilmCase<'_>) {
+    use reel_workflow_native::{
+        NativeInputs,
+        admission::Prepared,
+        film_task::{self, Action, Invocation},
+    };
+    let FilmCase {
+        packet,
+        source,
+        profile,
+        receipt,
+        runtime,
+        programs,
+        workspace,
+        evidence,
+    } = case;
+    let record = |name: &str, value: &serde_json::Value| {
+        use std::io::Write;
+        let raw = serde_json::to_vec(value).unwrap();
+        let path = evidence.join(name);
+        if path.exists() {
+            assert_eq!(fs::read(path).unwrap(), raw);
+            return;
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap();
+        file.write_all(&raw).unwrap();
+        file.sync_all().unwrap();
+    };
+    let protected = |object: &Object| {
+        use tig_store::{metadata::MetadataStore, source_claims::protection::Index};
+        let mut nodes =
+            MetadataStore::open(&profile.metadata_root, &profile.metadata_minimum).unwrap();
+        let mut index = Index::open(&profile.index_root, &profile.index_minimum).unwrap();
+        index
+            .inspect(&mut nodes, object, &profile.scope.store)
+            .unwrap()
+            .protected_by
+    };
+    let target = reel_workflow_native::retention::Target {
+        schema: "reel.workflow-retained-target.v1".into(),
+        actor: tig_store::Key::parse("retained").unwrap(),
+        owner: profile.scope.owner.clone(),
+    };
+    let create = |action| {
+        let invocation = Invocation {
+            source,
+            receipt,
+            runtime,
+            programs: programs.clone(),
+            workspace,
+            action,
+        };
+        if matches!(action, Action::Recover) {
+            return film_task::resume(packet, profile, invocation, Some(&target)).unwrap();
+        }
+        let claims = Prepared::open(packet, source, profile, "film-attempt-1")
+            .unwrap()
+            .reopen(receipt)
+            .unwrap();
+        let native = NativeInputs::from_claims(packet, source, claims).unwrap();
+        film_task::run(packet, native, invocation).unwrap()
+    };
+    let generated = create(Action::Render);
+    let result = generated.result().clone();
+    assert_eq!(result.provenance.mode, Mode::Tool);
+    assert!(result.worker_receipt.is_some());
+    assert!(!workspace.join("task-complete.json").exists());
+    assert_eq!(
+        reel_workflow_native::response::ingest(
+            packet,
+            source,
+            profile,
+            receipt,
+            &result,
+            generated.returns()
+        )
+        .unwrap_err()
+        .code,
+        "response-tool-receipt-adapter-required"
+    );
+    let other = workspace.parent().unwrap().join("other-film");
+    fs::create_dir(&other).unwrap();
+    let claims = Prepared::open(packet, source, profile, "film-attempt-1")
+        .unwrap()
+        .reopen(receipt)
+        .unwrap();
+    let native = NativeInputs::from_claims(packet, source, claims).unwrap();
+    let refused = film_task::run(
+        packet,
+        native,
+        Invocation {
+            source,
+            receipt,
+            runtime,
+            programs: programs.clone(),
+            workspace: &other,
+            action: Action::Render,
+        },
+    )
+    .err()
+    .unwrap();
+    assert_eq!(refused.code, "film-original-dispatch");
+    assert!(fs::read_dir(&other).unwrap().next().is_none());
+    let candidate = generated.stage(source, profile).unwrap();
+    record("candidate.json", &serde_json::to_value(&candidate).unwrap());
+    {
+        use tig_store::{
+            metadata::MetadataStore,
+            source_claims::protection::{self, Index, work},
+        };
+        let mut nodes =
+            MetadataStore::open(&profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
+        let mut index = Index::open(&profile.index_root, &receipt.index_checkpoint).unwrap();
+        let original = work::read(&mut index, &candidate.work, &nodes).unwrap();
+        let mut interrupted = false;
+        assert!(
+            index
+                .update_hook(&original.update, &mut nodes, |stage| {
+                    if stage == protection::Stage::Prepared {
+                        interrupted = true;
+                        Err(protection::Error::Unknown)
+                    } else {
+                        Ok(())
+                    }
+                })
+                .is_err()
+        );
+        assert!(interrupted);
+    }
+    drop(generated);
+    let generated = create(Action::Recover);
+    assert_eq!(*generated.result(), result);
+    assert_eq!(candidate, generated.ingest(source, profile).unwrap());
+    assert_eq!(candidate, generated.ingest(source, profile).unwrap());
+    let ack = generated.retain(source, profile, &target).unwrap();
+    let completed = fs::read(workspace.join("task-complete.json")).unwrap();
+    record("retained.json", &serde_json::to_value(&ack).unwrap());
+    let worker = result.worker_receipt.as_ref().unwrap();
+    assert!(
+        protected(&Object {
+            sha256: tig_core::Digest::parse(&worker.sha256).unwrap(),
+            bytes: worker.bytes
+        })
+        .contains(&target.actor)
+    );
+    drop(generated);
+    fs::remove_file(workspace.join("workflow-result.json")).unwrap();
+    let recovered = create(Action::Recover);
+    assert_eq!(*recovered.result(), result);
+    assert_eq!(candidate, recovered.ingest(source, profile).unwrap());
+    assert_eq!(
+        ack.canonical_bytes().unwrap(),
+        recovered
+            .retain(source, profile, &target)
+            .unwrap()
+            .canonical_bytes()
+            .unwrap()
+    );
+    assert_eq!(
+        completed,
+        fs::read(workspace.join("task-complete.json")).unwrap()
+    );
+    drop(recovered);
+    // A second recovery reconciles the already completed original check.
+    let recovered = create(Action::Recover);
+    assert_eq!(*recovered.result(), result);
+    drop(recovered);
+    git(
+        &source.snapshot.repository,
+        &[
+            "commit",
+            "--allow-empty",
+            "-m",
+            "source advances after retained production",
+        ],
+    );
+    let historical =
+        film_task::verify_retained(packet, source, profile, receipt, &result, &ack).unwrap();
+    drop(historical);
+    let operation = tig_store::Key::parse("film-close-1").unwrap();
+    record(
+        "close-operation.json",
+        &json!({"operation":operation,"admission":receipt,"result":result,"retained":ack}),
+    );
+    let close = |action| {
+        film_task::close(
+            film_task::Close {
+                packet,
+                source,
+                profile,
+                receipt,
+                result: &result,
+                acknowledgement: &ack,
+                operation: &operation,
+            },
+            action,
+        )
+        .unwrap()
+    };
+    let staged = close(reel_workflow_native::closing::Action::Stage);
+    assert!(!staged.slot_idle);
+    let closed = close(reel_workflow_native::closing::Action::Recover);
+    assert!(closed.slot_idle);
+    assert!(closed.original_clear_complete);
+    assert!(close(reel_workflow_native::closing::Action::Recover).slot_idle);
+    drop(film_task::verify_retained(packet, source, profile, receipt, &result, &ack).unwrap());
+    record("closed.json", &serde_json::to_value(&closed).unwrap());
+    record(
+        "complete.json",
+        &json!({"task_key":packet.task_key,"result":result,"candidate":candidate,"retained":ack,"complete":true}),
+    );
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Continue only the preserved original pre-dispatch qualification job; no new task, runtime, cache or admission"]
+fn continue_original_native_film_task_after_control_gate_repair() {
+    use std::io::Write;
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_EVIDENCE").expect("Set ORIGINAL evidence directory"),
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("locations.json")).unwrap()).unwrap();
+    let packet: Packet = serde_json::from_value(value["packet"].clone()).unwrap();
+    let source: reel_workflow_native::NativeProfile =
+        serde_json::from_value(value["native"].clone()).unwrap();
+    let profile: reel_workflow_native::admission::Profile =
+        serde_json::from_value(value["admission_profile"].clone()).unwrap();
+    let runtime: Tool = serde_json::from_value(value["runtime"].clone()).unwrap();
+    let programs = serde_json::from_value(value["programs"].clone()).unwrap();
+    let receipt =
+        serde_json::from_slice(&fs::read(evidence.join("admission.json")).unwrap()).unwrap();
+    let workspace = PathBuf::from(value["case_root"].as_str().unwrap()).join("film");
+    assert!(
+        fs::read_dir(&workspace).unwrap().next().is_none(),
+        "The original failure occurred before any producer launch; stop on a different state"
+    );
+    let raw = serde_json::to_vec(&json!({"schema":"reel.synthetic-original-film-repair.v1", "task_key":packet.task_key,
+        "driver_source":std::env::var("REEL_QUALIFIED_DRIVER_SOURCE").expect("Pin the repair driver source"),"runtime":runtime})).unwrap();
+    let mut record = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(evidence.join("repair-started.json"))
+        .unwrap();
+    record.write_all(&raw).unwrap();
+    record.sync_all().unwrap();
+    drop(record);
+    exercise_original_film(FilmCase {
+        packet: &packet,
+        source: &source,
+        profile: &profile,
+        receipt: &receipt,
+        runtime: &runtime,
+        programs: &programs,
+        workspace: &workspace,
+        evidence: &evidence,
+    });
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Continue only original retained legacy-layout close; two bounded explicit metadata phases, no rendering/publication/new admission"]
+fn continue_original_film_close_after_retained_layout_repair() {
+    use reel_workflow_native::{
+        closing::Action,
+        film_task::{self, Close},
+    };
+    use std::io::Write;
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_EVIDENCE").expect("Set ORIGINAL evidence directory"),
+    );
+    let locations: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("locations.json")).unwrap()).unwrap();
+    let original: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("close-operation.json")).unwrap()).unwrap();
+    let packet = serde_json::from_value(locations["packet"].clone()).unwrap();
+    let source = serde_json::from_value(locations["native"].clone()).unwrap();
+    let profile = serde_json::from_value(locations["admission_profile"].clone()).unwrap();
+    let receipt = serde_json::from_value(original["admission"].clone()).unwrap();
+    let result = serde_json::from_value(original["result"].clone()).unwrap();
+    let ack = serde_json::from_value(original["retained"].clone()).unwrap();
+    let operation = serde_json::from_value(original["operation"].clone()).unwrap();
+    let context = || Close {
+        packet: &packet,
+        source: &source,
+        profile: &profile,
+        receipt: &receipt,
+        result: &result,
+        acknowledgement: &ack,
+        operation: &operation,
+    };
+    let record = |name: &str, value: &serde_json::Value| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(evidence.join(name))
+            .unwrap();
+        file.write_all(&serde_json::to_vec(value).unwrap()).unwrap();
+        file.sync_all().unwrap();
+    };
+    let preview = film_task::prepare_close_layout(context(), false).unwrap();
+    assert!(preview.add_changes <= 128 && preview.cleanup_changes <= 128);
+    record(
+        "layout-preview.json",
+        &serde_json::to_value(&preview).unwrap(),
+    );
+    let applied = film_task::prepare_close_layout(context(), true).unwrap();
+    record(
+        "layout-applied.json",
+        &serde_json::to_value(&applied).unwrap(),
+    );
+    let replay = film_task::prepare_close_layout(context(), true).unwrap();
+    assert_eq!(applied.add, replay.add);
+    assert_eq!(applied.cleanup, replay.cleanup);
+    assert!(
+        !film_task::close(context(), Action::Stage)
+            .unwrap()
+            .slot_idle
+    );
+    let closed = film_task::close(context(), Action::Recover).unwrap();
+    assert!(closed.slot_idle && closed.original_clear_complete);
+    assert!(
+        film_task::close(context(), Action::Recover)
+            .unwrap()
+            .slot_idle
+    );
+    drop(film_task::verify_retained(&packet, &source, &profile, &receipt, &result, &ack).unwrap());
+    record("closed.json", &serde_json::to_value(&closed).unwrap());
+    record(
+        "complete.json",
+        &json!({"task_key":packet.task_key,"result":result,"candidate":ack.candidate,"retained":ack,"complete":true}),
+    );
+}
+
 fn git_path() -> PathBuf {
     if let Some(path) = std::env::var_os("REEL_TEST_GIT") {
         return PathBuf::from(path);
@@ -2217,6 +2840,7 @@ fn film_files_require_live_claims_and_preserve_authored_alias_and_program_identi
     // Every refusal below occurs before the nonexistent payload pool is read.
     case.source.annex = fixture.profile.git.clone();
     case.source.source.pool.executable = fixture.profile.git.path.clone();
+    case.source.source.maximum_bytes = 1024 * 1024;
     let programs = Programs {
         ffmpeg: fixture.profile.git.clone(),
         ffprobe: fixture.profile.git.clone(),

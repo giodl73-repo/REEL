@@ -1,6 +1,8 @@
 //! Bounded positive input claims over an EXISTING effects-enabled index.
 //! No initialization, payload availability, publication, retention or selection.
 mod closing;
+#[cfg(all(windows, feature = "film"))]
+mod closing_layout;
 mod response;
 mod retention;
 use crate::{
@@ -99,6 +101,58 @@ pub struct ClaimsGuard {
     _prepared: Prepared,
 }
 impl ClaimsGuard {
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn check_receipt(&self, receipt: &Receipt) -> Result<()> {
+        self._prepared.check_receipt(receipt)?;
+        let (mut index, mut nodes) = self._prepared.stores(Some(receipt))?;
+        self._prepared.verify_live(receipt, &mut index, &mut nodes)
+    }
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn freeze_film_invocation(
+        &self,
+        receipt: &Receipt,
+        raw: &[u8],
+        recover: bool,
+    ) -> Result<(std::fs::File, reel_assets::jobs::WorkspaceDirectory)> {
+        use std::io::Write;
+        self._prepared.check_receipt(receipt)?;
+        if raw.len() > metadata::MAX_NODE_BYTES {
+            return Err(error(ErrorKind::Budget, "film-invocation-bytes"));
+        }
+        let directory = reel_assets::jobs::open_workspace_directory(
+            &self._prepared.profile.scope.coordination_root,
+        )
+        .map_err(|_| error(ErrorKind::Denied, "film-invocation-namespace"))?;
+        let key = reel_workflow::canonical_digest(&(
+            "reel.workflow-film-invocation.v1",
+            &self._prepared.profile.index_identity,
+            &receipt.task_key,
+            &receipt.attempt_id,
+        ))?;
+        let path = directory.path().join(format!("film-{key}.json"));
+        if !recover {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    file.write_all(raw)
+                        .and_then(|_| file.sync_all())
+                        .map_err(|_| {
+                            error(ErrorKind::NeedsRecovery, "film-invocation-write-preserve")
+                        })?;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
+                Err(e) => return Err(crate::io_error(e)),
+            }
+        }
+        let (existing, file) = crate::staging::read_held(&path, metadata::MAX_NODE_BYTES as u64)?;
+        if existing != raw {
+            return Err(error(ErrorKind::Conflict, "film-original-dispatch"));
+        }
+        Ok((file, directory))
+    }
     pub(crate) fn check_source(&self, packet: &Packet, source: &NativeProfile) -> Result<()> {
         let current = Prepared::open(
             packet,
@@ -463,7 +517,7 @@ impl Prepared {
             changed_path_limit: protection::MAX_CHANGES,
             response_close_paths_upper_bound: self.response_close_paths()?,
             response_close_bound_ok: self.response_close_paths()? <= protection::MAX_CHANGES,
-            response_objects_upper_bound: self.snapshot.packet.task.outputs.len(),
+            response_objects_upper_bound: self.response_objects(),
             response_object_limit: 32,
             response_bytes_upper_bound: self.response_bytes()?,
             response_byte_limit: 128 * 1024 * 1024,
@@ -572,7 +626,7 @@ impl Prepared {
             .objects()
             .len()
             .checked_add(4)
-            .and_then(|count| count.checked_add(self.snapshot.packet.task.outputs.len()))
+            .and_then(|count| count.checked_add(self.response_objects()))
             .and_then(|count| count.checked_add(3))
             .ok_or_else(|| error(ErrorKind::Budget, "admission-response-close-overflow"))
     }
@@ -583,7 +637,19 @@ impl Prepared {
             .outputs
             .values()
             .try_fold(0u64, |total, output| total.checked_add(output.max_bytes))
+            .and_then(|n| n.checked_add(self.worker_bytes()))
             .ok_or_else(|| error(ErrorKind::Budget, "admission-response-byte-overflow"))
+    }
+    fn worker_bytes(&self) -> u64 {
+        if self.snapshot.packet.task.tool.is_some() {
+            metadata::MAX_NODE_BYTES as u64
+        } else {
+            0
+        }
+    }
+    fn response_objects(&self) -> usize {
+        self.snapshot.packet.task.outputs.len()
+            + usize::from(self.snapshot.packet.task.tool.is_some())
     }
     fn response_budget_ok(&self) -> Result<bool> {
         let outputs = self.response_bytes()?;
@@ -594,7 +660,8 @@ impl Prepared {
             .try_fold(0u64, |total, object| total.checked_add(object.bytes));
         // Reserve worst-case metadata-node overhead inside the same envelope.
         let reserve = protection::MAX_CHANGES as u64 * metadata::MAX_NODE_BYTES as u64;
-        Ok(self.snapshot.packet.task.outputs.len() <= 32
+        Ok(self.response_objects() <= 32
+            && self.worker_bytes() <= self.reader_limit
             && self
                 .snapshot
                 .packet

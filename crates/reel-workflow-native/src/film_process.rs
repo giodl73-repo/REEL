@@ -30,7 +30,7 @@ pub struct Limits {
     pub raw_rgb_bytes: u64,
 }
 impl Limits {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         if !(1..=18_000).contains(&self.timeout_seconds)
             || !(64 * 1024 * 1024..=16 * 1024 * 1024 * 1024).contains(&self.memory_bytes)
             || !(2..=32).contains(&self.processes)
@@ -485,6 +485,48 @@ fn check_output_proof(rendered: &Rendered, proof: &BTreeMap<String, FileRef>) ->
     }
     Ok(())
 }
+fn reconcile_check(request: &Request) -> Result<BTreeMap<String, FileRef>> {
+    let expected = serde_json::to_vec(request)
+        .map_err(|_| error(ErrorKind::Invalid, "film-process-request-json"))?;
+    let (raw, _request) = crate::staging::read_held(
+        &request.workspace.join("check-request.json"),
+        reel_workflow::MAX_CONTROL_BYTES as u64,
+    )?;
+    if raw != expected {
+        return Err(error(
+            ErrorKind::Conflict,
+            "film-process-original-check-request",
+        ));
+    }
+    let (raw, _result) = crate::staging::read_held(
+        &request.workspace.join("check-result.json"),
+        reel_workflow::MAX_CONTROL_BYTES as u64,
+    )
+    .map_err(|_| {
+        error(
+            ErrorKind::NeedsRecovery,
+            "film-process-original-check-pending",
+        )
+    })?;
+    let outcome: Outcome = reel_workflow::decode(&raw)?;
+    if outcome.schema != "reel.workflow-film-process-outcome.v2"
+        || outcome.request_sha256 != reel_workflow::digest(&expected)
+    {
+        return Err(error(
+            ErrorKind::Integrity,
+            "film-process-original-check-result",
+        ));
+    }
+    if let Some(error) = outcome.error {
+        return Err(error);
+    }
+    outcome.outputs.ok_or_else(|| {
+        error(
+            ErrorKind::NeedsRecovery,
+            "film-process-original-check-proof",
+        )
+    })
+}
 /// Render in an explicitly admitted, empty, caller-owned workspace. This port
 /// does not reserve capacity, accept a job, publish bytes or complete a task.
 /// The live input provider holds exact native objects/programs through child exit.
@@ -553,7 +595,11 @@ pub fn recover(
     let rendered = collect(directory.path(), limits)?;
     let mut check = original;
     check.action = Action::Check;
-    let proof = launch(&check, "check-request.json")?;
+    let proof = if directory.path().join("check-request.json").exists() {
+        reconcile_check(&check)?
+    } else {
+        launch(&check, "check-request.json")?
+    };
     check_output_proof(&rendered, &proof)?;
     Ok(rendered)
 }

@@ -418,12 +418,10 @@ impl ClaimsGuard {
                 .map_err(|_| error(ErrorKind::NeedsRecovery, "retention-evidence-write"))?;
             let mut changes = BTreeMap::new();
             for object in objects {
-                let path = LogicalPath::parse(&format!(
-                    "workflow/objects/{}/{}",
-                    object.sha256.as_str(),
-                    object.bytes
-                ))
-                .map_err(|_| error(ErrorKind::Invalid, "retention-object-path"))?;
+                // Match the qualified close layout from the first retention.
+                // Existing historical work and old aliases remain readable.
+                let path = LogicalPath::parse(&format!("objects/{}", object.sha256.as_str()))
+                    .map_err(|_| error(ErrorKind::Invalid, "retention-object-path"))?;
                 if let Some(old) = next.get(&path) {
                     if *old != object {
                         return Err(error(ErrorKind::Conflict, "retention-object-path-conflict"));

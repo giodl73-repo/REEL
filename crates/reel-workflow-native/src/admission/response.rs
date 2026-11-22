@@ -13,6 +13,45 @@ pub(super) fn entries(
 }
 
 impl Prepared {
+    #[cfg(all(windows, feature = "film"))]
+    pub(crate) fn original_response(
+        &self,
+        receipt: &Receipt,
+    ) -> Result<Option<reel_workflow::ReturnedResult>> {
+        self.check_receipt(receipt)?;
+        let (mut index, mut nodes) = self.stores_with_pending(Some(receipt), true)?;
+        let operation =
+            crate::response::operation_key(&self.profile, &receipt.task_key, &receipt.attempt_id)?;
+        let Some(reference) =
+            work::lookup(&mut index, &operation).map_err(|e| native_error(e.into()))?
+        else {
+            return Ok(None);
+        };
+        let record =
+            work::read(&mut index, &reference, &nodes).map_err(|e| native_error(e.into()))?;
+        let evidence = record
+            .evidence
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Integrity, "response-original-evidence"))?;
+        let raw = nodes
+            .get(evidence)
+            .map_err(|_| error(ErrorKind::Integrity, "response-original-evidence-bytes"))?
+            .ok_or_else(|| error(ErrorKind::Missing, "response-original-evidence-bytes"))?;
+        let envelope: serde_json::Value = reel_workflow::decode(&raw)?;
+        let result: reel_workflow::ReturnedResult =
+            serde_json::from_value(envelope["result"].clone())
+                .map_err(|_| error(ErrorKind::Integrity, "response-original-result"))?;
+        reel_workflow::check_result(&self.snapshot.packet, &result)?;
+        let (_, expected, outputs) = crate::response::identity(&self.profile, receipt, &result)?;
+        if Object::from_bytes(&expected) != *evidence {
+            return Err(error(
+                ErrorKind::Conflict,
+                "response-original-evidence-binding",
+            ));
+        }
+        self.check_response(&record, receipt, evidence, &outputs, &mut nodes)?;
+        Ok(Some(result))
+    }
     /// Reconcile ONLY already-admitted original response work before requiring
     /// a settled ClaimsGuard. Never starts a new admission through this path.
     pub(crate) fn response_guard(

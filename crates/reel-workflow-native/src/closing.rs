@@ -62,6 +62,18 @@ pub struct Outcome {
     pub index_checkpoint: source_claims::Checkpoint,
     pub metadata_checkpoint: metadata::Checkpoint,
 }
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LayoutOutcome {
+    pub schema: String,
+    pub operation: Key,
+    pub add_changes: usize,
+    pub cleanup_changes: usize,
+    pub applied: bool,
+    pub add: Option<WorkRef>,
+    pub cleanup: Option<WorkRef>,
+}
 pub fn read(path: &Path, sha256: &str) -> Result<(Request, File)> {
     let (raw, held) = staging::read_held(path, reel_workflow::MAX_CONTROL_BYTES as u64)?;
     if reel_workflow::digest(&raw) != sha256 {

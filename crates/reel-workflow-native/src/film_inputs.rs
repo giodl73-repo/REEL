@@ -230,6 +230,18 @@ impl Inputs {
     pub(crate) fn task_key(&self) -> &str {
         &self._native.snapshot.packet.task_key
     }
+    pub(crate) fn freeze_invocation(
+        &self,
+        receipt: &crate::admission::Receipt,
+        raw: &[u8],
+        recover: bool,
+    ) -> Result<(File, reel_assets::jobs::WorkspaceDirectory)> {
+        self._native
+            ._claims
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Denied, "film-input-live-authority-required"))?
+            .freeze_film_invocation(receipt, raw, recover)
+    }
     pub(crate) fn validate_runtime(&self, runtime: &Tool) -> Result<()> {
         let pin = &self
             ._native
