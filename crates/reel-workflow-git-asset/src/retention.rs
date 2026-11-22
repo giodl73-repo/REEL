@@ -79,6 +79,9 @@ fn source_error(e: UseError) -> reel_workflow::Error {
     }
 }
 impl Seed {
+    pub(crate) fn is_source(&self, namespace: &Digest, source: &Key) -> bool {
+        self.wire.minimum.identity() == namespace && &self.wire.source == source
+    }
     pub(crate) fn same_source(&self, other: &Self) -> bool {
         self.wire.minimum.identity() == other.wire.minimum.identity()
             && self.wire.source == other.wire.source
@@ -184,7 +187,7 @@ impl Seed {
             selection,
         }
     }
-    fn namespace(&self, profile: &managed::Profile) -> Result<Namespace> {
+    pub(crate) fn namespace(&self, profile: &managed::Profile) -> Result<Namespace> {
         let member = profile
             .binding
             .members()

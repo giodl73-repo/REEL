@@ -10,6 +10,7 @@ pub(super) enum Phase {
     ImportPending(Box<reel_workflow::ReturnedResult>),
     Retained,
     Uncertain,
+    NativeImport,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +69,7 @@ pub(super) fn active_exit(
         Phase::ImportPending(_) => "pending",
         Phase::Retained => "retained",
         Phase::Uncertain => "uncertain",
+        Phase::NativeImport => "native-import",
     };
     let before_namespace = Namespace::open(&profile.pool.members[0].root, namespace)
         .unwrap()
@@ -75,6 +77,13 @@ pub(super) fn active_exit(
     let before_ledger = CapacityLedger::open(&root.join("lifecycle-ledger"), ledger)
         .unwrap()
         .checkpoint();
+    let native_import = matches!(phase, Phase::NativeImport);
+    let before_input = Namespace::open(&profile.pool.members[0].root, namespace)
+        .unwrap()
+        .source(&key("attempt"))
+        .unwrap()
+        .unwrap()
+        .current;
     let case = Case {
         phase,
         ticket: cfg.expected.clone(),
@@ -132,6 +141,22 @@ pub(super) fn active_exit(
         b"real retained guards held before workflow acknowledgement\n"
     );
     assert_eq!(fs::read(&path).unwrap(), bytes);
+    if native_import {
+        assert_eq!(
+            Journal::open(&root.join("task-journal")).unwrap().state(),
+            JournalState::ImportPending
+        );
+        assert_eq!(
+            Namespace::open(&profile.pool.members[0].root, namespace)
+                .unwrap()
+                .source(&key("attempt"))
+                .unwrap()
+                .unwrap()
+                .current,
+            before_input
+        );
+        return; // Native intent/effect legitimately advanced the other journals.
+    }
     // Reopen disk state, rather than trusting the parent's cached checkpoint.
     assert_eq!(
         Namespace::open(&profile.pool.members[0].root, namespace)
@@ -160,6 +185,7 @@ fn retained_exit_worker() {
             | "pending-exit-case.json"
             | "retained-exit-case.json"
             | "uncertain-exit-case.json"
+            | "native-import-exit-case.json"
     ));
     let root = path.parent().unwrap();
     assert!(
@@ -218,7 +244,7 @@ fn retained_exit_worker() {
     let opens = std::rc::Rc::new(std::cell::Cell::new(0));
     let mut runtime = Lifecycle::new(
         cfg,
-        Publisher::new(profile).unwrap(),
+        Publisher::new(profile.clone()).unwrap(),
         Resources {
             namespace: &mut namespace,
             metadata: &mut metadata,
@@ -234,8 +260,24 @@ fn retained_exit_worker() {
         Phase::ImportPending(_) => "pending",
         Phase::Retained => "retained",
         Phase::Uncertain => "uncertain",
+        Phase::NativeImport => "native-import",
     };
     let marker = root.join(format!("{suffix}-exit-reached"));
+    if matches!(case.phase, Phase::NativeImport) {
+        use reel_workflow::handoff::Lifecycle as _;
+        let journal = Journal::open(&root.join("task-journal")).unwrap();
+        assert_eq!(journal.state(), JournalState::ImportPending);
+        let _held = runtime.reopen(journal.ticket()).unwrap();
+        native_import_exit(
+            root,
+            &case.metadata,
+            &case.namespace,
+            &case.ledger,
+            &profile,
+            &journal,
+            &marker,
+        );
+    }
     if matches!(case.phase, Phase::Uncertain) {
         use reel_workflow::handoff::Lifecycle as _;
         let mut journal = Journal::open(&root.join("task-journal")).unwrap();
@@ -279,4 +321,96 @@ pub(super) fn abrupt(marker: &Path) -> ! {
     file.sync_all().unwrap();
     // No Rust destructors, including the actual native/source guards.
     std::process::exit(83);
+}
+
+// Actual REEL input/control guards span the original SDK native effect. Separate
+// handles allow the producer to advance its own source, not the held input Job.
+fn native_import_exit(
+    root: &Path,
+    cp: &metadata::Checkpoint,
+    minimum: &source_claims::Checkpoint,
+    capacity: &ledger::Checkpoint,
+    profile: &publication::Profile,
+    journal: &Journal,
+    marker: &Path,
+) -> ! {
+    let mut namespace = Namespace::open(&profile.pool.members[0].root, minimum).unwrap();
+    let mut metadata = MetadataReader::open(&root.join("lifecycle-metadata"), cp).unwrap();
+    let mut ledger = CapacityLedger::open(&root.join("lifecycle-ledger"), capacity).unwrap();
+    let witness = LocalStore::open(&root.join("lifecycle-witness")).unwrap();
+    let mut reader = managed::Reader::new(profile.pool.clone()).unwrap();
+    let mut original = reader
+        .open(&binding::object(&journal.ticket().native_binding).unwrap())
+        .unwrap();
+    let mut bytes = vec![];
+    original
+        .by_ref()
+        .take(128 * 1024 + 1)
+        .read_to_end(&mut bytes)
+        .unwrap();
+    let binding = Binding::decode(
+        &bytes,
+        &binding::object(&journal.ticket().native_binding).unwrap(),
+    )
+    .unwrap();
+    let controls = binding
+        .result_seed()
+        .original(
+            &profile.pool,
+            &binding.pin().sha256,
+            &mut metadata,
+            &limits(),
+            budget(),
+        )
+        .unwrap();
+    let packet = controls
+        .bytes(&git_asset_core::LogicalPath::parse("packet").unwrap())
+        .unwrap();
+    let plans_path = git_asset_core::LogicalPath::parse("plans").unwrap();
+    let candidates =
+        Candidates::bind(journal.ticket(), packet, &binding.return_packet_id()).unwrap();
+    let prepared = candidates
+        .restore(
+            controls.bytes(&plans_path).unwrap(),
+            &controls.entries()[&plans_path],
+        )
+        .unwrap();
+    assert_eq!(journal.result(), Some(prepared.candidates().result()));
+    let mut producer = ReadCache::new(existing::Profile {
+        places: vec![Place {
+            root: root.join("produced"),
+            layout: Layout::Flat,
+        }],
+        required: RequiredProtection::PreventMutation,
+        limits: existing::Limits {
+            object_bytes: 1024 * 1024,
+            total_bytes: 8 * 1024 * 1024,
+            requests: 16,
+            live_readers: 8,
+            verify_millis: 30000,
+        },
+    })
+    .unwrap();
+    let mut publisher = Publisher::new(profile.clone()).unwrap();
+    let outcome = publisher.apply_hook(
+        &prepared.plans()["output/note"],
+        &mut Resources {
+            namespace: &mut namespace,
+            metadata: &mut metadata,
+            limits: limits(),
+            witness: &witness,
+            ledger: &mut ledger,
+        },
+        &mut producer,
+        |stage| {
+            if stage == publication::Stage::Imported {
+                abrupt(marker);
+            }
+            Ok(())
+        },
+    );
+    panic!(
+        "expected process exit after real native effect, got {}",
+        outcome.is_ok()
+    );
 }

@@ -31,21 +31,6 @@ fn nodes_limits() -> metadata::Limits {
         min_free_bytes: 65536,
     }
 }
-fn put_native(f: &Fixture, name: &str, bytes: &[u8]) {
-    let object = Object::from_bytes(bytes);
-    let input = f.temp.path().join(format!("seed-{name}"));
-    fs::write(&input, bytes).unwrap();
-    let pool = f.profile.pool.clone();
-    run(
-        &pool,
-        true,
-        &[
-            "setkey",
-            &format!("SHA256-s{}--{}", object.bytes, object.sha256.as_str()),
-            input.to_str().unwrap(),
-        ],
-    );
-}
 struct Offline {
     opens: std::rc::Rc<std::cell::Cell<usize>>,
 }
@@ -136,6 +121,13 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
         "return-note",
         "return-packet",
         "creative",
+        "ingress-packet",
+        "ingress-preview",
+        "ingress-request",
+        "ingress-tool",
+        "ingress-binding",
+        "ingress-return",
+        "ingress-plans",
     ] {
         ns.apply(
             key(&format!("enroll-{name}")),
@@ -198,6 +190,42 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
         ),
         ("tool".into(), template.lifecycle_tool.clone()),
     ]);
+    let staging = root.join("lifecycle-staging");
+    fs::create_dir(&staging).unwrap();
+    fs::write(staging.join(".git-asset-staging"), b"lifecycle stage").unwrap();
+    let profile = publication::Profile {
+        pool: f.profile.clone(),
+        retained_place: key("pool"),
+        staging: staging.clone(),
+        staging_marker: Object::from_bytes(b"lifecycle stage"),
+        budget: publication::Budget {
+            object_bytes: 1024 * 1024,
+            transfer_bytes: 16 * 1024 * 1024,
+            millis: 60000,
+        },
+        allow_publish: true,
+    };
+    let witness = LocalStore::create(&root.join("lifecycle-witness"), key("witness")).unwrap();
+    let mut ledger = CapacityLedger::create(
+        &root.join("lifecycle-ledger"),
+        key("capacity"),
+        key("epoch"),
+        65536,
+    )
+    .unwrap();
+    let probe = ledger
+        .begin_probe(key("probe"))
+        .unwrap()
+        .reference()
+        .clone();
+    ledger
+        .observe(key("observe"), &probe, fs2::available_space(root).unwrap())
+        .unwrap();
+    let job = ledger
+        .reserve(key("job"), key("owner"), 32 * 1024 * 1024)
+        .unwrap()
+        .reference()
+        .clone();
     let meta_root = root.join("lifecycle-metadata");
     let mut writer = MetadataStore::create(&meta_root, nodes_limits()).unwrap();
     let (tree, _) = Tree::build(
@@ -236,18 +264,59 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
     .unwrap();
     let ticket = binding.ticket(packet).unwrap();
     let control_request = binding.control_selection(&mut writer).unwrap();
+    let admission = publication::Admission {
+        namespace: ns.identity().clone(),
+        witness: witness.identity().clone(),
+        capacity: ledger.identity().clone(),
+        job: job.clone(),
+    };
+    let incoming = client::freeze(
+        root,
+        &binding,
+        &profile,
+        &admission,
+        &mut writer,
+        vec![
+            (
+                "packet",
+                binding.controls()["packet"].clone(),
+                raw_packet.as_slice(),
+            ),
+            (
+                "preview",
+                binding.controls()["preview"].clone(),
+                raw_preview.as_slice(),
+            ),
+            (
+                "request",
+                binding.controls()["request"].clone(),
+                raw_request.as_slice(),
+            ),
+            (
+                "tool",
+                binding.controls()["tool"].clone(),
+                raw_tool.as_slice(),
+            ),
+            ("binding", binding.artifact(), binding.control()),
+        ],
+    );
     let cp = writer.finish().unwrap();
     drop(writer);
-    for (name, bytes) in [
-        ("packet", raw_packet.as_slice()),
-        ("preview", raw_preview.as_slice()),
-        ("request", raw_request.as_slice()),
-        ("tool", raw_tool.as_slice()),
-        ("binding", binding.control()),
-    ] {
-        put_native(&f, name, bytes);
-    }
     let mut metadata = MetadataReader::open(&meta_root, &cp).unwrap();
+    let mut ingress_publisher = Publisher::new(profile.clone()).unwrap();
+    let ingress_held = client::publish(
+        &binding,
+        &profile,
+        &incoming,
+        &mut ingress_publisher,
+        &mut Resources {
+            namespace: &mut ns,
+            metadata: &mut metadata,
+            limits: limits(),
+            witness: &witness,
+            ledger: &mut ledger,
+        },
+    );
     let controls_held = control
         .admit(
             &f.profile,
@@ -263,42 +332,8 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
     input.admit_claim(&claim, &mut metadata, &limits()).unwrap();
     drop(input);
     drop(controls_held);
-    let staging = root.join("lifecycle-staging");
-    fs::create_dir(&staging).unwrap();
-    fs::write(staging.join(".git-asset-staging"), b"lifecycle stage").unwrap();
-    let profile = publication::Profile {
-        pool: f.profile.clone(),
-        retained_place: key("pool"),
-        staging: staging.clone(),
-        staging_marker: Object::from_bytes(b"lifecycle stage"),
-        budget: publication::Budget {
-            object_bytes: 1024 * 1024,
-            transfer_bytes: 16 * 1024 * 1024,
-            millis: 60000,
-        },
-        allow_publish: true,
-    };
-    let witness = LocalStore::create(&root.join("lifecycle-witness"), key("witness")).unwrap();
-    let mut ledger = CapacityLedger::create(
-        &root.join("lifecycle-ledger"),
-        key("capacity"),
-        key("epoch"),
-        65536,
-    )
-    .unwrap();
-    let probe = ledger
-        .begin_probe(key("probe"))
-        .unwrap()
-        .reference()
-        .clone();
-    ledger
-        .observe(key("observe"), &probe, fs2::available_space(root).unwrap())
-        .unwrap();
-    let job = ledger
-        .reserve(key("job"), key("owner"), 32 * 1024 * 1024)
-        .unwrap()
-        .reference()
-        .clone();
+    drop(ingress_held);
+    drop(incoming);
     // Initial manual waiting checks all controls and inputs; no result exists yet.
     let opens = std::rc::Rc::new(std::cell::Cell::new(0));
     let cfg = Configuration {
@@ -406,29 +441,41 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
         )
         .unwrap();
     handoff::final_selection(&binding, &prepared, &mut writer).unwrap();
+    let incoming = client::freeze(
+        root,
+        &binding,
+        &profile,
+        &admission,
+        &mut writer,
+        vec![
+            (
+                "return",
+                artifact("control/raw-return", &raw_return, "application/json"),
+                raw_return.as_slice(),
+            ),
+            (
+                "plans",
+                artifact("control/frozen-plans", &plan_bytes, "application/json"),
+                plan_bytes.as_slice(),
+            ),
+        ],
+    );
     let cp = writer.finish().unwrap();
     drop(writer);
-    // These are explicit fixture control ingress operations, separate from outputs.
-    // SDK publication of task outputs still starts only after Journal ImportPending.
-    let pool = f.profile.pool.clone();
-    for (name, bytes) in [
-        ("raw-return", raw_return.as_slice()),
-        ("plans", plan_bytes.as_slice()),
-    ] {
-        let o = Object::from_bytes(bytes);
-        let input = root.join(name);
-        fs::write(&input, bytes).unwrap();
-        run(
-            &pool,
-            true,
-            &[
-                "setkey",
-                &format!("SHA256-s{}--{}", o.bytes, o.sha256.as_str()),
-                input.to_str().unwrap(),
-            ],
-        );
-    }
     let mut metadata = MetadataReader::open(&meta_root, &cp).unwrap();
+    let ingress_held = client::publish(
+        &binding,
+        &profile,
+        &incoming,
+        &mut ingress_publisher,
+        &mut Resources {
+            namespace: &mut ns,
+            metadata: &mut metadata,
+            limits: limits(),
+            witness: &witness,
+            ledger: &mut ledger,
+        },
+    );
     drop(
         returns
             .admit(
@@ -440,6 +487,8 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
             )
             .unwrap(),
     );
+    drop(ingress_held);
+    drop(incoming);
     let produced = root.join("produced");
     fs::create_dir(&produced).unwrap();
     fs::create_dir(produced.join("objects")).unwrap();
@@ -466,28 +515,27 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
     })
     .unwrap();
     if uncertain {
-        let mut producer = source;
-        let mut pubber = Publisher::new(profile.clone()).unwrap();
-        let plan = &prepared.plans()["output/note"];
-        let failure = pubber.apply_hook(
-            plan,
-            &mut Resources {
-                namespace: &mut ns,
-                metadata: &mut metadata,
-                limits: limits(),
-                witness: &witness,
-                ledger: &mut ledger,
-            },
-            &mut producer,
-            |stage| {
-                if stage == publication::Stage::Imported {
-                    Err(publication::Error::Uncertain)
-                } else {
-                    Ok(())
-                }
-            },
+        crash::active_exit(
+            root,
+            &cfg,
+            &profile,
+            &cp,
+            &ns.checkpoint(),
+            &ledger.checkpoint(),
+            crash::Phase::ImportPending(Box::new(prepared.candidates().result().clone())),
         );
-        assert!(matches!(failure, Err(publication::Error::Uncertain)));
+        crash::active_exit(
+            root,
+            &cfg,
+            &profile,
+            &cp,
+            &ns.checkpoint(),
+            &ledger.checkpoint(),
+            crash::Phase::NativeImport,
+        );
+        journal = Journal::open(&path).unwrap();
+        assert_eq!(journal.state(), JournalState::ImportPending);
+        let opens = std::rc::Rc::new(std::cell::Cell::new(0));
         let mut runtime = Lifecycle::new(
             cfg,
             Publisher::new(profile.clone()).unwrap(),
@@ -498,17 +546,16 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
                 witness: &witness,
                 ledger: &mut ledger,
             },
-            producer,
+            Offline {
+                opens: opens.clone(),
+            },
         )
         .unwrap();
-        let result = prepared.candidates().result().clone();
-        assert_eq!(
-            journal.import(result, &mut runtime).unwrap_err().code,
-            "uncertain"
-        );
+        assert_eq!(journal.resume(&mut runtime).unwrap_err().code, "uncertain");
         assert_eq!(journal.state(), JournalState::ImportPending);
         assert_eq!(journal.resume(&mut runtime).unwrap_err().code, "uncertain");
         let cfg = runtime.into_configuration();
+        assert_eq!(opens.get(), 0);
         crash::active_exit(
             root,
             &cfg,
@@ -681,3 +728,6 @@ fn uncertain_native_effect_never_completes_workflow_or_replays_publication() {
 
 #[path = "lifecycle/crash.rs"]
 mod crash;
+
+#[path = "lifecycle/client.rs"]
+mod client;

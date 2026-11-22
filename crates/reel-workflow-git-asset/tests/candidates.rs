@@ -224,3 +224,79 @@ fn missing_mismatched_and_legacy_plans_cannot_become_a_retained_cohort() {
     );
     assert_eq!(set.prepare(cohort).err().unwrap().kind, ErrorKind::Missing);
 }
+
+#[test]
+fn immutable_control_ingress_preserves_original_bytes_and_refuses_other_objects() {
+    use reel_workflow_git_asset::ingress::Control;
+    let mut raw = b" { original synthetic control } \n".to_vec();
+    let original = raw.clone();
+    let a = artifact("controls/request", &raw, "text/plain");
+    let mut control = Control::new(a.clone(), &raw).unwrap();
+    raw.fill(b'x');
+    let mut held = control
+        .open_verified(&Object::from_bytes(&original))
+        .unwrap();
+    let mut read = vec![];
+    held.read_to_end(&mut read).unwrap();
+    assert_eq!(read, original);
+    assert_eq!(control.artifact(), &a);
+    assert!(matches!(
+        control.open_verified(&Object::from_bytes(&raw)),
+        Err(git_asset_store::existing::Error::Missing)
+    ));
+    let mut peer = control.clone();
+    assert!(peer.open_verified(&Object::from_bytes(&original)).is_ok());
+}
+#[test]
+fn control_ingress_refuses_wrong_bytes_and_bounds_before_copying() {
+    use reel_workflow_git_asset::ingress::Control;
+    let a = artifact("controls/request", b"original", "text/plain");
+    assert!(matches!(Control::new(a.clone(),b"modified"),Err(e) if e.kind==ErrorKind::Integrity));
+    let mut wrong = a.clone();
+    wrong.bytes += 1;
+    assert!(matches!(Control::new(wrong,b"original"),Err(e) if e.kind==ErrorKind::Integrity));
+    let mut large = a.clone();
+    large.bytes = 1024 * 1024 + 1;
+    assert!(matches!(Control::new(large,b"original"),Err(e) if e.kind==ErrorKind::Budget));
+    assert!(matches!(Control::new(a,&vec![0;1024*1024+1]),Err(e) if e.kind==ErrorKind::Budget));
+}
+#[test]
+fn ingress_reuses_original_sdk_plan_wire_and_restores_without_any_source() {
+    use reel_workflow_git_asset::ingress::Control;
+    let temp = tempfile::tempdir().unwrap();
+    let (ticket, raw) = returned(&"a".repeat(40), vec![]);
+    let set = Candidates::bind(&ticket, &raw, "controls/original-return").unwrap();
+    let plans = plans(&set, temp.path());
+    let plan = &plans[RETURN_PACKET];
+    let artifact = set.expected()[RETURN_PACKET].clone();
+    let control = Control::new(artifact.clone(), &raw).unwrap();
+    let wire = control.encode_plan(plan).unwrap();
+    assert_eq!(wire, serde_json::to_vec(plan).unwrap());
+    let pin = Object::from_bytes(&wire);
+    drop(control);
+    drop(raw);
+    let restored = Control::restore_plan(&artifact, &wire, &pin).unwrap();
+    assert_eq!(&restored, plan);
+    assert!(!temp.path().join("absent-pool").exists());
+    assert!(
+        matches!(Control::restore_plan(&artifact,&wire,&Object::from_bytes(b"wrong pin")),Err(e) if e.kind==ErrorKind::Integrity)
+    );
+    let mut other = artifact.clone();
+    other.logical_id = "controls/foreign".into();
+    assert!(
+        matches!(Control::restore_plan(&other,&wire,&pin),Err(e) if e.kind==ErrorKind::Conflict)
+    );
+    let large = vec![b' '; 64 * 1024 + 1];
+    assert!(
+        matches!(Control::restore_plan(&artifact,&large,&Object::from_bytes(&large)),Err(e) if e.kind==ErrorKind::Budget)
+    );
+    assert!(
+        matches!(Control::restore_plan(&artifact,b"{}",&Object::from_bytes(b"{}")),Err(e) if e.kind==ErrorKind::Invalid)
+    );
+    let mut legacy = serde_json::to_value(plan).unwrap();
+    legacy.as_object_mut().unwrap().remove("effect_protocol");
+    let legacy = serde_json::to_vec(&legacy).unwrap();
+    assert!(
+        matches!(Control::restore_plan(&artifact,&legacy,&Object::from_bytes(&legacy)),Err(e) if e.kind==ErrorKind::Unsupported)
+    );
+}
