@@ -387,9 +387,51 @@ The APIs currently accept synthetic rendering confirmations in tests. Actual
 Windows cooked input/echo, persistent transcript, UTF-8 geometry, EOF/Ctrl+C,
 scroll/resize and blocked-output behavior are unimplemented. No console or
 end-to-end timing qualification follows from the protocol component.
-The future input reader must reserve from the same eight-command pool at
-complete line receipt. Adding an independent eight-line input queue beside
-eight occupied protocol credits would violate the global bound.
+
+### Completed lines and IPC share one reservation
+
+`native::input::CommandPool` supplies the same eight slots to the bounded input
+queue and `ParentSession`. The future cooked reader calls `InputSender::line`
+with the original complete-receipt QPC. ASCII/case/32-byte parsing precedes
+reservation; invalid syntax retains no raw line and consumes no command slot.
+The accepted envelope owns a private reservation, its receipt and the observed
+generation captured before enqueue. It is neither cloneable nor serializable.
+
+```mermaid
+flowchart LR
+    accTitle: Input and IPC transfer one reservation instead of reserving twice
+    accDescr: A completed valid line reserves one of eight shared slots before entering the input queue. ParentSession adopts that exact envelope and forwards its original receipt and generation. The reservation stays occupied through acknowledgement display and is freed only after the matching worker credit return. The watchdog sees original receipt counters even before queue adoption.
+    line["Complete valid line<br/>original QPC + generation"] --> reserve["Reserve 1 of 8 shared slots"]
+    reserve --> queued["Input queue owns envelope"]
+    queued -->|"same reservation"| parent["ParentSession accepts<br/>assigns wire command ID"]
+    parent --> ack["Actual ack + display<br/>slot remains occupied"]
+    ack --> returned["Worker credit_released"]
+    returned --> free["Return that slot once"]
+    reserve --> watch["Watch original receipt<br/>including unadopted input"]
+```
+
+For example, **four queued lines plus four commands awaiting credit return are
+eight total**. Adopting a queued line leaves the total at eight. Displaying its
+acknowledgement still leaves eight; the matching worker return reduces it to
+seven. No independent eight-line allowance can sit beside the protocol pool.
+
+Ownership and original receipt are published in one atomic slot operation.
+The watchdog samples those receipts before sampling QPC, including queued lines
+that no consumer has adopted. A stalled consumer therefore cannot postpone the
+100 ms gate. Actual display marks the slot acknowledged for timing while keeping
+it occupied until worker credit return. Rejection, final close and destruction
+return the owned reservation once; no numeric lease is reconstructed from IPC.
+
+Parent adoption checks pool identity and preserves receipt/generation. A Pause
+queued under generation zero still carries zero after the parent observes
+generation one; the real core's existing stale-generation check decides its
+refusal. Queue delay cannot be replaced with a fresh receipt time. Overflow is
+terminal, queued old commands are discarded after closure/fault, and local
+Status/Quit remain available. Parent destruction closes input admission.
+
+This completes the shared queue/protocol reservation mechanism. The actual
+cooked Windows reader, physical rendering and full cleanup/lifetime integration
+remain open; synthetic line producers are not console qualification.
 
 ### Existing runner and output ports
 
@@ -403,7 +445,8 @@ original `run_quiet` callers keep their existing path and incur no new process
 memory queries. No second launcher, cache or telemetry store was added.
 
 These observations supply the ownership facts needed for private-pipe peer
-verification; that integration is still pending. They measure only the primary
+verification in the contained protocol tests; the complete production owner
+integration is still pending. They measure only the primary
 process's peak working set. A zero/failed observation cannot qualify memory use,
 and the session must still measure its foreground process and enforce the
 combined 512 MiB envelope. Job committed-memory limits are a different metric.
@@ -472,8 +515,8 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest foreground/worker/controller checkpoint: 91 unit cases, five CLI cases and
-11 explicit original/runtime-input cases passed: **107 distinct focused cases**. The
+Latest input/foreground/worker checkpoint: 103 unit cases, five CLI cases and
+11 explicit original/runtime-input cases passed: **119 distinct focused cases**. The
 original-input invocation ran with zero ignored cases; the six ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains

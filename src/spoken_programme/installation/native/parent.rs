@@ -2,6 +2,7 @@
 //! remain separate: display confirmation is an integration boundary, not proof
 //! that any particular console has rendered these observations.
 use super::{
+    input::{CommandLease, CommandPool, QueuedCommand},
     output::OutputClock,
     pipe::Channel,
     protocol::{Input, Output, ParentGate, Preparation, RuntimeBinding},
@@ -33,6 +34,7 @@ pub struct LayoutObservation {
     pub output_code_page: u32,
 }
 struct Credit {
+    lease: CommandLease,
     id: u64,
     command: Command,
     received_us: u64,
@@ -56,6 +58,7 @@ struct PendingDisplay {
 /// supplied here must come from the existing held process owner, not a child
 /// report. Construction performs no console I/O, originals check or device work.
 pub struct ParentSession {
+    input: CommandPool,
     channel: Channel,
     gate: ParentGate,
     _runtime: Arc<RuntimeBinding>,
@@ -89,6 +92,7 @@ impl ParentSession {
         clock: OutputClock,
     ) -> Result<Self> {
         Ok(Self {
+            input: CommandPool::new(),
             gate: ParentGate::new(runtime.context(), worker_pid, nonce)?,
             channel,
             _runtime: runtime,
@@ -127,6 +131,10 @@ impl ParentSession {
     pub fn outstanding(&self) -> usize {
         self.credits.len()
     }
+    /// Give the cooked reader this same pool before creating its input queue.
+    pub fn command_pool(&self) -> CommandPool {
+        self.input.clone()
+    }
     pub fn final_displayed(&self) -> bool {
         self.final_displayed
     }
@@ -144,6 +152,7 @@ impl ParentSession {
     fn fault(&mut self) {
         if !self.protocol_fault {
             self.protocol_fault = true;
+            self.input.fault();
             self.gate.end();
             self.displays.clear();
             self.events.clear();
@@ -163,34 +172,91 @@ impl ParentSession {
         self.command(Command::parse(line)?, received_counter)
     }
     pub fn command(&mut self, command: Command, received_counter: i64) -> Result<Option<u64>> {
-        if command == Command::Status
-            && (!self.authorized || self.protocol_fault || self.final_seen || self.quit)
-        {
-            self.emit(ParentEvent::LocalStatus(self.observed))?;
+        if self.input.failed() {
+            self.fault();
+        }
+        if self.local_command(command)? {
             return Ok(None);
         }
+        self.command_available(command)?;
+        let reserved = match self.input.command(command, received_counter) {
+            Ok(reserved) => reserved,
+            Err(error) => {
+                self.fault();
+                return Err(error.into());
+            }
+        };
+        self.accept(reserved)
+    }
+    /// Adopts the exact input reservation, receipt and generation; never
+    /// reserves a second slot or retags a queued line for a newer generation.
+    pub fn accept(&mut self, reserved: QueuedCommand) -> Result<Option<u64>> {
+        let (command, received_counter, generation, lease) = match reserved.unpack(&self.input) {
+            Ok(parts) => parts,
+            Err(error) => {
+                self.fault();
+                return Err(error.into());
+            }
+        };
+        if self.input.failed() {
+            self.fault();
+        }
+        if self.local_command(command)? {
+            return Ok(None);
+        }
+        self.command_available(command)?;
+        let result = self.submit(command, received_counter, generation, lease);
+        if result.is_err() {
+            self.fault();
+        }
+        result.map(Some)
+    }
+    fn local_command(&mut self, command: Command) -> Result<bool> {
+        if command == Command::Status
+            && (!self.authorized
+                || self.protocol_fault
+                || self.final_seen
+                || self.quit
+                || self.input.closed())
+        {
+            self.emit(ParentEvent::LocalStatus(self.observed))?;
+            return Ok(true);
+        }
         if command == Command::Quit
-            && (!self.authorized || self.protocol_fault || self.final_seen || self.quit)
+            && (!self.authorized
+                || self.protocol_fault
+                || self.final_seen
+                || self.quit
+                || self.input.closed())
         {
             self.quit = true;
             self.emit(ParentEvent::QuitRequested)?;
-            return Ok(None);
+            return Ok(true);
         }
+        Ok(false)
+    }
+    fn command_available(&self, command: Command) -> Result<()> {
         ensure!(
-            self.authorized && !self.final_seen && !self.protocol_fault && !self.quit,
+            self.authorized
+                && !self.final_seen
+                && !self.protocol_fault
+                && !self.quit
+                && !self.input.closed(),
             "installation foreground command unavailable"
         );
         ensure!(
             !self.worker_fault || matches!(command, Command::Status | Command::Quit),
             "installation foreground terminal Fault"
         );
-        let result = self.submit(command, received_counter);
-        if result.is_err() {
-            self.fault();
-        }
-        result.map(Some)
+        Ok(())
     }
-    fn submit(&mut self, command: Command, received_counter: i64) -> Result<u64> {
+    fn submit(
+        &mut self,
+        command: Command,
+        received_counter: i64,
+        generation: u64,
+        lease: CommandLease,
+    ) -> Result<u64> {
         let now = counter()?;
         ensure!(
             received_counter >= self.clock.origin().0
@@ -216,7 +282,6 @@ impl ParentSession {
             .last_id
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("installation command ID exhausted"))?;
-        let generation = self.observed.map_or(0, |status| status.generation);
         self.send(
             generation,
             Input::Control {
@@ -228,6 +293,7 @@ impl ParentSession {
         self.last_id = id;
         self.last_receipt = received_counter;
         self.credits.push_back(Credit {
+            lease,
             id,
             command,
             received_us,
@@ -254,6 +320,8 @@ impl ParentSession {
         result
     }
     fn poll(&mut self) -> Result<()> {
+        ensure!(!self.input.failed(), "installation foreground input failed");
+        self.deadlines()?;
         ensure!(
             !self.channel.failed() && !self.channel.stopped(),
             "installation foreground channel ended"
@@ -265,7 +333,6 @@ impl ParentSession {
             );
             return Ok(());
         }
-        self.deadlines()?;
         for _ in 0..8 {
             ensure!(
                 !self.channel.failed() && !self.channel.stopped(),
@@ -288,6 +355,15 @@ impl ParentSession {
         self.deadlines()
     }
     fn deadlines(&self) -> Result<()> {
+        let receipts = self.input.unshown_receipts();
+        let now_counter = counter()?;
+        let frequency = self.clock.origin().1 as u128;
+        ensure!(
+            receipts.into_iter().all(|receipt| receipt == 0
+                || (receipt <= now_counter as u64
+                    && (now_counter as u128 - receipt as u128) * 1_000_000 <= frequency * 100_000)),
+            "installation queued input acknowledgement deadline"
+        );
         let now = self
             .clock
             .now_us()
@@ -350,6 +426,7 @@ impl ParentSession {
             self.worker_fault = true;
         }
         self.observed = Some(snapshot);
+        self.input.publish_generation(snapshot.generation);
         Ok(())
     }
     fn report(&mut self, packet: &Packet) -> Result<()> {
@@ -649,9 +726,11 @@ impl ParentSession {
                     .find(|credit| credit.id == id)
                     .ok_or_else(|| anyhow::anyhow!("installation lost display command credit"))?;
                 credit.shown = Some(at);
+                credit.lease.mark_shown();
             }
             DisplayKind::Final => {
                 self.final_displayed = true;
+                self.input.close();
                 self.credits.clear();
             }
             DisplayKind::Observation => {}
@@ -666,6 +745,11 @@ fn counter() -> Result<i64> {
     }
     ensure!(at > 0, "installation foreground counter unavailable");
     Ok(at)
+}
+impl Drop for ParentSession {
+    fn drop(&mut self) {
+        self.input.close();
+    }
 }
 
 #[cfg(test)]
@@ -822,6 +906,213 @@ mod tests {
         )
         .unwrap();
         item(f)
+    }
+    #[test]
+    fn an_envelope_taken_before_input_closure_cannot_be_forwarded_afterward() {
+        let mut f = fixture();
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        input.line("start", counter().unwrap()).unwrap();
+        let reserved = queued.receive().unwrap();
+        queued.close();
+        assert!(f.parent.accept(reserved).is_err());
+        assert_eq!((pool.occupied(), f.parent.last_id), (0, 0));
+        assert!(f.peer.receive().is_none());
+        assert_eq!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            f.parent.command(Command::Quit, counter().unwrap()).unwrap(),
+            None
+        );
+    }
+    #[test]
+    fn the_watchdog_covers_a_queued_line_even_when_no_consumer_adopts_it() {
+        let mut f = fixture();
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        input.line("stop", counter().unwrap()).unwrap();
+        std::thread::sleep(Duration::from_millis(120));
+        assert!(f.parent.tick().is_err());
+        assert!(queued.receive().is_none());
+        assert_eq!((pool.occupied(), f.parent.last_id), (0, 0));
+        assert!(f.parent.protocol_fault && f.peer.receive().is_none());
+    }
+    #[test]
+    fn displayed_reservations_keep_capacity_without_restarting_the_display_deadline() {
+        let mut f = fixture();
+        let pool = f.parent.command_pool();
+        f.parent
+            .command(Command::Status, counter().unwrap())
+            .unwrap();
+        receive(&mut f.peer);
+        let display = status_ack(&mut f, 1);
+        f.parent.displayed(display.ticket, None).unwrap();
+        receive(&mut f.peer);
+        std::thread::sleep(Duration::from_millis(120));
+        assert_eq!(pool.occupied(), 1);
+        deliver(
+            &mut f,
+            0,
+            Output::CreditReleased {
+                id: 1,
+                generation: 0,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(pool.occupied(), 0);
+        assert!(!f.parent.failed());
+    }
+    #[test]
+    fn queued_and_forwarded_lines_share_the_exact_same_eight_reservations() {
+        let mut f = fixture();
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        for _ in 0..4 {
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap();
+            receive(&mut f.peer);
+        }
+        for _ in 0..4 {
+            input.line("status", counter().unwrap()).unwrap();
+        }
+        assert_eq!((pool.occupied(), f.parent.outstanding()), (8, 4));
+        for _ in 0..4 {
+            f.parent.accept(queued.receive().unwrap()).unwrap();
+            receive(&mut f.peer);
+            assert_eq!(pool.occupied(), 8);
+        }
+        let display = status_ack(&mut f, 1);
+        f.parent.displayed(display.ticket, None).unwrap();
+        receive(&mut f.peer);
+        assert_eq!(pool.occupied(), 8);
+        deliver(
+            &mut f,
+            0,
+            Output::CreditReleased {
+                id: 1,
+                generation: 0,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(pool.occupied(), 7);
+        input.line("status", counter().unwrap()).unwrap();
+        f.parent.accept(queued.receive().unwrap()).unwrap();
+        assert_eq!((pool.occupied(), f.parent.outstanding()), (8, 8));
+    }
+    #[test]
+    fn input_overflow_faults_the_parent_before_queued_commands_are_forwarded() {
+        let mut f = fixture();
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        for _ in 0..4 {
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap();
+            receive(&mut f.peer);
+        }
+        for _ in 0..4 {
+            input.line("start", counter().unwrap()).unwrap();
+        }
+        assert!(input.line("start", counter().unwrap()).is_err());
+        assert!(f.parent.tick().is_err());
+        assert!(queued.receive().is_none());
+        assert_eq!((pool.occupied(), f.parent.last_id), (4, 4));
+        assert!(matches!(f.parent.event(), Some(ParentEvent::Fault)));
+        assert_eq!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            f.parent.command(Command::Quit, counter().unwrap()).unwrap(),
+            None
+        );
+    }
+    #[test]
+    fn queued_generation_and_receipt_are_not_retagged_for_new_parent_observation() {
+        let mut f = fixture();
+        ready(&mut f);
+        f.parent
+            .command(Command::Start, counter().unwrap())
+            .unwrap();
+        receive(&mut f.peer);
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        let receipt = counter().unwrap();
+        input.line("pause", receipt).unwrap();
+        let mut snapshot = ready_snapshot();
+        snapshot.state = State::Starting;
+        snapshot.generation = 1;
+        snapshot.command_sequence = 1;
+        deliver(
+            &mut f,
+            1,
+            Output::Ack {
+                id: 1,
+                snapshot,
+                refusal: None,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        f.parent.accept(queued.receive().unwrap()).unwrap();
+        let packet = receive(&mut f.peer);
+        assert_eq!(packet.generation(), 0);
+        assert!(
+            matches!(Input::parse(&packet).unwrap(), Input::Control { id: 2, command: Command::Pause, received_counter } if received_counter == receipt)
+        );
+        assert_eq!(pool.occupied(), 2);
+    }
+    #[test]
+    fn foreign_input_reservations_cannot_enter_a_parent_session() {
+        let mut f = fixture();
+        let foreign = CommandPool::new();
+        let reserved = foreign.command(Command::Start, counter().unwrap()).unwrap();
+        assert!(f.parent.accept(reserved).is_err());
+        assert_eq!(
+            (
+                foreign.occupied(),
+                f.parent.command_pool().occupied(),
+                f.parent.last_id
+            ),
+            (0, 0, 0)
+        );
+        assert!(f.parent.protocol_fault);
+        assert!(f.peer.receive().is_none());
+    }
+    #[test]
+    fn queued_time_is_included_in_the_original_receipt_budget() {
+        let mut f = fixture();
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        input.line("start", counter().unwrap()).unwrap();
+        std::thread::sleep(Duration::from_millis(120));
+        assert!(f.parent.accept(queued.receive().unwrap()).is_err());
+        assert_eq!((pool.occupied(), f.parent.last_id), (0, 0));
+        assert!(f.parent.protocol_fault);
+        assert!(f.peer.receive().is_none());
+    }
+    #[test]
+    fn parent_destruction_closes_admission_while_external_input_leases_return_once() {
+        let f = fixture();
+        let pool = f.parent.command_pool();
+        let (mut input, mut queued) = pool.channel();
+        input.line("status", counter().unwrap()).unwrap();
+        let reserved = queued.receive().unwrap();
+        drop(f.parent);
+        assert!(pool.closed());
+        assert_eq!(pool.occupied(), 1);
+        drop(reserved);
+        assert_eq!(pool.occupied(), 0);
+        assert!(input.line("start", counter().unwrap()).is_err());
     }
     #[test]
     fn invalid_ack_does_not_replace_the_last_admitted_snapshot() {

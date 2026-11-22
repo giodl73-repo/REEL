@@ -383,6 +383,42 @@ That is **107 distinct focused passing cases**. Formatting, whitespace,
 actionlint and changed-document relative links passed. No actual console,
 endpoint, playback, capture, human listening/usability or release is qualified.
 
+## Shared input and protocol reservations checkpoint
+
+The same assistant applied Platform/Audience, Editor, Sound and
+Rights/Provenance checklists to the input queue and parent adoption path. These
+are checklist findings, not independent reviews or human approval.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Platform/Audience — one bound | Completed valid input owns one of the same eight slots used by foreground credits. A non-copyable runtime envelope transfers that reservation into ParentSession; it is not reserved again. Four queued plus four forwarded commands remain eight through adoption/display and become seven only after a matching worker return. Concurrent reservation tests never exceed eight. |
+| Platform/Audience — queued deadlines | Watching only adopted credits leaves a stalled input consumer outside the original receipt budget. Each slot now publishes ownership and its original positive QPC in one atomic operation. The parent snapshots those receipts before sampling QPC and watches unadopted lines too. A 120 ms queued Stop faults without assigning an ID or forwarding anything. |
+| Editor/Sound — unchanged scope | Input envelopes preserve receipt and generation through queueing. A Pause queued under generation zero still forwards zero after generation one is observed; the existing actual-core stale-generation refusal remains authoritative. No frame/cursor/DSP behavior changed. |
+| Rights/Provenance — runtime identity | Parent adoption requires the same pool instance. Foreign envelopes cannot assign a wire ID. Leases are not Clone/Serde, cannot be reconstructed from metadata, and return once through rejection, actual worker credit return or final destruction. No original media/runtime identity or creative authority changes. |
+| Platform/Audience — lifecycle | Fault/closure discard old queued work; an envelope already removed from the queue cannot cross input closure into IPC. Local Status/Quit survive. Parent destruction closes admission; external held reservations return once at destruction. Display completion ends acknowledgement timing while capacity remains held until worker credit return. |
+
+The held-child missing-original flow now produces Status/Quit through the actual
+shared input queue and parent adoption path, then observes actual credit return,
+final display confirmation, zero occupied slots and closed admission. Its input
+and display producers remain synthetic; no Windows console/device is opened.
+
+Qualification on the exclusive Windows target:
+
+- Final installation unit filter: **103 passed**, zero failed, in 27.67 s. This
+  adds three portable pool cases and nine queue/parent cases to the prior 91;
+  the six ordinary ignored native/allocator fixtures remain parent-launched.
+- Explicit original/runtime-input integration: **11 passed**, zero failed or
+  ignored, in 38.98 s; native CLI **five passed**, zero failed or ignored, in
+  0.15 s. These ran after the shared receipt-slot change. The final parent-only
+  closed-input guard was then qualified by the full 103-case unit filter and
+  all-target lint; unchanged original-input/CLI execution was not repeated.
+- Final all-target/all-feature Clippy passed with warnings denied in 49.63 s.
+
+That is **119 distinct focused passing cases**, not a sum of repeated runs or
+fixture children. Formatting, whitespace, actionlint and relative documentation
+targets passed. Actual cooked input, persistent rendering, EOF/Ctrl+C, native
+cleanup/lifetime timing and station qualification remain open.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
@@ -397,9 +433,9 @@ implemented, including a contained missing-original flow. Full contained
 success/cancellation and actual rendering tests, global foreground input/console
 integration, native cancellation through the complete process owner and all
 aggregate deadlines remain open.
-The cooked-input queue must share the existing credit reservation at complete
-line receipt; a separate eight-line queue cannot be added beside eight protocol
-credits and called a global bound.
+The shared queue/protocol reservation path now exists. The actual cooked reader
+must use that exact pool at complete line receipt; an independent eight-line
+allowance must not be introduced when wiring Windows input.
 Final delivery must be observed before IPC shutdown; actual tree reaping and
 combined working-set evidence must come from the held owner. A normal or failed
 join cannot manufacture a two-second cleanup pass. Lifetime termination still

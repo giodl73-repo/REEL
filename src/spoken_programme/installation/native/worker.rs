@@ -689,9 +689,17 @@ mod tests {
                     clock,
                 )
                 .unwrap();
+                let input_pool = foreground.command_pool();
+                let (mut input, mut lines) = input_pool.channel();
                 let (mut fault, mut status, mut status_ack, mut quit) =
                     (false, false, false, false);
                 while !foreground.final_displayed() {
+                    for _ in 0..8 {
+                        let Some(line) = lines.receive() else {
+                            break;
+                        };
+                        foreground.accept(line).unwrap();
+                    }
                     foreground.tick().unwrap();
                     while let Some(event) = foreground.event() {
                         let ParentEvent::Display(item) = event else {
@@ -733,21 +741,27 @@ mod tests {
                         foreground.displayed(item.ticket, None).unwrap();
                     }
                     if fault && !status {
-                        foreground
-                            .command(Command::Status, counter().unwrap())
-                            .unwrap();
+                        input.line("status", counter().unwrap()).unwrap();
                         status = true;
                     }
-                    if status_ack && foreground.outstanding() == 0 && !quit {
-                        foreground
-                            .command(Command::Quit, counter().unwrap())
-                            .unwrap();
+                    if status_ack
+                        && foreground.outstanding() == 0
+                        && input_pool.occupied() == 0
+                        && !quit
+                    {
+                        input.line("quit", counter().unwrap()).unwrap();
                         quit = true;
                     }
                     assert!(Instant::now() < deadline);
                     std::thread::sleep(Duration::from_millis(2));
                 }
-                assert!(status_ack && quit && foreground.outstanding() == 0);
+                assert!(
+                    status_ack
+                        && quit
+                        && foreground.outstanding() == 0
+                        && input_pool.occupied() == 0
+                        && input_pool.closed()
+                );
                 std::fs::write(
                     root.path().join("observed.marker"),
                     b"actual foreground observed closure",
