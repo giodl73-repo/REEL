@@ -10,6 +10,8 @@ use std::{
 };
 #[path = "support/film_review_fixture.rs"]
 mod fixture;
+#[path = "../examples/support/film_repair.rs"]
+mod repair_demo;
 use fixture::{fixture, frame, manifest, reference, save};
 
 #[test]
@@ -70,16 +72,18 @@ fn real_native_receipt_drives_visible_frame_exact_ids_with_unchanged_audio_and_t
         map: descriptor("review-map.json", "application/json"),
         receipt: descriptor("receipt.json", "application/json"),
         findings: vec![reel_workflow::film_review::Finding {
-            id: "synthetic-cut".into(),
+            id: "synthetic-green-cel".into(),
             target_id: "p-b".into(),
             frame: 24,
-            category: reel_workflow::film_review::Category::Timing,
+            category: reel_workflow::film_review::Category::Picture,
             method: reel_workflow::film_review::Method::DeterministicCheck,
-            observation: "Synthetic cut target check.".into(),
+            observation:
+                "Controlled synthetic expectation: C101 should be green; its center pixel is blue."
+                    .into(),
             evidence: vec![],
         }],
     };
-    let bindings = [
+    let bindings: reel_workflow::manual::FileBindings = [
         (&report.review, "review.mp4"),
         (&report.map, "review-map.json"),
         (&report.receipt, "receipt.json"),
@@ -89,11 +93,20 @@ fn real_native_receipt_drives_visible_frame_exact_ids_with_unchanged_audio_and_t
     .collect();
     let drafts = reel_workflow::film_review::draft(
         &report,
-        &mut reel_workflow::film_review::Files::new(bindings),
+        &mut reel_workflow::film_review::Files::new(bindings.clone()),
     )
     .unwrap();
     assert_eq!(drafts[0].target, map.targets[1]);
     assert!(!drafts[0].issue_submitted && !drafts[0].selection_applied);
+    repair_demo::run(
+        root,
+        &reel_workflow::film_review::ExportRequest {
+            schema: "reel.workflow-film-findings-export.v1".into(),
+            report,
+            files: bindings,
+        },
+    )
+    .unwrap();
     let frames: Vec<_> = [0, 23, 24, 47]
         .into_iter()
         .map(|n| frame(&output.join("review.mp4"), n))
