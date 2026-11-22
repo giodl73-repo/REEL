@@ -87,3 +87,29 @@ After the complete first cycle, rebase onto that base and require a fresh full
 qualification before merge. First-cycle component passes are not an overall
 current-base pass. The PR records the exact final head and result; no run was
 cancelled and no actual endpoint was used.
+
+### Repeated shell-fixture failure
+
+The second current-base cycle,
+[CI 45038530702](https://github.com/giodl73-repo/REEL/actions/runs/45038530702),
+completed in 14m38s and also failed only the same synthetic PowerShell case. Both OS ordinary/Clippy
+jobs and [assembly/source](https://github.com/giodl73-repo/REEL/actions/runs/45038530707)
+passed. Repeating the same full cycle again without addressing that dependency
+would not resolve the gate.
+
+Replace only that test's installed executable with the actual native Rust test
+image, outside the job workspace. Three ignored child fixtures explicitly
+exercise successful output, nonzero failure and a stalled process. The parent
+still ingests/registers the executable, verifies retained output, rejects a
+changed hash and absent path, and exercises the existing 30 s success / 1 s
+timeout controls. No production runner, admission rule, timeout or check is
+weakened. These child entries are invoked by their parent, not counted as extra
+ordinary passes. The focused parent passed in 4.45s and affected-crate
+warnings-denied Clippy passed. Full all-target asset validation then passed:
+236 library cases (including the installed-runtime parent under parallel load),
+41 binary-unit cases and 61 integration cases, **338 distinct passes**. The
+three child fixtures are ordinary ignored entries but are invoked by the parent.
+The library suite completed in 18.60s. After tightening the parent's output
+oracle to the exact declared text and its failure oracle to exit 101, the final
+focused parent passed again in 4.49s and affected-crate Clippy in 3.67s. A new
+full current-base hosted cycle must qualify this exact correction before merge.
