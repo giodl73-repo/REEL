@@ -173,6 +173,20 @@ jobs:
         if: matrix.lane == 'core' && matrix.shard == 2
         run: |
           cargo test --locked --all-features --test spoken_programme_media lesson:: -- --ignored --test-threads=1
+      - name: Qualify spoken companion clocks and original input bindings
+        if: matrix.lane == 'core' && matrix.shard == 2
+        run: |
+          cargo test --locked --all-features --test spoken_programme_media companion:: -- --ignored --skip companion::native:: --test-threads=1
+      - name: Qualify spoken companion native SVG frames and exact PCM
+        if: matrix.lane == 'core' && matrix.shard == 2 && runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $browserProgram = Join-Path ${env:ProgramFiles(x86)} 'Microsoft/Edge/Application/msedge.exe'
+          if (-not (Test-Path -LiteralPath $browserProgram -PathType Leaf)) { throw 'Explicit Edge fixture runtime unavailable' }
+          $env:REEL_TEST_BROWSER = $browserProgram
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          cargo test --locked --all-features --test spoken_programme_media companion::native:: -- --ignored --test-threads=1
       - name: Verify exact native audio recovery without picture inputs
         if: matrix.lane == 'media' && (runner.os == 'Windows')
         shell: pwsh

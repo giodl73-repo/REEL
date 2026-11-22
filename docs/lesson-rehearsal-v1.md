@@ -1,10 +1,11 @@
 # Source-bound lesson and rehearsal package
 
-**Status:** M09 implementation under qualification on merged M08
-`d48c42722bf33e2868653872c2fe5b5939f83796`, [PR #391](https://github.com/giodl73-repo/REEL/pull/391).
-Its required CI passed in 22 minutes 33 seconds. M09 implementation has started
-with the admitted score-input seam, lesson index and public synthetic fixtures.
-Local qualification passed 82 distinct tests and all-feature Clippy. Required hosted qualification remains pending.
+**Status:** M09 merged as `b95a6c2` in [PR #394](https://github.com/giodl73-repo/REEL/pull/394).
+Local qualification passed 82 distinct tests and all-feature Clippy. Final
+[Rust/FFmpeg CI](https://github.com/giodl73-repo/REEL/actions/runs/44947459345)
+passed in 23m34s; [assembly/browser/source replay](https://github.com/giodl73-repo/REEL/actions/runs/44947459480)
+passed in 5m52s. All five lesson cases ran on both operating systems.
+Musical, listening, authority, device and adoption gates remain separate.
 
 The package connects an explanation, an editable score, checked notation exports
 and a selected audio reference. A repeated passage has an explicit occurrence ID;

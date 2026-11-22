@@ -61,6 +61,20 @@ refer to the same original written ticks. The index keeps the spoken clock,
 score clock and virtual exercise positions explicit. It does not create a player
 or turn a timing guide into a performance master.
 
+## Visual companions follow the selected language
+
+A [semantic visual companion](../semantic-visual-companion-v1.md) keeps two
+shared event IDs while resolving each language's own entrances. In the synthetic
+render fixture, English changes picture at frames 24/48 and Spanish at 30/60.
+A replacement English take moves the first entrance to frame 25; the Spanish
+clock/evidence bytes stay identical. The existing SVG adapter consumes those
+clocks, and independent decoded frames and PCM check the result.
+
+Phrase bindings require original word evidence. The synthetic render fixtures
+use explicit engineering markers and retain signal labels in text access;
+they are separate from the lexical phrase examples and human listening review.
+The detailed contract records the bounded profile and current qualification.
+
 ## Delivery is another relationship
 
 Rendering a movie, selecting it for release, copying it to a destination and
@@ -78,6 +92,7 @@ checkpoint rather than the target's perpetual current state.
 | Assemble supported PDFs | [Native print collections](../native-print-collections.md) |
 | Bind authored wording, audio chapters and print pages | [Narrated reading editions](../narrated-reading-v1.md) |
 | Connect an explanation, editable pickup and repeated exercise passages | [Lesson and rehearsal package](../lesson-rehearsal-v1.md) |
+| Follow language-local phrases with an existing SVG composition | [Semantic visual companions](../semantic-visual-companion-v1.md) |
 | Export an editorial interchange | [OpenTimelineIO](../otio-export-v0.2.40.md) |
 | Track selected revisions and target evidence | [Delivery use case](../use-cases.md#track-a-delivery-over-time), [history host](../tig-history.md), [delivery observation](../tig-delivery-observation.md) |
 | Recheck retained movie/source correspondence | [Retained delivery checker](../tig-retained-delivery-check.md) |
