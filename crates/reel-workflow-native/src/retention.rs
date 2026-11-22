@@ -80,29 +80,31 @@ pub(crate) fn outputs(
     source: &NativeProfile,
     result: &ReturnedResult,
 ) -> Result<Vec<reader::VerifiedRead>> {
-    if result.artifacts.len() > 32
+    if result.artifacts.len() + usize::from(result.worker_receipt.is_some()) > 32
         || result
             .artifacts
             .values()
+            .chain(result.worker_receipt.iter())
             .try_fold(0u64, |n, a| n.checked_add(a.bytes))
             .is_none_or(|n| n > 128 * 1024 * 1024)
     {
         return Err(error(ErrorKind::Budget, "retention-output-bounds"));
     }
-    result
+    let objects = result
         .artifacts
         .values()
+        .chain(result.worker_receipt.iter())
         .map(|a| {
-            reader::open(
-                &source.source,
-                &Object {
-                    sha256: tig_core::Digest::parse(&a.sha256)
-                        .map_err(|_| error(ErrorKind::Invalid, "retention-output-digest"))?,
-                    bytes: a.bytes,
-                },
-            )
-            .map_err(io_error)
+            Ok(Object {
+                sha256: tig_core::Digest::parse(&a.sha256)
+                    .map_err(|_| error(ErrorKind::Invalid, "retention-output-digest"))?,
+                bytes: a.bytes,
+            })
         })
+        .collect::<Result<std::collections::BTreeSet<_>>>()?;
+    objects
+        .iter()
+        .map(|object| reader::open(&source.source, object).map_err(io_error))
         .collect()
 }
 
@@ -141,13 +143,29 @@ pub fn retain(
     target: &Target,
 ) -> Result<Acknowledgement> {
     check(packet, receipt, result)?;
+    retain_verified(packet, source, profile, receipt, result, target)
+}
+/// Called only by a live production-specific adapter or the public verified
+/// external path. A serialized worker receipt is not this validation capability.
+pub(crate) fn retain_verified(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    target: &Target,
+) -> Result<Acknowledgement> {
+    check_result(packet, result)?;
+    if result.attempt_id != receipt.attempt_id {
+        return Err(error(ErrorKind::Conflict, "retention-original-attempt"));
+    }
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     if let Some(ack) = prepared
         .completed_retention(receipt, result, target)
         .map_err(|e| phase(e, "retention-completed-probe"))?
     {
-        let _verified = verify(packet, source, profile, receipt, result, &ack)?;
+        let _verified = verify_qualified(packet, source, profile, receipt, result, &ack)?;
         return Ok(ack);
     }
     let (guard, candidate) = prepared
@@ -177,6 +195,20 @@ pub fn verify(
     acknowledgement: &Acknowledgement,
 ) -> Result<RetainedGuard> {
     check(packet, receipt, result)?;
+    verify_qualified(packet, source, profile, receipt, result, acknowledgement)
+}
+pub(crate) fn verify_qualified(
+    packet: &Packet,
+    source: &NativeProfile,
+    profile: &admission::Profile,
+    receipt: &Receipt,
+    result: &ReturnedResult,
+    acknowledgement: &Acknowledgement,
+) -> Result<RetainedGuard> {
+    check_result(packet, result)?;
+    if result.attempt_id != receipt.attempt_id {
+        return Err(error(ErrorKind::Conflict, "retention-original-attempt"));
+    }
     let _annex = hold_tool(&source.annex)?;
     let prepared = Prepared::open(packet, source, profile, &receipt.attempt_id)?;
     let fences = prepared.verify_retained(receipt, result, acknowledgement)?;
