@@ -46,6 +46,46 @@ selection, new-path registration, active-profile adoption, the project authority
 implementation and protected affected-consumer rebuilds remain separate work.
 There is no image-selection CLI until those producing-project controls are wired.
 
+## Retained inputs for child tasks
+
+`upstream::Frozen::capture` binds each child input to an exact parent packet,
+result and named output (or worker receipt). The portable contract checks the
+project, result digest, logical artifact and explicit source-snapshot rules.
+Snapshot v3 adds a frozen origin declaration and an explicit input budget while
+preserving v1/v2 declaration bytes when origins are absent. Native operation
+witnesses (index/store, actor/owner, activation, work, source archive and retained
+acknowledgement) are archived with the child. They affect its native admission
+identity without replacing its portable logical parent identity.
+
+Frozen JSON is not admission authority. Generic `Prepared::accept` refuses all
+upstream tasks. `upstream::Admission::prepare` checks actual parent retention,
+reopens complete parent results and holds shared retained-owner fences and
+controller namespace guards until child acceptance settles. Temporary byte gates
+drop before the native index transaction. The child gets its own positive input
+claims and may then use the existing manual or guarded film producer paths.
+Parents are not released, reselected or retired. A waiting child keeps its claims
+after process exit; timeout/cancellation does not delete bytes or close a slot.
+
+```text
+preview-upstream-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE PARENTS ATTEMPT
+accept-upstream-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE PARENTS ATTEMPT NEW_RECEIPT --apply
+```
+
+Parent controls use `reel.workflow-native-parents.v1`. All parents and the child
+must share the same existing index, metadata/controller roots and exact enrolled
+reader/store. A different per-object read ceiling is allowed; another pool or
+retained actor reused as the child slot is refused. Shared parent owners acquire
+one session fence per controller/actor, not recursive locks. Reopen/recovery uses
+the original child receipt and frozen witnesses, not a fresh operation identity.
+
+The existing 1 GiB combined admission envelope, 512 objects, 128 changed paths,
+16 total actors and external-response ceiling remain unchanged. Legacy upstream
+v1/v2 buffered bindings have a 64 MiB envelope; explicit streaming v3 bindings
+allow larger authored declarations (16 GiB/object, 64 GiB total). Such declarations
+are not episode-scale admission or streaming-composition qualification. Existing
+`NativeInputs::stream` and the film file bridge provide bounded byte access after
+claims; caller memory/workspace/execution limits still apply.
+
 It builds on [SDK intake PR #389](https://github.com/giodl73-repo/REEL/pull/389).
 The separate workspace/lock preserves the existing producer SDK and root lock.
 All original SDK/module source pins remain unchanged. The original slots module

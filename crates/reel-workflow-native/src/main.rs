@@ -127,7 +127,7 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             Ok(serde_json::json!({"film_process_child_verified": true, "task_completed": false}))
         }
         [command] if command == "capabilities" => Ok(
-            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
+            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"retained_child_inputs":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
         ),
         [command, packet, source, request, output] if command == "inspect-film" => {
             let packet = read_control(Path::new(packet))?;
@@ -380,6 +380,64 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"scope":"private-guarded-input-export","workspace":summary,"retained_owner_acknowledged":false,"input_claims_released":false,"task_completed":false,"selected":false}),
             )
         }
+        [command, packet, source, profile, parents, attempt]
+            if command == "preview-upstream-admission" =>
+        {
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let parents: reel_workflow_native::upstream::Parents =
+                read_control(Path::new(parents))?;
+            let prepared = reel_workflow_native::upstream::Admission::prepare(
+                &packet,
+                &source,
+                &profile,
+                attempt,
+                parents.borrowed()?,
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"retained-parent-input-preview","budget":prepared.preview()?,"parent_retention_verified":true,"child_claims_accepted":false,"selected":false}),
+            )
+        }
+        [
+            command,
+            packet,
+            source,
+            profile,
+            parents,
+            attempt,
+            output,
+            apply,
+        ] if command == "accept-upstream-admission" && apply == "--apply" => {
+            use std::io::Write;
+            let packet = read_control(Path::new(packet))?;
+            let source = read_control(Path::new(source))?;
+            let profile = read_control(Path::new(profile))?;
+            let parents: reel_workflow_native::upstream::Parents =
+                read_control(Path::new(parents))?;
+            let prepared = reel_workflow_native::upstream::Admission::prepare(
+                &packet,
+                &source,
+                &profile,
+                attempt,
+                parents.borrowed()?,
+            )?;
+            let mut file = new_receipt(Path::new(output), &source, &profile)?;
+            let receipt = prepared.accept()?;
+            let _guard = reel_workflow_native::admission::Prepared::open(
+                &packet, &source, &profile, attempt,
+            )?
+            .reopen(&receipt)?;
+            file.write_all(&receipt.canonical_bytes()?)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "upstream-reconcile-original-receipt".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"scope":"child-owned-retained-input-claims","parent_retention_verified":true,"child_claims_accepted":true,"producer_executed":false,"selected":false}),
+            )
+        }
         [command, packet, source, profile, attempt] if command == "preview-admission" => {
             let packet = read_control(Path::new(packet))?;
             let source = read_control(Path::new(source))?;
@@ -497,6 +555,8 @@ fn main() -> ExitCode {
             "reel-workflow-native check-snapshot PACKET PROFILE\n",
             "reel-workflow-native check-native-inputs PACKET PROFILE\n",
             "reel-workflow-native preview-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT\n",
+            "reel-workflow-native preview-upstream-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE PARENTS ATTEMPT\n",
+            "reel-workflow-native accept-upstream-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE PARENTS ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native accept-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE ATTEMPT NEW_RECEIPT --apply\n",
             "reel-workflow-native reopen-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT\n",
             "reel-workflow-native prepare-stage PACKET NATIVE_PROFILE ADMISSION_PROFILE RECEIPT STAGING_PROFILE NEW_TICKET\n",

@@ -62,6 +62,59 @@ pub struct RetainedGuard {
     _annex: File,
     _outputs: Vec<reader::VerifiedRead>,
 }
+/// Complete parent verification without retaining byte gates across a new
+/// child's native index transaction. Session fences keep parent ownership live.
+pub(crate) struct ReadPin {
+    _prepared: Prepared,
+    _annex: File,
+}
+pub(crate) fn pin_for_read(
+    parent: &crate::upstream::Parent<'_>,
+    session: &mut admission::RetainedFences,
+) -> Result<ReadPin> {
+    check_result(parent.packet, parent.result)?;
+    if parent.result.attempt_id != parent.receipt.attempt_id {
+        return Err(error(ErrorKind::Conflict, "upstream-parent-attempt"));
+    }
+    let annex = hold_tool(&parent.source.annex)?;
+    let prepared = Prepared::open(
+        parent.packet,
+        parent.source,
+        parent.admission,
+        &parent.receipt.attempt_id,
+    )?;
+    prepared.verify_retained_in(
+        parent.receipt,
+        parent.result,
+        parent.acknowledgement,
+        session,
+    )?;
+    let allowance = if parent.result.provenance.mode == reel_workflow::Mode::Tool {
+        #[cfg(all(windows, feature = "film"))]
+        {
+            crate::film_task::retained_allowance(
+                parent.packet,
+                parent.source,
+                parent.receipt,
+                parent.result,
+            )?
+        }
+        #[cfg(not(all(windows, feature = "film")))]
+        {
+            return Err(error(
+                ErrorKind::Unsupported,
+                "upstream-tool-parent-adapter-required",
+            ));
+        }
+    } else {
+        crate::output_bounds::Allowance::EXTERNAL
+    };
+    drop(outputs_bounded(parent.source, parent.result, allowance)?);
+    Ok(ReadPin {
+        _prepared: prepared,
+        _annex: annex,
+    })
+}
 
 fn check(packet: &Packet, receipt: &Receipt, result: &ReturnedResult) -> Result<()> {
     check_result(packet, result)?;
