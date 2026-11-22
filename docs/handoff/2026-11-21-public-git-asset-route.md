@@ -203,3 +203,54 @@ observation, not such a generation guard. This crate deliberately does not yet
 implement ProtectedJob/Lifecycle or mark semantic completion. Existing native
 route, private vendor and existing jobs remain unchanged. No cache adoption,
 production publication, provider calls, rendering or deletion was performed.
+
+## Owned preparation entry
+
+Input d672de8ee7507ba630015281c51e7e8a6708c27a, same pinned public SDK;
+WP-004/008/009/011/016 and existing exact-snapshot/managed-read/resource controls.
+Allowed: explicit caller-owned workspace creation/reopen, fixed input mapping,
+streamed verified copies and bounded interrupted retry slots; reuse the existing
+REEL WorkspaceDirectory guard and SDK ByteSource. No new cache/journal engine,
+provider discovery, unrelated directory scan, overwrite, partial sweep/deletion,
+provider calls, rendering or semantic completion. Entry: captured exact Preview,
+caller budgets/mapping and ordinary existing parent. Exit: original hash-pinned
+workspace ticket plus directory identity, portable collision-safe named paths,
+verified bytes, interrupted retry without touching unrelated assets and no cleanup
+on error/drop. L0 source/pins/fmt/diff; L1 path/budget/collision/parser negatives;
+L2 owned Windows directory/reparse/concurrency/partial retry and native-source
+copy/reopen fixtures. Native job generation and full Lifecycle remain open.
+
+## Owned preparation checkpoint
+
+Implemented workspace Preparation/Ticket/Workspace over existing REEL directory
+identity guards and SDK ByteSource. Caller mappings are checked before effects;
+streaming verifies hash/length and publishes without overwrite. Original ticket
+and physical directory identity are required for reopening. Only named paths and
+four fixed slots per input are inspected; partials and foreign files are never
+swept or overwritten. Scoped workspace lock, file-data bounds and cooperative
+time limits are separate from durable job claims and capacity reservations.
+
+Local verification: 27 default locked all-target tests PASS (9 workspace + 18
+existing), strict Clippy/fmt/diff PASS. A child exits78 after the first copy chunk,
+without Rust Drop; the original ticket reopens and retries while preserving the
+old prefix. Actual junction refusal keeps the outside target unchanged. Other
+cases cover byte/path/case/prefix conflicts, corrupt source/partials, exhausted
+slots, replaced directory identities, independent workspace progress and endless
+Interrupted reads bounded by time. Native suite: 4 PASS; input cases now compose
+historical ordinary/bare metadata, native bytes, persistent claim and owned copy/
+reopen; returned-candidate source-offline fixtures remain passing.
+
+Producer review: identity requires original external pins plus physical directory
+identity (implemented); concurrency requires scoped exclusion and held directories/
+files (implemented); custody requires that staged copies not be called independent
+retained outputs or generation authority (explicit boundary); privacy keeps paths
+in private tickets, reports bounded; adoption preserves old routes/jobs. No
+independent or owner acceptance. No production cache operation, provider call,
+rendering or deletion occurred. FS-only input preparation is closed as a component.
+
+Remaining P4: complete original task/request/control admission and retention,
+original source-generation use guard, full ProtectedJob/Lifecycle integration and
+joined crash/recovery acceptance. Source status remains observation only; existing
+qualified private route remains untouched pending those gates. The predecessor
+d672de8ee7507ba630015281c51e7e8a6708c27a passed hosted Windows/Ubuntu checks
+(run44985783442); new source needs its own hosted result.

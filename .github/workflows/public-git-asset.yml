@@ -1,4 +1,4 @@
-name: Public git-asset input adapter
+name: Public git-asset workflow adapter
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
       - 'crates/reel-workflow/**'
       - 'crates/reel-publication/**'
       - 'crates/reel-assembly/**'
+      - 'crates/reel-assets/**'
+      - '!**/*.md'
   pull_request:
     paths:
       - '.github/workflows/public-git-asset.yml'
@@ -15,6 +17,8 @@ on:
       - 'crates/reel-workflow/**'
       - 'crates/reel-publication/**'
       - 'crates/reel-assembly/**'
+      - 'crates/reel-assets/**'
+      - '!**/*.md'
 
 permissions:
   contents: read
