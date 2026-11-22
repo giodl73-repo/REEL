@@ -14,6 +14,7 @@ producing project's profile.
 | Call an API or workflow proxy | [`reel-workflow-http`](../crates/reel-workflow-http/README.md) | Pinned JSON POSTs, private original-operation evidence and offline resume; proxy result/returns files feed explicit native handoff/retention |
 | Put stable cel IDs in a scene review movie | [Private cel-ID copies](film-cel-review-v1.md) | Existing delivery-receipt frame ranges, visible IDs and exact source map; candidate output with native retention and issue/fix dispatch separate |
 | Turn film findings into issue drafts | [Exact-baseline findings](workflow-film-findings.md) | Checked movie/map/receipt bytes and exact target frames; private drafts/API bodies with posting, repair and native retention separate |
+| Submit an explicitly authorized finding | [GitHub issue adapter](workflow-github-issues.md) | Existing owned HTTP operation, exact created-response receipt and offline replay; uncertain remote outcomes, repair and selection remain separate |
 
 Use each crate's `capabilities` and `--help` commands to check the binary you
 actually built. The native and HTTP crates have separate manifests/lockfiles;
