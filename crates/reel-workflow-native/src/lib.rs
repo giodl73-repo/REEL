@@ -20,6 +20,8 @@ use tig_core::{LogicalPath, Object};
 pub mod admission;
 pub mod closing;
 #[cfg(all(windows, feature = "film"))]
+pub mod film_cli;
+#[cfg(all(windows, feature = "film"))]
 pub mod film_inputs;
 pub mod film_metadata;
 #[cfg(all(windows, feature = "film"))]
