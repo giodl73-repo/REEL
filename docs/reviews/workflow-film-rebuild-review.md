@@ -26,3 +26,11 @@ Remaining acceptance: protected control production and authenticated baseline
 reopening, native source binding, affected-language dispatch and exact downstream
 rebinding, real-project authority/profile adoption and full episode scale. The
 existing synthetic render check does not establish bilingual production adoption.
+
+Validation: all 61 portable workflow tests passed; the amended planner refusal
+test and strict workflow Clippy passed again after the existing-upstream guard.
+Four still-control unit tests passed, including different ES/EN clocks and takes.
+The actual FFmpeg cel-review/repair integration test passed (8.13 seconds),
+checking the derived candidate through rendering and review. Main CLI check and
+strict library/main CLI Clippy passed. Formatting and whitespace checks passed.
+Merging the already-qualified retained-child main commit changed no source tree.
