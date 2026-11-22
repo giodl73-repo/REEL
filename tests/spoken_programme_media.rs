@@ -4,6 +4,8 @@ mod checking;
 #[cfg(feature = "tig-publication")]
 #[path = "support/spoken_companion.rs"]
 mod companion;
+#[path = "support/spoken_installation.rs"]
+mod installation;
 #[path = "support/spoken_layers.rs"]
 mod layers;
 #[cfg(feature = "print")]

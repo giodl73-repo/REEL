@@ -13,6 +13,7 @@ pub mod companion;
 pub mod compiler;
 #[cfg(feature = "tig-history")]
 pub mod history;
+pub mod installation;
 pub mod layers;
 #[cfg(feature = "print")]
 pub mod lesson;
