@@ -67,11 +67,47 @@ including actual queue overflow and ownership return. Callback destruction is
 not fill: it belongs to the native teardown path, whose final process/driver
 cleanup is still required below.
 
+## Output and source worker checkpoint
+
+The same assistant applied the same four checklists to the new ports:
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Sound | Count actual source submissions separately from quiet intervals, paused callbacks, fault silence and completion padding. The full data-fill wrapper compares every float through variable buffers and source/interval pauses. An isolated allocator child covers wrapper clock/atomic work, handoff and report overflow; library/driver error handling is outside that claim. |
+| Editor | Stream opening and `play()` completion do not authorize moving the core. Require a valid silent native callback first; cancelled/late opens retain the controller's identical box. A queued Stop before the first owned callback submits zero source frames. |
+| Platform/Audience | One serial native backend, fixed explicit endpoint and no fallback. Per-callback bounds supplement the backend's period query. Close completion follows actual stream destruction. Correct the 120 s boundary: only Close may use the two-second cleanup tail. Actual foreground responsiveness, terminal behavior and contained cleanup remain open. |
+| Rights/Provenance | Source guards and Prepared remain on one source thread; original lineage stays independent of the player. Initial prepare/fresh verification share one absolute deadline. Recheck permits remain opaque in-process objects. Cancellation/expiry is checked again at event reception so a queued success cannot revive a cancelled operation. Real-original integration checks retain the core's separate stale-permit gate. |
+
+These ports do not expose a Run command or qualify a device. Constructing the
+output port opens no endpoint; constructing the source port explicitly checks
+originals only. Both destructors join actual thread teardown and can block on
+an OS/driver operation. They must run inside the complete owned worker process;
+their cooperative timers cannot substitute for containment and actual reaping.
+
+Focused execution for this checkpoint:
+
+- Installation unit filter: **41 passed**, zero failed, in 2.99 s. Three ordinary
+  ignored fixtures were launched by their parent cases, including the full
+  application data-fill allocator child.
+- Explicit original-input integration filter: **eight passed**, zero failed or
+  ignored, in 26.73 s. The real source-worker case retains metadata/producer
+  guards through Ready and two rechecks, returns an applicable opaque permit,
+  refuses a valid late permit after Stop, and releases guards on actual teardown.
+- Native CLI: **five passed**, zero failed, in 0.10 s.
+
+That is **54 distinct focused passing cases**, including the earlier source
+cases; reruns/child entries are not counted again. Intermediate compile/lint
+findings (private test-clock access, optional-value style and test tuple type
+complexity) were corrected. No actual endpoint, playback or capture was used.
+Final all-target/all-feature Clippy passed with warnings denied in 1m29s.
+Formatting, whitespace, actionlint and changed-document relative links passed.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
 move once into the callback and return intact through the actual backend.
-Primitive ownership/race cases above passed; native integration remains open.
+Primitive and controlled-output ownership/race cases above passed; complete
+native session integration remains open.
 Wire nonce/sequence/generation,
 closed-peer and bounded-I/O cancellation proof, actual console behavior,
 native open/drop/recheck cancellation and all aggregate deadlines remain open.

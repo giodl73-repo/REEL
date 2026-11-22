@@ -414,6 +414,15 @@ impl Transport {
     /// The caller serializes access. No allocation/locks/I/O in this routine;
     /// trace/queue storage was preallocated and cannot grow beyond its cap.
     pub fn fill(&mut self, generation: u64, now: u64, out: &mut [f32]) -> Outcome<Effects> {
+        self.fill_counted(generation, now, out)
+            .map(|(effects, _)| effects)
+    }
+    pub(super) fn fill_counted(
+        &mut self,
+        generation: u64,
+        now: u64,
+        out: &mut [f32],
+    ) -> Outcome<(Effects, u32)> {
         out.fill(0.0);
         if generation != self.snapshot.generation {
             return Err(TransportError::StaleGeneration);
@@ -423,12 +432,14 @@ impl Transport {
             return Err(TransportError::InvalidBuffer);
         }
         let mut effects = self.poll(now, Notice::None);
+        let mut submitted = 0;
         self.last_callback = self.last;
         for frame in out.chunks_exact_mut(2) {
             match self.snapshot.state {
                 State::Playing => {
                     let at = self.snapshot.source_frame as usize * 2;
                     frame.copy_from_slice(&self.samples[at..at + 2]);
+                    submitted += 1;
                     self.snapshot.source_frame += 1;
                     if self.snapshot.source_frame == self.source_frames() {
                         self.snapshot.state = if self.snapshot.pass == self.passes {
@@ -459,7 +470,7 @@ impl Transport {
             effects.recheck = None;
             self.effects = Effects::default()
         }
-        Ok(effects)
+        Ok((effects, submitted))
     }
     pub fn restart_ticket(&self) -> Outcome<RestartTicket> {
         if self.snapshot.state != State::Restarting || self.restart_verified {

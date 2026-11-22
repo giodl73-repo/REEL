@@ -302,6 +302,127 @@ fn checked_selection_requires_original_pcm_and_access() {
     assert!(prepared.transport(0, control()).is_err());
 }
 
+#[cfg(all(windows, feature = "installation-native"))]
+fn source_event(
+    worker: &mut api::native::source::SourceWorker,
+) -> api::native::source::SourceEvent {
+    let until = std::time::Instant::now() + Duration::from_secs(30);
+    loop {
+        if let Some(event) = worker.event() {
+            return event;
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "original worker event deadline"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+#[test]
+#[ignore = "explicit guarded source-worker qualification; no devices"]
+fn native_source_worker_retains_guards_and_checks_real_opaque_restart() {
+    use api::native::{
+        output::OutputClock,
+        source::{SourceEvent, SourceWorker},
+    };
+    let f = InstallationFixture::new(true);
+    let request = native_request(&f);
+    let declaration = request.original.declaration.path.clone();
+    let original = request.original.compiler_producer.path.clone();
+    // This port checks originals; the distinct player remains unavailable and
+    // is never executed or substituted for their compiler identity.
+    fs::remove_file(&request.playback.runtime.path).unwrap();
+    let clock = OutputClock::start().unwrap();
+    let mut worker =
+        SourceWorker::new(request, clock, clock.now_us().unwrap() + 30_000_000).unwrap();
+    let mut actual = match source_event(&mut worker) {
+        SourceEvent::Ready(actual) => actual,
+        _ => panic!("original worker did not prepare the actual programme"),
+    };
+    assert_eq!(actual.snapshot().state, api::State::Ready);
+    assert!(
+        actual
+            .transcript()
+            .contains("Engineering signal; no spoken-word evidence")
+    );
+    let address = &*actual as *const api::Transport;
+    assert!(
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&declaration)
+            .is_err()
+    );
+    assert!(fs::OpenOptions::new().write(true).open(&original).is_err());
+    actual.enqueue("stop").unwrap();
+    actual.poll(clock.now_us().unwrap() / 1000, api::Notice::None);
+    actual.enqueue("restart").unwrap();
+    actual.poll(clock.now_us().unwrap() / 1000, api::Notice::None);
+    let ticket = actual.restart_ticket().unwrap();
+    worker
+        .restart(ticket, clock.now_us().unwrap() + 30_000_000)
+        .unwrap();
+    let permit = match source_event(&mut worker) {
+        SourceEvent::RestartChecked {
+            generation: 1,
+            permit,
+        } => permit,
+        _ => panic!("original recheck did not return its opaque permit"),
+    };
+    assert_eq!(
+        actual
+            .accept_restart(permit, clock.now_us().unwrap() / 1000)
+            .unwrap()
+            .open,
+        Some(1)
+    );
+    assert_eq!(&*actual as *const api::Transport, address);
+    // A second real check may finish after Stop. Its valid check result still
+    // cannot revive the core: applicability is enforced by the same transport.
+    let mut out = [0.0; 2];
+    actual.poll(
+        clock.now_us().unwrap() / 1000,
+        api::Notice::Opened { generation: 1 },
+    );
+    actual
+        .fill(1, clock.now_us().unwrap() / 1000, &mut out)
+        .unwrap();
+    actual.enqueue("restart").unwrap();
+    actual.poll(clock.now_us().unwrap() / 1000, api::Notice::None);
+    worker
+        .restart(
+            actual.restart_ticket().unwrap(),
+            clock.now_us().unwrap() + 30_000_000,
+        )
+        .unwrap();
+    actual.enqueue("stop").unwrap();
+    actual.poll(clock.now_us().unwrap() / 1000, api::Notice::None);
+    match source_event(&mut worker) {
+        SourceEvent::RestartChecked {
+            generation: 2,
+            permit,
+        } => {
+            assert_eq!(
+                actual
+                    .accept_restart(permit, clock.now_us().unwrap() / 1000)
+                    .unwrap_err(),
+                api::TransportError::StaleGeneration
+            );
+        }
+        _ => panic!("second original check unexpectedly failed"),
+    }
+    assert_eq!(actual.snapshot().state, api::State::Stopped);
+    drop(worker);
+    assert!(
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&declaration)
+            .is_ok()
+    );
+    assert!(fs::OpenOptions::new().write(true).open(&original).is_ok());
+}
+
 #[test]
 #[ignore = "explicit original-input installation qualification"]
 fn exact_checked_pcm_reaches_finite_transport_without_device() {

@@ -4,13 +4,18 @@ use serde::{Deserialize, Serialize};
 
 mod callback;
 pub use callback::{
-    Callback, CallbackCommandError, CallbackControl, CallbackReport, callback_pair,
+    Callback, CallbackCommandError, CallbackControl, CallbackEmission, CallbackReport,
+    callback_pair,
 };
 #[cfg(windows)]
 mod device;
 #[cfg(windows)]
+pub mod output;
+#[cfg(windows)]
 mod owned;
 mod probe;
+#[cfg(windows)]
+pub mod source;
 pub use probe::{ProbeRequest, probe, probe_worker};
 mod session;
 pub use session::{

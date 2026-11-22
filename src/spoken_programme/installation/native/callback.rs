@@ -33,9 +33,15 @@ pub struct CallbackReport {
     pub callback_ms: u64,
     pub predicted_playback_us: Option<u64>,
     pub effects: Effects,
+    pub submitted_source_frames: u32,
     /// Actual command records, including refusals, from this callback. Media
     /// boundaries sharing a sequence do not masquerade as another command.
     pub commands: [Option<Trace>; 8],
+}
+#[derive(Clone, Copy, Debug)]
+pub struct CallbackEmission {
+    pub snapshot: Snapshot,
+    pub submitted_source_frames: u32,
 }
 pub struct CallbackControl {
     commands: Producer<Command>,
@@ -157,6 +163,18 @@ fn records(transport: &Transport, before: u64) -> [Option<Trace>; 8] {
     result
 }
 impl Callback {
+    #[cfg(windows)]
+    pub(super) fn generation(&self) -> Option<u64> {
+        self.transport.as_ref().map(|t| t.snapshot().generation)
+    }
+    #[cfg(windows)]
+    pub(super) fn fail(&self) {
+        self.fatal.store(true, Ordering::Release);
+    }
+    #[cfg(windows)]
+    pub(super) fn failed(&self) -> bool {
+        self.fatal.load(Ordering::Acquire)
+    }
     fn begin_return(&self) -> bool {
         match self
             .phase
@@ -180,20 +198,28 @@ impl Callback {
     /// The backend calls this after its stream actually starts delivering data.
     /// No checker, allocation, serialization, locking or I/O occurs here.
     pub fn fill(&mut self, now_ms: u64, predicted_playback_us: Option<u64>, out: &mut [f32]) {
+        let _ = self.fill_with_report(now_ms, predicted_playback_us, out);
+    }
+    /// The same bounded fill with actual source-frame submissions, excluding
+    /// pause/interval/fault/padding silence. This is not physical output proof.
+    pub fn fill_with_report(
+        &mut self,
+        now_ms: u64,
+        predicted_playback_us: Option<u64>,
+        out: &mut [f32],
+    ) -> Option<CallbackEmission> {
         out.fill(0.0);
-        let Some(before) = self
+        let before = self
             .transport
             .as_ref()
-            .map(|t| t.snapshot().command_sequence)
-        else {
-            return;
-        };
+            .map(|t| t.snapshot().command_sequence)?;
         // Reserve report capacity before advancing the source. On overflow the
         // output is silence and the submitted-source cursor must not advance.
         if self.reports.slots() == 0 {
             self.fatal.store(true, Ordering::Release);
         }
         let mut effects = Effects::default();
+        let mut submitted = 0;
         {
             let transport = self.transport.as_mut().unwrap();
             let generation = transport.snapshot().generation;
@@ -210,8 +236,9 @@ impl Callback {
                         effects = transport.poll(now_ms, Notice::Opened { generation });
                         self.opened = true;
                     }
-                    match transport.fill(generation, now_ms, out) {
-                        Ok(next) => {
+                    match transport.fill_counted(generation, now_ms, out) {
+                        Ok((next, count)) => {
+                            submitted = count;
                             effects.close |= next.close;
                             effects.quit |= next.quit;
                             effects.open = next.open.or(effects.open);
@@ -250,6 +277,7 @@ impl Callback {
                 callback_ms: now_ms,
                 predicted_playback_us,
                 effects,
+                submitted_source_frames: submitted,
                 commands: records(transport, before),
             })
             .is_err()
@@ -262,8 +290,13 @@ impl Callback {
                 },
             );
             out.fill(0.0);
+            submitted = 0;
             self.pending_return = true;
         }
+        let emission = CallbackEmission {
+            snapshot: self.transport.as_ref().unwrap().snapshot(),
+            submitted_source_frames: submitted,
+        };
         if self.pending_return && self.begin_return() {
             // No producer can enter after RETURNING. Commands accepted just
             // before that transition travel in the real core queue; applying
@@ -275,6 +308,7 @@ impl Callback {
             );
             self.return_transport();
         }
+        Some(emission)
     }
 }
 impl Drop for Callback {
@@ -294,6 +328,15 @@ impl Drop for Callback {
         );
         self.return_transport();
     }
+}
+
+#[cfg(all(test, windows))]
+pub(super) fn assert_no_allocations(action: impl FnOnce()) {
+    tests::assert_no_allocations(action);
+}
+#[cfg(all(test, windows))]
+pub(super) fn run_fixture(name: &str) {
+    tests::run_fixture(name);
 }
 
 #[cfg(test)]
@@ -527,35 +570,34 @@ mod tests {
         assert_eq!(actual.snapshot().state, State::Stopped);
         assert!(!control.failed());
     }
-    #[test]
-    #[ignore = "isolated allocator fixture only; explicitly launched by parent"]
-    fn allocation_fixture() {
-        let (_control, mut callback) = callback_pair(engine());
-        let mut out = [0.0; 2];
+    pub(super) fn assert_no_allocations(action: impl FnOnce()) {
         ALLOCS.store(0, Ordering::Relaxed);
         FREES.store(0, Ordering::Relaxed);
         ARMED.store(true, Ordering::Relaxed);
-        for n in 0..260 {
-            callback.fill(n, Some(n * 1000), &mut out);
-        }
+        action();
         ARMED.store(false, Ordering::Relaxed);
         assert_eq!(ALLOCS.load(Ordering::Relaxed), 0);
         assert_eq!(FREES.load(Ordering::Relaxed), 0);
     }
     #[test]
-    fn callback_handoff_and_overflow_do_not_allocate_or_free() {
+    #[ignore = "isolated allocator fixture only; explicitly launched by parent"]
+    fn allocation_fixture() {
+        let (_control, mut callback) = callback_pair(engine());
+        let mut out = [0.0; 2];
+        assert_no_allocations(|| {
+            for n in 0..260 {
+                callback.fill(n, Some(n * 1000), &mut out);
+            }
+        });
+    }
+    pub(super) fn run_fixture(name: &str) {
         use std::{
             process::{Command as ChildCommand, Stdio},
             time::{Duration, Instant},
         };
         let mut command = ChildCommand::new(std::env::current_exe().unwrap());
         command
-            .args([
-                "--ignored",
-                "--exact",
-                "spoken_programme::installation::native::callback::tests::allocation_fixture",
-                "--test-threads=1",
-            ])
+            .args(["--ignored", "--exact", name, "--test-threads=1"])
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -587,5 +629,9 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(2));
         }
+    }
+    #[test]
+    fn callback_handoff_and_overflow_do_not_allocate_or_free() {
+        run_fixture("spoken_programme::installation::native::callback::tests::allocation_fixture");
     }
 }

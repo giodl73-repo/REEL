@@ -69,6 +69,19 @@ the same object once. A startup Stop can therefore update the real transport
 without waiting for a blocked native call or losing the context needed for an
 explicit later Restart. Late native completion cannot acquire a cancelled box.
 
+The source-check port now owns LoadedProgramme and Prepared on a dedicated
+thread for the session. Guarded load, initial preparation and fresh seal checking
+share one absolute deadline of at most 30 seconds. The returned Ready transport
+uses the Run origin, so setup counts toward its 120-second lifetime. Restart
+tickets and permits move through bounded in-process queues; they are never JSON
+or another authority inferred from an observation. Event reception checks for
+cancellation/expiry again to reject a success queued just before cancellation.
+The actual transport independently rejects an otherwise checked permit after
+Stop or a generation change. The source port opens no endpoint and does not
+qualify the distinct playback executable or host. Its destructor joins the
+source thread and retained guard destruction; complete process containment is
+still required to handle a blocked OS operation.
+
 While active, M12b.1's callback owns the sole source/interval clock. Stop,
 Restart, completion or failure must return that object before replacement.
 Neither a private wire status nor a deserialized success flag creates a restart
@@ -77,6 +90,30 @@ worker; original checking and native open/drop stay off the control/callback
 threads. A failed native cleanup remains a failed profile, not a timer success.
 
 ## Controller and operator obligations
+
+The Windows output port now implements explicit probe/open/close on one serial
+backend thread. Construction opens no endpoint. Real opens resolve the bound
+WASAPI endpoint again, request 480 stereo float32 frames at 48 kHz and check the
+reported period plus every actual callback's whole-frame/2048-frame bound.
+`play()` returning is insufficient: a valid silent callback must establish
+readiness before the controller can attach the actual transport. Cancellation
+also travels with the sink, so a late open cannot acquire it.
+
+The application data callback records fixed-size atomic observations and actual
+source-frame submissions, excluding pause, interval, fault and padding silence.
+Its QPC clock shares the pinned CPAL WASAPI timestamp domain. A predicted output
+timestamp remains a prediction. Closing reports completion only after the actual
+stream is dropped; the port's destructor joins its backend thread. This can
+block on a broken driver and therefore belongs inside the still-required owned
+worker process. This port alone is not a contained foreground runtime.
+
+Controlled-backend tests compare every float through variable callback sizes,
+pauses in both source and interval, cancellation and oversized buffers. A separate
+isolated allocator fixture covers the complete application data-fill wrapper,
+including real report overflow and ownership return. It does not establish the
+allocation behavior of CPAL internals, driver/error callbacks or teardown.
+At 120 seconds the actual core stops; only Close may use the two-second cleanup
+tail. Probe/Open cannot extend playback into that tail.
 
 The session's 120 s lifetime starts at invocation, including preparation and
 pauses. Initial checks share a 30 s budget; Start has a 2 s aggregate bound and
@@ -106,20 +143,23 @@ checklists. These are review lenses, not independent reviewers or approvals.
 | --- | --- |
 | Original and player identities remain separate | `native_original_check_preserves_producer_identity_separately_from_player`: real original programme checks, including a different CLI executable, pass with an unavailable declared player; a correctly pinned replacement producer still fails the original receipt relationship. Passed locally. |
 | Guarded original reads and strict bounded invocation | `held_original_input_denies_mutation_and_rename_without_executable_requirement`, request-shape/cancellation/deadline and CLI cases. Passed locally. |
-| Startup Stop retains the actual session | Native-ready handoff and blocked-open cases required; pending. |
+| Startup Stop retains the actual session | Native-ready handoff, Stop before first owned fill and cancelled blocked-open controlled-backend cases passed locally. Foreground/contained-process integration remains pending. |
 | Callback teardown returns pending ownership | Drop-before-first-fill, queued Stop, completion, preempted writer and racing return cases passed locally. Actual native error/close integration remains pending. |
 | Exact private wire context | Foreign run/sequence/generation, oversize/unknown/truncated frames, queue overflow and closed-peer cases required; pending. |
-| Aggregate clocks and source verification cancellation | Shared Run origin, initial/restart deadlines, Stop/Quit while checking/opening/closing, no late revival; pending. |
+| Aggregate clocks and source verification cancellation | Source port shares the Run origin and one initial/fresh-check deadline; queued cancellation/expiry and real original rechecks passed locally. Complete foreground Start/Restart aggregates, Stop/Quit integration and blocked-operation containment remain pending. |
 | Exact persistent text and line commands | Actual Windows console, Spanish cells, paste/scroll/resize, ordinary EOF/Ctrl+C, blocked I/O and bounded cleanup; pending. |
-| Real contained lifecycle and unchanged PCM | Actual controlled child barriers, source/interval frame oracles through variable callback sizes, no callback allocation/free, native fault/oversized buffer refusal; pending. |
+| Real contained lifecycle and unchanged PCM | Controlled native output port passed source/interval sample oracles, allocation/free, cancelled handoff, oversized period/buffer and actual mock-stream close tests. Actual contained worker/driver lifecycle remains pending. |
 
 No complete M12b.2, actual playback, device/listening/usability or release claim
-follows from the implemented source loader. M13 still depends on full M12.
+follows from these source/output ports. M13 still depends on full M12.
 
-Local source/ownership checkpoint: 26 unit cases, five CLI cases and seven
-explicit original-input cases passed. The original-input invocation ran with
-zero ignored cases; the two ordinary ignored unit fixture entries are explicitly
-launched by their parent tests. These counts do not include duplicate reruns.
+Local source/output checkpoint: 41 unit cases, five CLI cases and eight
+explicit original-input cases passed: **54 distinct focused cases**. The
+original-input invocation ran with zero ignored cases; the three ordinary ignored
+unit fixture entries are explicitly launched by their parent tests. These counts
+do not include duplicate reruns. The real source-worker integration retains
+original file guards through Ready/rechecks, releases them at actual teardown,
+and proves that a genuine later recheck permit cannot revive Stop.
 
 At ownership return, an atomic writer/return handshake prevents a newly accepted
 command from being stranded in the old callback queue. A busy writer defers
