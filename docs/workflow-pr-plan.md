@@ -39,6 +39,18 @@ source manifests remain authoritative; an ancestry commit alone is not a pin for
 qualified working-tree source. Existing production SDKs must not be upgraded
 implicitly.
 
+Concrete W3a slices:
+
+- [#389](https://github.com/giodl73-repo/REEL/pull/389): qualified SDK intake (merged).
+- [#392](https://github.com/giodl73-repo/REEL/pull/392): protected manual handoffs,
+  candidate registration, retained acknowledgement and original-operation close/recovery.
+- [#393](https://github.com/giodl73-repo/REEL/pull/393): live-claimed, guarded native
+  file inputs for the existing film renderer; no producer dispatch.
+- Next: owned producer invocation, bounded output registration and actual producer
+  receipt/recovery checks. File access alone does not complete this acceptance.
+- Before advertised S5 use: qualify episode resource/large-master admission,
+  streaming composition, long execution and interruption with exact retained outputs.
+
 ## Film acceptance contract
 
 W2 defines these choices; W3 and W4 implement or explicitly reject them according

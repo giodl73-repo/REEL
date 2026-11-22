@@ -146,6 +146,8 @@ jobs:
           cargo fmt --manifest-path crates/reel-workflow-native/Cargo.toml -- --check
           cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked -- -D warnings
           cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --all-targets --locked
+          cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --features film --all-targets --locked -- -D warnings
+          cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --features film --all-targets --locked
           cargo test --manifest-path vendor/git-asset-capacity/Cargo.toml -p git-asset-store --test metadata_capacity --locked
       - name: Run ordinary test shard
         if: matrix.lane == 'core'
