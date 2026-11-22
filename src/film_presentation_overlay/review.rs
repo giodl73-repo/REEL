@@ -2,6 +2,8 @@
 use super::{Clocks, Time, clocks_using, file_hash, hash, movie_timescale};
 use crate::scene_delivery::{self, FileRef, InputFiles, MediaProgram};
 use anyhow::{Context, Result, ensure};
+use reel_publication::film_review::SourceFile;
+pub use reel_publication::film_review::{Receipt, ReviewMap, Target};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -44,49 +46,19 @@ pub struct Request {
     pub identities: BTreeMap<String, Identity>,
     pub limits: Limits,
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct Target {
-    pub attachment_id: String,
-    pub story_id: String,
-    pub cel_id: String,
-    pub semantic_id: String,
-    pub selected_picture: FileRef,
-    pub start_frame: u64,
-    pub end_frame: u64,
+fn source_file(file: &FileRef) -> SourceFile {
+    SourceFile {
+        path: file.path.clone(),
+        sha256: file.sha256.clone(),
+        bytes: file.bytes,
+    }
 }
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ReviewMap {
-    pub schema: String,
-    pub request_sha256: String,
-    pub project: String,
-    pub source_commit: String,
-    pub language: String,
-    pub source_film: FileRef,
-    pub delivery_receipt: FileRef,
-    pub job: FileRef,
-    pub frame_count: u64,
-    pub fps_numerator: u64,
-    pub fps_denominator: u64,
-    pub width: u32,
-    pub height: u32,
-    pub targets: Vec<Target>,
-}
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Receipt {
-    pub schema: String,
-    pub request_sha256: String,
-    pub source_clocks_sha256: String,
-    pub output_clocks_sha256: String,
-    pub frame_count: u64,
-    pub audio_packet_count: u64,
-    pub outputs: BTreeMap<String, FileRef>,
-    pub publication: String,
-    pub visual_reviewed: bool,
-    pub approvals_verified: bool,
-    pub native_retention_verified: bool,
+fn file_reference(file: &SourceFile) -> FileRef {
+    FileRef {
+        path: file.path.clone(),
+        sha256: file.sha256.clone(),
+        bytes: file.bytes,
+    }
 }
 fn token(value: &str) -> bool {
     !value.is_empty()
@@ -271,7 +243,7 @@ fn map(q: &Request, pin: &str, files: &(impl InputFiles + ?Sized)) -> Result<Rev
             story_id: id.story_id.clone(),
             cel_id: id.cel_id.clone(),
             semantic_id: id.semantic_id.clone(),
-            selected_picture: pictures[0].source.clone(),
+            selected_picture: source_file(&pictures[0].source),
             start_frame: span.start_frame,
             end_frame: span.end_frame,
         });
@@ -286,9 +258,9 @@ fn map(q: &Request, pin: &str, files: &(impl InputFiles + ?Sized)) -> Result<Rev
         project: q.project.clone(),
         source_commit: q.source_commit.clone(),
         language: q.language.clone(),
-        source_film: q.film.clone(),
-        delivery_receipt: q.delivery_receipt.clone(),
-        job: q.job.clone(),
+        source_film: source_file(&q.film),
+        delivery_receipt: source_file(&q.delivery_receipt),
+        job: source_file(&q.job),
         frame_count: cursor,
         fps_numerator: receipt.plan.fps_numerator,
         fps_denominator: receipt.plan.fps_denominator,
@@ -544,7 +516,7 @@ pub fn build_with_inputs(
     for name in ["review.mp4", "review-map.json", "font.ttf", "filters.txt"] {
         outputs.insert(
             name.into(),
-            FileRef {
+            SourceFile {
                 path: name.into(),
                 sha256: file_hash(&out.join(name))?,
                 bytes: fs::metadata(out.join(name))?.len(),
@@ -555,7 +527,7 @@ pub fn build_with_inputs(
         let name = format!("label-{i}.txt");
         outputs.insert(
             name.clone(),
-            FileRef {
+            SourceFile {
                 path: name.clone().into(),
                 sha256: file_hash(&out.join(&name))?,
                 bytes: fs::metadata(out.join(name))?.len(),
@@ -630,7 +602,7 @@ pub fn check_with_inputs(
             file.path == Path::new(name) && file.bytes <= maximum,
             "review output identity or budget changed"
         );
-        scene_delivery::checked_file(out, file)?;
+        scene_delivery::checked_file(out, &file_reference(file))?;
     }
     let source = clocks(files, &files.verified_path(&q.film)?, &q, deadline)?;
     let rendered = clocks(files, &out.join("review.mp4"), &q, deadline)?;

@@ -4,6 +4,10 @@ use std::{collections::BTreeMap, env, path::Path};
 fn run() -> Result<serde_json::Value> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
+        [command, request, pin, directory] if command == "draft-film-issues" => {
+            let replay=film_review::export(Path::new(request),pin,Path::new(directory))?;
+            Ok(serde_json::json!({"ok":true,"scope":"private-film-issue-drafts","replay":replay,"issue_submitted":false,"native_retention_verified":false,"selection_applied":false}))
+        }
         [command, repository, request, output] if command == "inspect-film" => {
             let request: film_inspect::Request = manual::read_control(Path::new(request))?;
             let sidecar = film_inspect::inspect(&request, &mut film_inspect::GitReader {repository: Path::new(repository)})?;
@@ -15,7 +19,7 @@ fn run() -> Result<serde_json::Value> {
             if command == "cancel-handoff" { journal.cancel()?; }
             Ok(serde_json::json!({"ok":true,"scope":"local-journal-only","state":journal.state(),"native_state_verified":false,"native_claims_released":false}))
         }
-        [command] if command == "capabilities" => Ok(serde_json::json!({"manual_exchange":true,"film_metadata_inspection":true,"provider_calls":false,"native_storage":false,"producer_execution":false,"media_semantics_verified":false})),
+        [command] if command == "capabilities" => Ok(serde_json::json!({"manual_exchange":true,"film_metadata_inspection":true,"film_issue_drafts":true,"issue_submission":false,"provider_calls":false,"native_storage":false,"producer_execution":false,"media_semantics_verified":false})),
         [command, plan] if command == "check-plan" => {
             let plan = manual::read_control(Path::new(plan))?;
             let count = check_plan(&plan)?.len();
@@ -60,6 +64,7 @@ fn main() {
             "reel-workflow capabilities\n\
 reel-workflow check-plan PLAN\n\
 reel-workflow inspect-film REPOSITORY REQUEST NEW_SIDECAR\n\
+reel-workflow draft-film-issues REQUEST SHA256 NEW_DIRECTORY\n\
 reel-workflow export-task PLAN TASK NEW_PACKET\n\
 reel-workflow export-work PLAN TASK ATTEMPT DEPENDENCIES_JSON NEW_DIRECTORY\n\
 reel-workflow check-result PACKET RESULT [FILE_BINDINGS_JSON]\n\
@@ -67,7 +72,7 @@ reel-workflow capture-work WORK_DIRECTORY ATTEMPT FILE_BINDINGS_JSON NEW_CANDIDA
 reel-workflow accept-work WORK_DIRECTORY ATTEMPT RESULT FILE_BINDINGS_JSON NEW_CANDIDATE_DIRECTORY\n\
 reel-workflow check-handoff DIRECTORY\n\
 reel-workflow cancel-handoff DIRECTORY\n\
-Manual exchange only. No provider calls, native admission, production completion or approval.\n\
+Local contracts, inspection and drafts. No provider calls, native admission, production completion or approval.\n\
 Packets and candidate files contain private context. Preserve failed writes."
         );
         return;
