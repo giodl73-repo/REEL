@@ -268,6 +268,103 @@ fn retained_parent_admits_own_child_claims_and_replays_after_child_slot_close() 
 fn two_retained_parents_share_fence_and_transfer_exact_input_claims_to_child() {
     qualify_child(true);
 }
+#[cfg(feature = "film")]
+#[test]
+#[ignore = "Read-only complete original synthetic film/image parent proofs in their existing index; no new child claims, publication, task, slot or profile adoption"]
+fn film_tool_parent_reopens_exact_worker_proof_with_shared_retained_owner() {
+    use reel_workflow_native::handoff;
+    let film_root = PathBuf::from(
+        std::env::var_os("REEL_TOOL_PARENT").expect("Set completed synthetic film child"),
+    );
+    let image_root = PathBuf::from(
+        std::env::var_os("REEL_CHILD_PARENT").expect("Set completed synthetic image parent"),
+    );
+    let location: serde_json::Value =
+        serde_json::from_slice(&fs::read(film_root.join("locations.json")).unwrap()).unwrap();
+    let complete: serde_json::Value =
+        serde_json::from_slice(&fs::read(film_root.join("complete.json")).unwrap()).unwrap();
+    assert_eq!(complete["complete"], true);
+    let packet: Packet = serde_json::from_value(location["packet"].clone()).unwrap();
+    let source: NativeProfile = serde_json::from_value(location["native"].clone()).unwrap();
+    let profile: admission::Profile =
+        serde_json::from_value(location["admission_profile"].clone()).unwrap();
+    let receipt =
+        serde_json::from_slice(&fs::read(film_root.join("admission.json")).unwrap()).unwrap();
+    let ack: reel_workflow_native::retention::Acknowledgement =
+        serde_json::from_value(complete["retained"].clone()).unwrap();
+    let film = upstream::ParentControl {
+        packet: packet.clone(),
+        result: serde_json::from_value(complete["result"].clone()).unwrap(),
+        acknowledgement: ack.clone(),
+        profile: handoff::Profile {
+            schema: "reel.workflow-native-handoff.v1".into(),
+            source: clone_source(&source),
+            admission: profile.clone(),
+            binding: handoff::Binding {
+                schema: "reel.workflow-native-handoff-binding.v1".into(),
+                admission: receipt,
+                target: ack.target,
+            },
+            runtime: serde_json::from_value(location["runtime"].clone()).unwrap(),
+            acknowledgements: film_root.join("unused-read-only-acknowledgements"),
+        },
+    };
+    let image: reel_workflow_native::image_selection::Request =
+        serde_json::from_slice(&fs::read(image_root.join("selection-request.json")).unwrap())
+            .unwrap();
+    let image_control = upstream::ParentControl {
+        packet: image.packet.clone(),
+        result: image.result,
+        acknowledgement: image.acknowledgement,
+        profile: serde_json::from_slice(
+            &fs::read(image_root.join("profile-control.json")).unwrap(),
+        )
+        .unwrap(),
+    };
+    let parents = upstream::Parents {
+        schema: "reel.workflow-native-parents.v1".into(),
+        parents: BTreeMap::from([
+            (film.packet.task.id.clone(), film),
+            (image.packet.task.id.clone(), image_control),
+        ]),
+    };
+    let (child, child_source) = child("tool-parent-review", &source, parents.borrowed().unwrap());
+    let mut child_profile = profile.clone();
+    child_profile.scope.operation = tig_store::Key::parse("preview-film-parent-v1").unwrap();
+    let before = tig_store::source_claims::protection::Index::open(
+        &profile.index_root,
+        &profile.index_minimum,
+    )
+    .unwrap()
+    .checkpoint();
+    let proof = upstream::Admission::prepare(
+        &child,
+        &child_source,
+        &child_profile,
+        "read-only-parent-check",
+        parents.borrowed().unwrap(),
+    )
+    .unwrap();
+    assert!(proof.preview().unwrap().response_budget_ok);
+    drop(proof);
+    assert_eq!(
+        before,
+        tig_store::source_claims::protection::Index::open(
+            &profile.index_root,
+            &profile.index_minimum
+        )
+        .unwrap()
+        .checkpoint()
+    );
+    use std::io::Write;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(film_root.join("tool-parent-readback.json"))
+        .unwrap();
+    file.write_all(&serde_json::to_vec(&json!({"film_task_key":packet.task_key,"exact_film_worker_verified":true,"shared_retained_owner_verified":true,"index_unchanged":true,"child_claims_admitted":false})).unwrap()).unwrap();
+    file.sync_all().unwrap();
+}
 fn qualify_child(two_parents: bool) {
     use reel_workflow_native::{closing, handoff, retention};
     let parent_root = PathBuf::from(
