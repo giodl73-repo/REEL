@@ -51,7 +51,10 @@ adopt a production profile, approve a candidate or qualify all of Season 5.
 The [visual production workspace requirements](workflow-ux-requirements.md)
 audit existing REEL editors and current git-asset catalogue extension gaps.
 They propose a live cel/cue/page board and a generic tool/preview handoff, keeping
-production semantics in REEL. This UX has not been implemented.
+production semantics in REEL. The first [read-only board](../crates/reel-workflow-ui/README.md)
+implements pinned local cels/versions/cues and explicit journal observations.
+Browser visual acceptance, project projection and native preview integration
+remain open; this is not an adopted Season 5 production dashboard.
 
 The existing main-branch managed scene, presentation and episode jobs remain
 documented under [use cases](use-cases.md) and [architecture](architecture.md).

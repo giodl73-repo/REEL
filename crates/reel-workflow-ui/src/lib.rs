@@ -1,0 +1,12 @@
+//! Private read-only production views. Observations are not approval/custody.
+#[cfg(windows)]
+pub mod host;
+pub mod model;
+pub use model::*;
+use reel_workflow::{Error, ErrorKind};
+pub(crate) fn error(kind: ErrorKind, code: &str) -> Error {
+    Error {
+        kind,
+        code: code.into(),
+    }
+}

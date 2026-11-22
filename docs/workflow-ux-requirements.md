@@ -1,7 +1,9 @@
 # Visual production workspace and git-asset handoff
 
-Proposed product/integration requirements, not an implemented UX or an upstream
-contract. The user needs to see cels, cues and other assets assembling into a
+Product/integration requirements, not an upstream contract. The first
+[read-only local board](../crates/reel-workflow-ui/README.md) implements part of
+this scope, with visual acceptance and integration still open. The user needs to
+see cels, cues and other assets assembling into a
 show or comic while production runs. Terminal output remains diagnostics rather
 than the main production experience. No server, asset scan or project operation
 was started for this audit.

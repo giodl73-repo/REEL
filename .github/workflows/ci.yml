@@ -24,7 +24,7 @@ jobs:
   # classifier or failed qualification cannot turn into a successful skipped job.
   rust:
     if: always()
-    needs: [changes, rust-tests, workflow-http-tests]
+    needs: [changes, rust-tests, workflow-http-tests, workflow-ui-tests]
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -36,16 +36,19 @@ jobs:
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           QUALIFICATION: ${{ needs.rust-tests.result }}
           HTTP_QUALIFICATION: ${{ needs.workflow-http-tests.result }}
+          UI_QUALIFICATION: ${{ needs.workflow-ui-tests.result }}
         run: |
           test "$CLASSIFICATION" = success
           if [ "$DOCS_ONLY" = true ]; then
             test "$QUALIFICATION" = skipped
             test "$HTTP_QUALIFICATION" = skipped
+            test "$UI_QUALIFICATION" = skipped
             echo 'Documentation-only change: Rust compilation and media tests skipped.'
           else
             test "$DOCS_ONLY" = false
             test "$QUALIFICATION" = success
             test "$HTTP_QUALIFICATION" = success
+            test "$UI_QUALIFICATION" = success
           fi
 
   ffmpeg-linux:
@@ -575,3 +578,30 @@ jobs:
           cargo fmt --manifest-path crates/reel-workflow-http/Cargo.toml -- --check
           cargo clippy --manifest-path crates/reel-workflow-http/Cargo.toml --all-targets --locked -- -D warnings
           cargo test --manifest-path crates/reel-workflow-http/Cargo.toml --all-targets --locked
+
+  workflow-ui-tests:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_TARGET_DIR: target/workflow-ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: workflow-ui-v1
+          workspaces: crates/reel-workflow-ui -> ../../target/workflow-ui
+      - name: Check read-only board contracts and qualified Windows host
+        run: |
+          cargo fmt --manifest-path crates/reel-workflow-ui/Cargo.toml -- --check
+          cargo clippy --manifest-path crates/reel-workflow-ui/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path crates/reel-workflow-ui/Cargo.toml --all-targets --locked
+          node --check crates/reel-workflow-ui/src/board.js
