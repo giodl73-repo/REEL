@@ -39,7 +39,7 @@ fn journal_error(e: source_claims::Error) -> Error {
         "public-git-asset-job-journal",
     )
 }
-fn admission_error(e: admission::Error) -> Error {
+pub(crate) fn admission_error(e: admission::Error) -> Error {
     match e {
         admission::Error::Journal(e) => journal_error(e),
         admission::Error::Busy => error(ErrorKind::Busy, "public-git-asset-job-busy"),

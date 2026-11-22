@@ -83,6 +83,35 @@ new storage engine, journal, lease timer or automatic enrollment.
   No predecessor retirement, deletion or scratch cleanup follows. Stale writers
   cannot cancel a newer source revision.
 
+### Bridge held native inputs to the original claim
+
+Use `GuardedInputs::admit_claim` after all named inputs have been opened and
+verified through `InputReader::read`. Set the original Select's context to
+`Object::from_bytes(&preview.encode()?).sha256`; its flat resource tree must
+include every declared input Object. The root also binds any additional controls
+explicitly declared by the caller. Retain the exact preview and original handle
+asset-side; a context hash alone does not retain their bytes.
+
+The bridge checks complete live input guards, exact preview context, full roster
+membership, and Job current-placement policy requiring this physical pool. It
+opens the namespace at the location already admitted by the held pool profile,
+not an arbitrary caller namespace handle with the same copied identity. Read
+and configuration guards remain held throughout coverage verification/adoption.
+Dropping the reader afterward releases live guards while durable current claims
+continue to suppress participating removal. Check the returned current state;
+a historical receipt is not current protection or an execution lease.
+
+Coverage reads only the frozen flat metadata tree, at most 512 entries, 4,096
+reads and 4 MiB, also capped by caller Limits. Its reads, bytes and elapsed time
+are subtracted before Namespace admission; it does not scan other catalogues or
+open more payloads. Missing-input/preview mismatch, wrong roster/pool policy,
+missing/corrupt metadata and budget refusal prevent this admission. Extra caller
+resources are not silently materialized or given byte-custody acknowledgements.
+Roster locations remain trusted owner enrollment. Replacing a namespace/epoch
+or its writer/pruner boundary needs the separately qualified handoff; these
+fixtures do not establish a safe migration for unknown legacy actors. This
+bridge protects the declared inputs, not a complete task/attempt Lifecycle.
+
 No clock expires these claims. Days-long handoffs require no renewal writes;
 status checks can observe their continued protection. Process exit and worktree
 closure do not withdraw them. Source limits remain 1,024 sources, 64 predecessors,
@@ -103,3 +132,18 @@ cargo test --manifest-path crates/reel-workflow-git-asset/Cargo.toml --all-targe
 Linux checks qualify metadata contracts only; native managed byte access still
 has the pinned SDK's Windows/runtime/binding/roster obligations. Full P4 exit
 requires separate native persistent-job and retained-publication fixtures.
+
+Native bridge qualification is opt-in on Windows with explicitly admitted
+`GIT_ASSET_TEST_GIT_EXE`, `GIT_ASSET_TEST_ANNEX_EXE` and
+`GIT_ASSET_TEST_ANNEX_PATH` (runtime search directories). These are test-only
+inputs; ordinary construction never discovers or initializes caches.
+
+```sh
+cargo test --manifest-path crates/reel-workflow-git-asset/Cargo.toml --test native --locked -- --ignored --test-threads=1
+```
+
+The native fixtures create only owned temporary synthetic pools and metadata.
+They qualify ordinary/bare annex, bare Git metadata, guard-to-claim continuity,
+enforcing roster locations, exact historical selection, missing bytes, wrong
+policy/context, incomplete closure and budgets. The normal CI workflow does not
+install a native runtime and does not claim this opt-in qualification.
