@@ -285,14 +285,6 @@ pub fn verify_retained(
     let mut inputs = NativeInputs::open(packet, source)?;
     let bound = bind(packet, &mut inputs)?;
     let tool = packet.task.tool.as_ref().unwrap();
-    let proof = crate::retention::verify_qualified(
-        packet,
-        source,
-        profile,
-        receipt,
-        result,
-        acknowledgement,
-    )?;
     let worker = result
         .worker_receipt
         .as_ref()
@@ -332,7 +324,8 @@ pub fn verify_retained(
             "film-task-retained-worker-binding",
         ));
     }
-    Ok(proof)
+    drop(inputs);
+    crate::retention::verify_qualified(packet, source, profile, receipt, result, acknowledgement)
 }
 /// Explicit close of the original job slot into retained coverage. Persist the
 /// operation key before staging; recovery must reuse it. No workspace is retired.
@@ -493,6 +486,8 @@ fn run_expected(
         .unwrap()
         .check_source(packet, invocation.source)?;
     let bound = bind(packet, &mut native)?;
+    // Control decoding finished; keep durable claims while the path provider reopens object gates.
+    native.held.clear();
     let tool = packet.task.tool.as_ref().unwrap();
     let inputs = Inputs::prepare(packet, native, &tool.source_bindings, invocation.programs)?;
     inputs.validate_runtime(invocation.runtime)?;

@@ -20,12 +20,7 @@ mod film_job;
 #[test]
 #[ignore = "Explicit existing synthetic native pool and media tools only; publishes owned synthetic inputs/results with isolated metadata, no setup/hydration/project selection"]
 fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_result() {
-    use reel_workflow_native::{
-        NativeInputs,
-        admission::Prepared,
-        film_inputs::Programs,
-        film_task::{self, Action, Invocation},
-    };
+    use reel_workflow_native::{admission::Prepared, film_inputs::Programs, film_task};
     let value: serde_json::Value = serde_json::from_slice(
         &fs::read(
             std::env::var_os("REEL_NATIVE_INPUT_FIXTURE").expect("Set explicit native fixture"),
@@ -278,35 +273,95 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     }
     let workspace = case.temp.path().join("film");
     fs::create_dir(&workspace).unwrap();
+    exercise_original_film(FilmCase {
+        packet: &fixture.packet,
+        source: &case.source,
+        profile: &case.profile,
+        receipt: &receipt,
+        runtime: &runtime,
+        programs: &programs,
+        workspace: &workspace,
+        evidence: &evidence,
+    });
+}
+
+#[cfg(all(windows, feature = "film"))]
+struct FilmCase<'a> {
+    packet: &'a Packet,
+    source: &'a reel_workflow_native::NativeProfile,
+    profile: &'a reel_workflow_native::admission::Profile,
+    receipt: &'a reel_workflow_native::admission::Receipt,
+    runtime: &'a Tool,
+    programs: &'a reel_workflow_native::film_inputs::Programs,
+    workspace: &'a Path,
+    evidence: &'a Path,
+}
+#[cfg(all(windows, feature = "film"))]
+fn exercise_original_film(case: FilmCase<'_>) {
+    use reel_workflow_native::{
+        NativeInputs,
+        admission::Prepared,
+        film_task::{self, Action, Invocation},
+    };
+    let FilmCase {
+        packet,
+        source,
+        profile,
+        receipt,
+        runtime,
+        programs,
+        workspace,
+        evidence,
+    } = case;
+    let record = |name: &str, value: &serde_json::Value| {
+        use std::io::Write;
+        let raw = serde_json::to_vec(value).unwrap();
+        let path = evidence.join(name);
+        if path.exists() {
+            assert_eq!(fs::read(path).unwrap(), raw);
+            return;
+        }
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .unwrap();
+        file.write_all(&raw).unwrap();
+        file.sync_all().unwrap();
+    };
+    let protected = |object: &Object| {
+        use tig_store::{metadata::MetadataStore, source_claims::protection::Index};
+        let mut nodes =
+            MetadataStore::open(&profile.metadata_root, &profile.metadata_minimum).unwrap();
+        let mut index = Index::open(&profile.index_root, &profile.index_minimum).unwrap();
+        index
+            .inspect(&mut nodes, object, &profile.scope.store)
+            .unwrap()
+            .protected_by
+    };
     let target = reel_workflow_native::retention::Target {
         schema: "reel.workflow-retained-target.v1".into(),
         actor: tig_store::Key::parse("retained").unwrap(),
-        owner: case.profile.scope.owner.clone(),
+        owner: profile.scope.owner.clone(),
     };
     let create = |action| {
         let invocation = Invocation {
-            source: &case.source,
-            receipt: &receipt,
-            runtime: &runtime,
+            source,
+            receipt,
+            runtime,
             programs: programs.clone(),
-            workspace: &workspace,
+            workspace,
             action,
         };
         if matches!(action, Action::Recover) {
-            return film_task::resume(&fixture.packet, &case.profile, invocation, Some(&target))
-                .unwrap();
+            return film_task::resume(packet, profile, invocation, Some(&target)).unwrap();
         }
-        let claims = Prepared::open(
-            &fixture.packet,
-            &case.source,
-            &case.profile,
-            "film-attempt-1",
-        )
-        .unwrap()
-        .reopen(&receipt)
-        .unwrap();
-        let native = NativeInputs::from_claims(&fixture.packet, &case.source, claims).unwrap();
-        film_task::run(&fixture.packet, native, invocation).unwrap()
+        let claims = Prepared::open(packet, source, profile, "film-attempt-1")
+            .unwrap()
+            .reopen(receipt)
+            .unwrap();
+        let native = NativeInputs::from_claims(packet, source, claims).unwrap();
+        film_task::run(packet, native, invocation).unwrap()
     };
     let generated = create(Action::Render);
     let result = generated.result().clone();
@@ -315,10 +370,10 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     assert!(!workspace.join("task-complete.json").exists());
     assert_eq!(
         reel_workflow_native::response::ingest(
-            &fixture.packet,
-            &case.source,
-            &case.profile,
-            &receipt,
+            packet,
+            source,
+            profile,
+            receipt,
             &result,
             generated.returns()
         )
@@ -326,25 +381,20 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
         .code,
         "response-tool-receipt-adapter-required"
     );
-    let other = case.temp.path().join("other-film");
+    let other = workspace.parent().unwrap().join("other-film");
     fs::create_dir(&other).unwrap();
-    let claims = Prepared::open(
-        &fixture.packet,
-        &case.source,
-        &case.profile,
-        "film-attempt-1",
-    )
-    .unwrap()
-    .reopen(&receipt)
-    .unwrap();
-    let native = NativeInputs::from_claims(&fixture.packet, &case.source, claims).unwrap();
+    let claims = Prepared::open(packet, source, profile, "film-attempt-1")
+        .unwrap()
+        .reopen(receipt)
+        .unwrap();
+    let native = NativeInputs::from_claims(packet, source, claims).unwrap();
     let refused = film_task::run(
-        &fixture.packet,
+        packet,
         native,
         Invocation {
-            source: &case.source,
-            receipt: &receipt,
-            runtime: &runtime,
+            source,
+            receipt,
+            runtime,
             programs: programs.clone(),
             workspace: &other,
             action: Action::Render,
@@ -354,7 +404,7 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     .unwrap();
     assert_eq!(refused.code, "film-original-dispatch");
     assert!(fs::read_dir(&other).unwrap().next().is_none());
-    let candidate = generated.stage(&case.source, &case.profile).unwrap();
+    let candidate = generated.stage(source, profile).unwrap();
     record("candidate.json", &serde_json::to_value(&candidate).unwrap());
     {
         use tig_store::{
@@ -362,8 +412,8 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
             source_claims::protection::{self, Index, work},
         };
         let mut nodes =
-            MetadataStore::open(&case.profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
-        let mut index = Index::open(&case.profile.index_root, &receipt.index_checkpoint).unwrap();
+            MetadataStore::open(&profile.metadata_root, &receipt.metadata_checkpoint).unwrap();
+        let mut index = Index::open(&profile.index_root, &receipt.index_checkpoint).unwrap();
         let original = work::read(&mut index, &candidate.work, &nodes).unwrap();
         let mut interrupted = false;
         assert!(
@@ -383,22 +433,14 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     drop(generated);
     let generated = create(Action::Recover);
     assert_eq!(*generated.result(), result);
-    assert_eq!(
-        candidate,
-        generated.ingest(&case.source, &case.profile).unwrap()
-    );
-    assert_eq!(
-        candidate,
-        generated.ingest(&case.source, &case.profile).unwrap()
-    );
-    let ack = generated
-        .retain(&case.source, &case.profile, &target)
-        .unwrap();
+    assert_eq!(candidate, generated.ingest(source, profile).unwrap());
+    assert_eq!(candidate, generated.ingest(source, profile).unwrap());
+    let ack = generated.retain(source, profile, &target).unwrap();
     let completed = fs::read(workspace.join("task-complete.json")).unwrap();
     record("retained.json", &serde_json::to_value(&ack).unwrap());
     let worker = result.worker_receipt.as_ref().unwrap();
     assert!(
-        case.protected(&Object {
+        protected(&Object {
             sha256: tig_core::Digest::parse(&worker.sha256).unwrap(),
             bytes: worker.bytes
         })
@@ -408,14 +450,11 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     fs::remove_file(workspace.join("workflow-result.json")).unwrap();
     let recovered = create(Action::Recover);
     assert_eq!(*recovered.result(), result);
-    assert_eq!(
-        candidate,
-        recovered.ingest(&case.source, &case.profile).unwrap()
-    );
+    assert_eq!(candidate, recovered.ingest(source, profile).unwrap());
     assert_eq!(
         ack.canonical_bytes().unwrap(),
         recovered
-            .retain(&case.source, &case.profile, &target)
+            .retain(source, profile, &target)
             .unwrap()
             .canonical_bytes()
             .unwrap()
@@ -430,7 +469,7 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     assert_eq!(*recovered.result(), result);
     drop(recovered);
     git(
-        fixture.temp.path(),
+        &source.snapshot.repository,
         &[
             "commit",
             "--allow-empty",
@@ -438,15 +477,8 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
             "source advances after retained production",
         ],
     );
-    let historical = film_task::verify_retained(
-        &fixture.packet,
-        &case.source,
-        &case.profile,
-        &receipt,
-        &result,
-        &ack,
-    )
-    .unwrap();
+    let historical =
+        film_task::verify_retained(packet, source, profile, receipt, &result, &ack).unwrap();
     drop(historical);
     let operation = tig_store::Key::parse("film-close-1").unwrap();
     record(
@@ -456,10 +488,10 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     let close = |action| {
         film_task::close(
             film_task::Close {
-                packet: &fixture.packet,
-                source: &case.source,
-                profile: &case.profile,
-                receipt: &receipt,
+                packet,
+                source,
+                profile,
+                receipt,
                 result: &result,
                 acknowledgement: &ack,
                 operation: &operation,
@@ -474,22 +506,58 @@ fn native_film_task_dispatch_retains_worker_and_outputs_and_recovers_original_re
     assert!(closed.slot_idle);
     assert!(closed.original_clear_complete);
     assert!(close(reel_workflow_native::closing::Action::Recover).slot_idle);
-    drop(
-        film_task::verify_retained(
-            &fixture.packet,
-            &case.source,
-            &case.profile,
-            &receipt,
-            &result,
-            &ack,
-        )
-        .unwrap(),
-    );
+    drop(film_task::verify_retained(packet, source, profile, receipt, &result, &ack).unwrap());
     record("closed.json", &serde_json::to_value(&closed).unwrap());
     record(
         "complete.json",
-        &json!({"task_key":fixture.packet.task_key,"result":result,"candidate":candidate,"retained":ack,"complete":true}),
+        &json!({"task_key":packet.task_key,"result":result,"candidate":candidate,"retained":ack,"complete":true}),
     );
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Continue only the preserved original pre-dispatch qualification job; no new task, runtime, cache or admission"]
+fn continue_original_native_film_task_after_control_gate_repair() {
+    use std::io::Write;
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_EVIDENCE").expect("Set ORIGINAL evidence directory"),
+    );
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(evidence.join("locations.json")).unwrap()).unwrap();
+    let packet: Packet = serde_json::from_value(value["packet"].clone()).unwrap();
+    let source: reel_workflow_native::NativeProfile =
+        serde_json::from_value(value["native"].clone()).unwrap();
+    let profile: reel_workflow_native::admission::Profile =
+        serde_json::from_value(value["admission_profile"].clone()).unwrap();
+    let runtime: Tool = serde_json::from_value(value["runtime"].clone()).unwrap();
+    let programs = serde_json::from_value(value["programs"].clone()).unwrap();
+    let receipt =
+        serde_json::from_slice(&fs::read(evidence.join("admission.json")).unwrap()).unwrap();
+    let workspace = PathBuf::from(value["case_root"].as_str().unwrap()).join("film");
+    assert!(
+        fs::read_dir(&workspace).unwrap().next().is_none(),
+        "The original failure occurred before any producer launch; stop on a different state"
+    );
+    let raw = serde_json::to_vec(&json!({"schema":"reel.synthetic-original-film-repair.v1", "task_key":packet.task_key,
+        "driver_source":std::env::var("REEL_QUALIFIED_DRIVER_SOURCE").expect("Pin the repair driver source"),"runtime":runtime})).unwrap();
+    let mut record = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(evidence.join("repair-started.json"))
+        .unwrap();
+    record.write_all(&raw).unwrap();
+    record.sync_all().unwrap();
+    drop(record);
+    exercise_original_film(FilmCase {
+        packet: &packet,
+        source: &source,
+        profile: &profile,
+        receipt: &receipt,
+        runtime: &runtime,
+        programs: &programs,
+        workspace: &workspace,
+        evidence: &evidence,
+    });
 }
 
 fn git_path() -> PathBuf {
