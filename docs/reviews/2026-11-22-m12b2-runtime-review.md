@@ -297,6 +297,49 @@ focused passing cases**, not an addition of reruns or fixture children.
 Formatting, whitespace and actionlint passed. No actual endpoint, audio output,
 capture, listening or release was performed.
 
+## Authenticated worker orchestration checkpoint
+
+The same assistant applied Platform/Audience, Sound, Editor and
+Rights/Provenance checklists to `WorkerSession`, its startup fence and lifecycle
+observations. This is implementation review, not independent or human approval.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Rights/Provenance | Match both actual parent peers and Authorize before constructing the original-check worker. Retain actual player/lock guards, keep the original producer separate and share the Run origin. A contained child with missing originals authenticates against its actual held runner PID, then faults without a transport or output port. |
+| Platform/Audience — display | Sending an acknowledgement into the pipe queue does not prove display. Start/Restart now hold a controller startup fence until matching `ack_shown`. The worker requires an actually emitted report, its ID/generation and a nonfuture display counter at or after reporting; its eight-ID budget spans this return. Actual console rendering and the parent credit/order implementation remain open. |
+| Sound/Editor | Initial source checking and exact transcript delivery precede any endpoint query. `text_shown` enables background metadata probing; explicit Start and the displayed Starting acknowledgement precede output startup. The controlled fence test covers successful release, unrelated ID and late release that cannot revive a timed-out Start. No PCM or interval arithmetic changed. |
+| Platform/Audience — failure | Shared initial-check/probe deadlines and unexpected source-thread exit must fault without waiting for a blocked operation. Terminal channel state wins over buffered old commands. Valid Fault admission retains Status/Quit; malformed protocol ends worker admission, with local operator status/quit still owed by the parent. |
+| Platform/Audience — scheduling | A continuously refilled queue can defeat an unbounded drain even when its capacity is eight. The worker now admits at most eight packets per tick before core/native polling. The full 20 ms schedule still needs measurement in the complete foreground/worker system. |
+| Rights/Provenance — teardown | Native output must close before original guards drop, including unwinding. Explicit off-controller `finish` joins actual source/output destruction and returns the still-owned channel/runtime guards plus a final observation. `resources_closed` is not an invented core snapshot, delivery receipt or process-reap receipt. The enclosing owner still owes the complete shared cleanup budget and held-process barrier. |
+
+The new positive original-input test uses test-owned Spanish engineering inputs
+and an actual guarded runtime/source/channel exchange in one test process. It
+compares exact bytes against the retained original access file, independently of
+player preparation, and refuses Start before text display. It never
+sends `text_shown`, reaches Ready or queries an endpoint. This is distinct from
+the contained missing-original child and is not full contained playback proof.
+
+Two further contained-child cases reject a wrong display-acknowledgement
+generation and a display counter before the actual emitted report. Each child
+asserts that specific worker refusal, joins its real source owner and delivers a
+final observation before its test-only fence permits IPC shutdown. The existing
+held runner observes actual process termination; no production final-delivery
+fence or complete cleanup deadline is inferred from the test marker.
+
+Final execution on the exclusive Windows target:
+
+- Installation unit filter: **79 passed**, zero failed, in 12.86 s. Six ordinary
+  ignored native/allocator fixture entries were explicitly parent-launched;
+  repeated child executions are not added to the count.
+- Explicit original/runtime-input integration: **11 passed**, zero failed or
+  ignored, in 39.09 s. Includes the exact Spanish worker/source/channel case.
+- Native CLI: **five passed**, zero failed or ignored, in 0.12 s.
+- Final all-target/all-feature Clippy passed with warnings denied in 50.02 s.
+
+That is **95 distinct focused passing cases**, not a sum of reruns. Formatting,
+whitespace, actionlint and changed-document relative links passed. No actual
+endpoint, playback, capture, listening, console usability or release is claimed.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
@@ -304,11 +347,15 @@ move once into the callback and return intact through the actual backend.
 Primitive and controlled-output ownership/race cases above passed; complete
 native session integration remains open.
 Framing, peer, authentication components and scoped command application passed.
-The transport/source/output controller exists; complete authenticated session
-routing, parent observation ordering, global command-window accounting, console
-behavior, native cancellation through the complete contained worker and all
-aggregate deadlines remain open. The new pre-transport observations must be
-integrated without inventing a Ready transport to acknowledge those controls.
+The authenticated worker routes preparation controls and actual controller
+events, and retains its command credits through report display acknowledgement.
+Full contained success/cancellation tests, parent observation ordering and
+foreground command-window accounting, console behavior, native cancellation
+through the complete process owner and all aggregate deadlines remain open.
+Final delivery must be observed before IPC shutdown; actual tree reaping and
+combined working-set evidence must come from the held owner. A normal or failed
+join cannot manufacture a two-second cleanup pass. Lifetime termination still
+needs full worker/core/owner integration; no stopped snapshot may be invented.
 The controller now enforces the receipt-to-controller acknowledgement budget,
 including a stalled callback while Paused. The complete foreground/IPC path
 still needs the same original receipt deadline, actual visibility/order proof

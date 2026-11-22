@@ -596,6 +596,187 @@ fn exact_checked_pcm_reaches_finite_transport_without_device() {
     assert_eq!(t.snapshot().pass, 2);
 }
 
+#[cfg(all(windows, feature = "installation-native"))]
+#[test]
+#[ignore = "explicit authenticated worker/original integration; no endpoint admission"]
+fn native_worker_routes_exact_spanish_originals_and_refuses_start_before_display() {
+    use api::native::{
+        output::OutputClock,
+        pipe::Channel,
+        protocol::{Input, Output, ParentGate, Preparation, RuntimeBinding},
+        worker::WorkerSession,
+    };
+    let f = InstallationFixture::new(true);
+    let package: checker::AccessPackage = serde_json::from_slice(&f.access_manifest).unwrap();
+    let transcript = &package
+        .editions
+        .iter()
+        .find(|edition| edition.edition_id == "es-technical")
+        .unwrap()
+        .transcript;
+    // Independent byte oracle: retained original access file, not a second
+    // invocation of the player preparation path under test.
+    let expected = fs::read_to_string(f.access.join(&transcript.path)).unwrap();
+    let mut request = native_request(&f);
+    request.edition_id = "es-technical".into();
+    request.playback.runtime = reel::scene_delivery::FileRef {
+        path: std::env::current_exe().unwrap(),
+        sha256: f.runtime.sha256.clone(),
+        bytes: f.runtime.bytes,
+    };
+    let lock = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
+    fs::write(&request.playback.cargo_lock.path, lock).unwrap();
+    request.playback.cargo_lock.sha256 = hash(lock);
+    request.playback.cargo_lock.bytes = lock.len() as u64;
+    let binding =
+        std::sync::Arc::new(RuntimeBinding::bind(&serde_json::to_vec(&request).unwrap()).unwrap());
+    let (invitation, mut parent_channel) = Channel::server().unwrap();
+    let channel = Channel::connect(&invitation).unwrap();
+    let clock = OutputClock::start().unwrap();
+    let mut worker = WorkerSession::new(binding.clone(), channel, &invitation, clock).unwrap();
+    let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    struct Stop(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Stop {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+    let counter = || {
+        let mut at = 0;
+        unsafe {
+            windows::Win32::System::Performance::QueryPerformanceCounter(&mut at).unwrap();
+        }
+        at
+    };
+    std::thread::scope(|scope| {
+        let cancel = stopped.clone();
+        let child = scope.spawn(move || {
+            while !worker.closing() {
+                if cancel.load(Ordering::Acquire) {
+                    return;
+                }
+                worker.tick().unwrap();
+                assert!(worker.observed().is_none());
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let mut closure = worker.finish().unwrap();
+            assert!(matches!(
+                closure.report,
+                Output::PreparationEnded {
+                    phase: Preparation::Stopped,
+                    ..
+                }
+            ));
+            closure
+                .channel
+                .send(closure.generation, &closure.report.bytes().unwrap())
+                .unwrap();
+            // Test-owned fence, not the production console/delivery proof.
+            while !cancel.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            closure.channel.shutdown().unwrap();
+        });
+        let _stop = Stop(stopped.clone());
+        let until = std::time::Instant::now() + Duration::from_secs(40);
+        let mut transcript = false;
+        let mut refused = false;
+        let mut ended = false;
+        while !ended {
+            assert!(
+                std::time::Instant::now() < until,
+                "worker original integration deadline"
+            );
+            assert!(parent_channel.verify_peer(std::process::id()).is_ok());
+            while let Some(packet) = parent_channel.receive() {
+                match Output::parse(&packet).unwrap() {
+                    Output::Hello { .. } => {
+                        let mut parent = ParentGate::new(
+                            binding.context(),
+                            std::process::id(),
+                            invitation.nonce,
+                        )
+                        .unwrap();
+                        let auth = parent.authorize(&parent_channel, &packet).unwrap();
+                        parent_channel.send(0, &auth.bytes().unwrap()).unwrap();
+                    }
+                    Output::Preparing {
+                        phase: Preparation::Checking | Preparation::AwaitingText,
+                        ..
+                    } => {}
+                    Output::Transcript { text, sha256 } => {
+                        assert_eq!(text, expected);
+                        assert_eq!(sha256, hash(expected.as_bytes()));
+                        transcript = true;
+                        parent_channel
+                            .send(
+                                0,
+                                &Input::Control {
+                                    id: 1,
+                                    command: api::Command::Start,
+                                    received_counter: counter(),
+                                }
+                                .bytes()
+                                .unwrap(),
+                            )
+                            .unwrap();
+                    }
+                    Output::PreparationAck {
+                        id: 1,
+                        phase: Preparation::AwaitingText,
+                        refusal: Some(api::TransportError::InvalidState),
+                        ..
+                    } => {
+                        assert!(transcript);
+                        refused = true;
+                        parent_channel
+                            .send(
+                                0,
+                                &Input::AckShown {
+                                    id: 1,
+                                    observed_counter: counter(),
+                                }
+                                .bytes()
+                                .unwrap(),
+                            )
+                            .unwrap();
+                        parent_channel
+                            .send(
+                                0,
+                                &Input::Control {
+                                    id: 2,
+                                    command: api::Command::Quit,
+                                    received_counter: counter(),
+                                }
+                                .bytes()
+                                .unwrap(),
+                            )
+                            .unwrap();
+                    }
+                    Output::PreparationAck {
+                        id: 2,
+                        phase: Preparation::AwaitingText,
+                        refusal: None,
+                        ..
+                    } => assert!(refused),
+                    Output::PreparationEnded {
+                        phase: Preparation::Stopped,
+                        ..
+                    } => {
+                        assert!(refused);
+                        ended = true;
+                    }
+                    _ => panic!("undisplayed original reached unexpected native readiness"),
+                }
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        stopped.store(true, Ordering::Release);
+        child.join().unwrap();
+        parent_channel.shutdown().unwrap();
+    });
+}
+
 #[test]
 #[ignore = "explicit original-input installation qualification"]
 fn restart_rechecks_same_originals_and_stale_input_faults() {

@@ -54,7 +54,7 @@ impl OutputClock {
     pub fn origin(&self) -> (i64, i64) {
         (self.counter, self.frequency)
     }
-    fn elapsed_at(&self, counter: i64) -> Option<u64> {
+    pub(super) fn elapsed_at(&self, counter: i64) -> Option<u64> {
         let ticks = counter.checked_sub(self.counter)?;
         if ticks < 0 {
             return None;

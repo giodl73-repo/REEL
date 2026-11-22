@@ -61,6 +61,8 @@ pub struct Controller {
     last_id: u64,
     clock: OutputClock,
     failure: Option<Failure>,
+    require_startup_ack: bool,
+    awaiting_startup_ack: Option<(u64, u64)>,
 }
 impl Controller {
     /// Takes the actual prepared transport. Construction opens no stream.
@@ -90,6 +92,8 @@ impl Controller {
             last_id: 0,
             clock,
             failure: None,
+            require_startup_ack: false,
+            awaiting_startup_ack: None,
         }
     }
     pub fn observed(&self) -> Snapshot {
@@ -100,6 +104,31 @@ impl Controller {
     }
     pub fn event(&mut self) -> Option<Event> {
         self.events.pop_front()
+    }
+    /// The authenticated worker uses this before accepting any commands.
+    /// Startup remains silent until the foreground confirms its actual ack.
+    pub fn require_startup_acknowledgement(&mut self) -> Result<()> {
+        ensure!(
+            self.last_id == 0,
+            "installation late acknowledgement policy"
+        );
+        self.require_startup_ack = true;
+        Ok(())
+    }
+    pub fn acknowledgement_shown(&mut self, id: u64) {
+        self.check_ack_deadlines();
+        if self.failure.is_none()
+            && self
+                .awaiting_startup_ack
+                .is_some_and(|(waiting, _)| waiting == id)
+        {
+            self.awaiting_startup_ack = None;
+        }
+    }
+    /// A protocol/lifecycle failure requests silence and physical close without
+    /// inventing a command ID or a returned-core observation.
+    pub fn abort(&mut self) {
+        self.fail(Failure::Backend);
     }
     pub fn command(
         &mut self,
@@ -171,6 +200,7 @@ impl Controller {
         self.permit = None;
         self.source_ticket = None;
         self.deadline = None;
+        self.awaiting_startup_ack = None;
     }
     fn check_ack_deadlines(&mut self) {
         // Use controller visibility, not the rounded core trace timestamp.
@@ -180,6 +210,9 @@ impl Controller {
             self.pending
                 .iter()
                 .any(|pending| now.saturating_sub(pending.received_us) > 100_000)
+                || self
+                    .awaiting_startup_ack
+                    .is_some_and(|(_, receipt)| now.saturating_sub(receipt) > 100_000)
         });
         if expired {
             self.fail(Failure::Deadline);
@@ -232,6 +265,9 @@ impl Controller {
                 _ => None,
             };
             if let Some(span) = span {
+                if self.require_startup_ack {
+                    self.awaiting_startup_ack = Some((pending.id, pending.received_us));
+                }
                 self.deadline = Some(
                     pending
                         .received_us
@@ -544,6 +580,7 @@ impl Controller {
             && self.native_generation.is_none()
             && self.open.is_some()
             && self.failure.is_none()
+            && self.awaiting_startup_ack.is_none()
         {
             let deadline = self
                 .deadline
@@ -652,6 +689,37 @@ mod tests {
             while controller.event().is_some() {}
             assert!(Instant::now() < until, "controlled controller deadline");
             std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    #[test]
+    fn foreground_startup_acknowledgement_gates_open_and_cannot_revive_a_timeout() {
+        for timely in [true, false] {
+            let (mut controller, harness, clock) = fixture();
+            let _release = harness.release_guard();
+            controller.require_startup_acknowledgement().unwrap();
+            controller
+                .command(1, Command::Start, 0, clock.now_us().unwrap())
+                .unwrap();
+            controller.tick().unwrap();
+            assert!(controller.operation.is_none());
+            assert_eq!(harness.opened.load(Ordering::Acquire), 0);
+            controller.acknowledgement_shown(99);
+            assert!(controller.awaiting_startup_ack.is_some());
+            if !timely {
+                std::thread::sleep(Duration::from_millis(120));
+            }
+            controller.acknowledgement_shown(1);
+            if timely {
+                wait(&mut controller, &harness, |controller| {
+                    controller.observed.state == State::Playing
+                });
+                assert_eq!(harness.opened.load(Ordering::Acquire), 1);
+            } else {
+                controller.tick().unwrap();
+                assert_eq!(controller.failed(), Some(Failure::Deadline));
+                assert_eq!(harness.opened.load(Ordering::Acquire), 0);
+                assert_eq!(controller.observed.state, State::Fault);
+            }
         }
     }
     #[test]

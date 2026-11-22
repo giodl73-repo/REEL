@@ -19,6 +19,8 @@ mod probe;
 pub mod protocol;
 #[cfg(windows)]
 pub mod source;
+#[cfg(windows)]
+pub mod worker;
 pub use probe::{ProbeRequest, probe, probe_worker};
 #[cfg(windows)]
 pub mod pipe;

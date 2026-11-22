@@ -25,6 +25,10 @@ pub enum Input {
         command: Command,
         received_counter: i64,
     },
+    AckShown {
+        id: u64,
+        observed_counter: i64,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +41,15 @@ pub enum Preparation {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Output {
+    SessionFault {
+        generation: u64,
+        observed_counter: i64,
+    },
+    /// Source/output owners have actually joined; channel/process still live.
+    ResourcesClosed {
+        generation: u64,
+        observed_counter: i64,
+    },
     Preparing {
         phase: Preparation,
         observed_counter: i64,
@@ -132,6 +145,10 @@ impl Input {
                 received_counter,
                 ..
             } => *id > 0 && *received_counter > 0,
+            Self::AckShown {
+                id,
+                observed_counter,
+            } => *id > 0 && *observed_counter > 0,
         };
         ensure!(valid, "installation message profile");
         Ok(())
@@ -155,6 +172,13 @@ impl Output {
             ensure!(
                 status.generation == packet.generation(),
                 "installation observed generation mismatch"
+            );
+        } else if let Self::SessionFault { generation, .. }
+        | Self::ResourcesClosed { generation, .. } = &value
+        {
+            ensure!(
+                *generation == packet.generation(),
+                "installation lifecycle generation mismatch"
             );
         } else {
             ensure!(
@@ -192,6 +216,17 @@ impl Output {
     }
     fn validate(&self) -> Result<()> {
         match self {
+            Self::SessionFault {
+                observed_counter, ..
+            }
+            | Self::ResourcesClosed {
+                observed_counter, ..
+            } => {
+                ensure!(
+                    *observed_counter > 0,
+                    "installation lifecycle counter profile"
+                );
+            }
             Self::Preparing {
                 observed_counter, ..
             }
@@ -359,6 +394,10 @@ pub struct WorkerGate {
 pub enum Admission {
     Authorized,
     TextShown,
+    AckShown {
+        id: u64,
+        observed_counter: i64,
+    },
     Refused {
         id: u64,
         command: Command,
@@ -437,6 +476,22 @@ impl WorkerGate {
             "installation message clock context"
         );
         match Input::parse(packet)? {
+            Input::AckShown {
+                id,
+                observed_counter,
+            } => {
+                ensure!(
+                    self.authorized
+                        && observed_counter >= origin
+                        && observed_counter <= now
+                        && self.pending.contains(&Some(id)),
+                    "installation unknown acknowledgement display"
+                );
+                Ok(Admission::AckShown {
+                    id,
+                    observed_counter,
+                })
+            }
             Input::Authorize {
                 request_sha256,
                 runtime_sha256,
@@ -782,6 +837,94 @@ mod tests {
             assert!(!request.original.declaration.path.exists());
             channel.shutdown().unwrap();
         });
+    }
+    #[test]
+    fn displayed_ack_requires_an_outstanding_id_and_a_nonfuture_counter() {
+        for (id, at) in [(1, 201), (2, 190), (1, 99)] {
+            let mut gate = authorized();
+            gate.admit_verified(
+                &packet(
+                    Input::Control {
+                        id: 1,
+                        command: Command::Status,
+                        received_counter: 150,
+                    },
+                    0,
+                ),
+                200,
+                100,
+                42,
+            )
+            .unwrap();
+            assert!(
+                gate.admit_verified(
+                    &packet(
+                        Input::AckShown {
+                            id,
+                            observed_counter: at
+                        },
+                        0
+                    ),
+                    200,
+                    100,
+                    42
+                )
+                .is_err()
+            );
+        }
+        let mut gate = authorized();
+        gate.admit_verified(
+            &packet(
+                Input::Control {
+                    id: 1,
+                    command: Command::Status,
+                    received_counter: 150,
+                },
+                0,
+            ),
+            200,
+            100,
+            42,
+        )
+        .unwrap();
+        assert!(matches!(
+            gate.admit_verified(
+                &packet(
+                    Input::AckShown {
+                        id: 1,
+                        observed_counter: 190
+                    },
+                    0
+                ),
+                200,
+                100,
+                42
+            )
+            .unwrap(),
+            Admission::AckShown { id: 1, .. }
+        ));
+        // Admission alone releases nothing; the actual worker must match its
+        // emitted report and header generation before freeing this slot.
+        assert!(gate.pending.contains(&Some(1)));
+    }
+    #[test]
+    fn lifecycle_metadata_never_invents_a_core_snapshot_and_binds_header_generation() {
+        for message in [
+            Output::SessionFault {
+                generation: 3,
+                observed_counter: 150,
+            },
+            Output::ResourcesClosed {
+                generation: 3,
+                observed_counter: 150,
+            },
+        ] {
+            let raw = message.bytes().unwrap();
+            assert!(!std::str::from_utf8(&raw).unwrap().contains("snapshot"));
+            let mut encoder = Encoder::new([1; 16], Direction::Report).unwrap();
+            assert!(Output::parse(&encoder.encode(3, &raw).unwrap()).is_ok());
+            assert!(Output::parse(&encoder.encode(2, &raw).unwrap()).is_err());
+        }
     }
     #[test]
     fn preparing_controls_do_not_invent_a_transport_snapshot() {

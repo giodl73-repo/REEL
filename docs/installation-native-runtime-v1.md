@@ -96,17 +96,18 @@ threads. A failed native cleanup remains a failed profile, not a timer success.
 The low-level channel now uses two distinct one-way Windows named-pipe file
 objects. A blocked read therefore cannot serialize an unrelated write on the
 same synchronous handle. Its owned reader/writer threads exchange bounded
-packets; controller/callback code only polls queues. The dotted links below are
-the **still-pending session integration**, not an implemented Run command.
+packets; controller/callback code polls queues. The worker now routes guarded
+admission and real transport events. The dotted foreground links still require
+operator integration; there is no implemented Run command.
 
 ```mermaid
 flowchart LR
     accTitle: Separate one-way pipes isolate blocked command and report I/O
-    accDescr: A foreground controller and worker controller still need integration. Implemented bounded queues and owned I/O threads carry commands through one local pipe and reports back through another. Both actual worker pipe peers must match the PID held by the existing process runner.
+    accDescr: The foreground still needs integration. Bounded queues and owned I/O threads connect the local pipes to the authenticated worker session. Both actual worker pipe peers must match the PID held by the existing process runner.
     fg["Foreground controller<br/>(integration pending)"] -.-> cq["8-command queue<br/>owned writer thread"]
     cq --> cp["Local command pipe<br/>owned reader thread"]
-    cp -.-> worker["Worker controller<br/>(integration pending)"]
-    worker -.-> rq["256-report queue<br/>owned writer thread"]
+    cp --> worker["Authenticated WorkerSession<br/>actual controller + source checks"]
+    worker --> rq["256-report queue<br/>owned writer thread"]
     rq --> rp["Local report pipe<br/>owned reader thread"]
     rp -.-> fg
 ```
@@ -180,8 +181,10 @@ commands. They are bounded by the same frame limit:
 | --- | --- |
 | Worker `hello` → parent `authorize` | Both actual OS pipe peers, random run context, exact request hash and actual image hash agree with the held runtime/worker. Bootstrap is accepted once. |
 | Worker `transcript` → parent `text_shown` | Exact admitted UTF-8 text/hash; acknowledgement names that same hash and at least 80×30 / UTF-8 input and output observations. Actual console measurement/display still belongs to the pending operator implementation. |
-| Parent `control` | Canonical command, consecutive unique ID and nondecreasing complete-receipt counter within the Run clock domain. At most eight IDs remain outstanding until actual worker/core application or refusal. |
+| Parent `control` | Canonical command, consecutive unique ID and nondecreasing complete-receipt counter within the Run clock domain. The worker retains each of eight outstanding IDs through actual application/refusal and matching display acknowledgement. |
+| Worker `ack` / `preparation_ack` → parent `ack_shown` | Match an actually emitted command report, its ID and frame generation. Display counter cannot precede that report or be in the future. A parsed display claim is not console-rendering evidence. |
 | Worker `ready`, `state`, `ack`, `ended` | Immutable bounded observations; snapshot generation agrees with the frame. They cannot deserialize or construct a transport, prepared programme or restart permit. |
+| Worker `session_fault`, `resources_closed` | Generation-bound lifecycle metadata without a fabricated snapshot. Resource closure means source/output owners joined; it does not mean IPC delivery or process-tree reaping. |
 
 Before text acknowledgement, Status/Quit remain admissible and other supported
 controls receive an InvalidState refusal without advancing source state. Bad
@@ -267,9 +270,63 @@ buffers be released. This join may block a broken driver and still belongs
 inside the externally contained native worker.
 
 Preparation/status/end message variants represent Checking/Fault before any
-transport exists. They contain no fabricated Ready snapshot. Actual full-worker
-routing, parent acknowledgement visibility/order, global command admission,
-console behavior and process-wide cleanup deadlines remain required.
+transport exists. They contain no fabricated Ready snapshot. The worker routes
+them now; parent acknowledgement visibility/order, global foreground command
+admission, console behavior and process-wide cleanup deadlines remain required.
+
+### Authenticated worker: checking through actual controls
+
+`native::worker::WorkerSession` connects the channel, runtime binding, source
+thread and controller. Setup receives an already guarded current-image binding,
+an established channel and the shared Run clock. The enclosing owner must choose
+that origin before setup so setup counts against the same lifetime.
+
+```mermaid
+sequenceDiagram
+    accTitle: Exact originals and two acknowledgements precede output
+    accDescr: The worker verifies both parent peers, then exchanges Hello and Authorize. Only then does source checking run. The exact transcript is sent and its display acknowledged before endpoint metadata probing and Ready. Start produces an actual core acknowledgement. Its display acknowledgement must return before stream startup. The real callback receives the same prepared core.
+    participant P as Foreground (pending)
+    participant W as WorkerSession
+    participant S as Guarded source thread
+    participant C as Actual controller/core
+    P->>W: Matching held peers + Authorize
+    W->>S: Runtime/lock and original checks (Run ≤30 s)
+    S-->>W: Actual prepared core + retained guards
+    W-->>P: Exact original transcript
+    P->>W: TextShown for that hash/layout
+    W->>W: Background exact-endpoint probe (≤2 s)
+    W-->>P: Ready; no stream
+    P->>W: Start, ID, generation, original receipt counter
+    W->>C: Apply actual scoped command
+    C-->>W: Actual Starting trace
+    W-->>P: Ack with actual trace observation
+    P->>W: AckShown for that ID/generation
+    W->>C: Release startup fence; bounded probe/open/handoff
+```
+
+The worker reads QPC immediately before each packet admission, rather than
+rejecting a command that arrived after the tick's first clock sample. It keeps
+the eight-ID budget until an actual report and matching `ack_shown`; expired
+receipt-to-return budgets fault even if an old acknowledgement later arrives.
+Start/Restart cannot schedule output startup while their display fence is held.
+Neither that fence nor an IPC claim replaces actual foreground display evidence.
+At most eight packets are admitted per tick; continuous valid traffic cannot
+turn queue draining into an unbounded loop ahead of native/core polling.
+
+No endpoint is queried while checking or waiting for exact text display. Initial
+check/probe deadlines and unexpected source-thread exit fault without waiting for
+the blocked task. They request cancellation; actual destruction still requires
+the contained owner. Worker Fault reports preserve Status/Quit for valid
+admission. A terminal channel wins over queued old commands.
+
+`finish` is an explicit blocking source/output destruction step **outside the
+controller loop**. It returns a `WorkerClosure` owning the still-live channel,
+runtime guards and final observation only after those actual joins. The caller
+still owes final report delivery/acknowledgement, IPC shutdown and actual process
+reaping under one cleanup budget. There is no automatic final-send-and-drop
+success path. Unwinding also closes native output before dropping original
+guards and before channel destruction. No CLI/console or complete two-second
+cleanup qualification follows from this worker component.
 
 ### Existing runner and output ports
 
@@ -352,9 +409,9 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest controller/admission checkpoint: 73 unit cases, five CLI cases and ten
-explicit original/runtime-input cases passed: **88 distinct focused cases**. The
-original-input invocation ran with zero ignored cases; the five ordinary ignored
+Latest worker/controller/admission checkpoint: 79 unit cases, five CLI cases and
+11 explicit original/runtime-input cases passed: **95 distinct focused cases**. The
+original-input invocation ran with zero ignored cases; the six ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains
 original file guards through Ready/rechecks, releases them at actual teardown,
