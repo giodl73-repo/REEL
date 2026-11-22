@@ -63,6 +63,12 @@ readback passed. A decode of the 64x64 FFV1 picture's first center pixel returne
 RGB (20,171,40), confirming the green replacement rather than the original red.
 Original roots, runtime, claims and receipts remain preserved.
 
+A read-only qualification at source `0632374` passed in 72.38 seconds. The
+completed film result and its image parent shared one retained owner; the adapter
+reopened the film's exact worker/request proof and all parent outputs, verified
+the prospective child budget and left the index checkpoint unchanged. No new
+child claims, task, publication or slot was created by that readback.
+
 This is one short synthetic scene with newly authored controls, not automatic
 derivation of a project's affected controls, a full finding-to-rebuild command,
 actual bilingual assembly, episode-scale capacity, profile adoption or rollback.
