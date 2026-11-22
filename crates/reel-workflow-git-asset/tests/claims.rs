@@ -59,11 +59,19 @@ struct Fixture {
 }
 impl Fixture {
     fn new() -> Self {
+        Self::mode(false)
+    }
+    fn mode(fenced: bool) -> Self {
         let temp = tempfile::Builder::new()
             .prefix("reel-public-job-fixture-")
             .tempdir()
             .unwrap();
-        let mut namespace = Namespace::create(
+        let create = if fenced {
+            Namespace::create_fenced
+        } else {
+            Namespace::create
+        };
+        let mut namespace = create(
             &temp.path().join("claims"),
             key("project"),
             key("epoch"),
@@ -611,4 +619,103 @@ fn pending_new_generation_makes_original_receipt_advanced_without_releasing_it()
     assert_eq!(f.namespace.checkpoint(), checkpoint);
     assert!(f.required("backup"));
     assert!(f.required("working"));
+}
+
+#[test]
+fn held_original_generation_blocks_cancel_and_allows_another_source() {
+    let mut f = Fixture::mode(true);
+    let handle = f.handle();
+    handle.admit(&mut f.namespace, &f.nodes, &limits()).unwrap();
+    let before = f.namespace.checkpoint();
+    let held = handle.hold(&mut f.namespace).unwrap();
+    assert_eq!(held.source(), &key("attempt"));
+    assert_eq!(held.revision(), handle.request().expected_revision + 2);
+    assert_eq!(f.namespace.checkpoint(), before);
+    let mut peer = f.peer(&before);
+    assert_eq!(
+        handle
+            .cancel(&mut peer, key("cancel-original"), &f.nodes, &limits())
+            .unwrap_err()
+            .kind,
+        ErrorKind::Busy
+    );
+    assert_eq!(peer.checkpoint(), before);
+    peer.apply(
+        key("enroll-unrelated"),
+        Command::Enroll {
+            source: key("unrelated"),
+            owner: key("owner"),
+            class: Kind::Job,
+        },
+        &f.nodes,
+        &limits(),
+    )
+    .unwrap();
+    let other = Select {
+        prepare: key("other-prepare"),
+        adopt: key("other-adopt"),
+        source: key("unrelated"),
+        owner: key("owner"),
+        expected_revision: 1,
+        selection: f.selection.clone(),
+    };
+    peer.select(&other, &f.nodes, &limits()).unwrap();
+    assert_eq!(handle.status(&mut peer).unwrap().state, State::Active);
+    drop(held);
+    assert_eq!(
+        handle
+            .cancel(&mut peer, key("cancel-original"), &f.nodes, &limits())
+            .unwrap()
+            .state,
+        State::Historical
+    );
+    assert!(f.required("backup"));
+    assert!(matches!(handle.hold(&mut peer),Err(e) if e.kind==ErrorKind::Stale));
+}
+#[test]
+fn source_use_needs_the_original_operation_not_just_equal_bytes_and_revision() {
+    let mut f = Fixture::mode(true);
+    let original = f.handle();
+    let mut request = f.request();
+    request.prepare = key("different-prepare");
+    request.adopt = key("different-adopt");
+    let other = Handle::prepare(&mut f.namespace, request).unwrap();
+    original
+        .admit(&mut f.namespace, &f.nodes, &limits())
+        .unwrap();
+    let before = f.namespace.checkpoint();
+    assert!(
+        matches!(other.hold(&mut f.namespace),Err(e) if e.kind==ErrorKind::Stale && e.code=="public-git-asset-source-use-original-receipt")
+    );
+    assert_eq!(f.namespace.checkpoint(), before);
+    // A failed original-receipt check must release its already acquired use.
+    assert_eq!(
+        original
+            .cancel(
+                &mut f.namespace,
+                key("cancel-after-refusal"),
+                &f.nodes,
+                &limits()
+            )
+            .unwrap()
+            .state,
+        State::Historical
+    );
+}
+#[test]
+fn old_namespace_refuses_source_use_without_upgrading_or_changing_claims() {
+    let mut f = Fixture::new();
+    let handle = f.handle();
+    handle.admit(&mut f.namespace, &f.nodes, &limits()).unwrap();
+    let before = f.namespace.checkpoint();
+    let path = f.temp.path().join("claims/claims.json");
+    let marker = fs::read(&path).unwrap();
+    assert!(matches!(handle.hold(&mut f.namespace),Err(e) if e.kind==ErrorKind::Unsupported));
+    assert_eq!(f.namespace.checkpoint(), before);
+    assert_eq!(fs::read(path).unwrap(), marker);
+    assert!(!f.temp.path().join("claims/source-gates").exists());
+    assert_eq!(
+        handle.status(&mut f.namespace).unwrap().state,
+        State::Active
+    );
 }

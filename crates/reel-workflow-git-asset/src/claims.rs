@@ -210,6 +210,45 @@ impl Handle {
             checkpoint: namespace.checkpoint(),
         })
     }
+    /// Hold only the exact original admitted job generation. This writes no
+    /// claim and proves neither bytes nor native pool/roster authority. Callers
+    /// must separately bind the actual namespace and retain real byte guards.
+    pub fn hold(&self, namespace: &mut Namespace) -> Result<admission::source_use::Use> {
+        use admission::source_use::UseError;
+        self.bind(namespace)?;
+        let revision = self.request.expected_revision + 2;
+        let version = source_claims::Version {
+            revision,
+            selection: self.request.selection.clone(),
+        };
+        let held = namespace
+            .source_use(
+                &self.request.source,
+                &self.request.owner,
+                revision,
+                &version,
+            )
+            .map_err(|e| match e {
+                UseError::Unsupported => error(
+                    ErrorKind::Unsupported,
+                    "public-git-asset-source-use-unsupported",
+                ),
+                UseError::Admission(e) => admission_error(e),
+                UseError::Owner => error(ErrorKind::Denied, "public-git-asset-source-use-owner"),
+                UseError::Stale | UseError::Inactive => {
+                    error(ErrorKind::Stale, "public-git-asset-source-use-generation")
+                }
+            })?;
+        // Equal bytes and revision do not prove this handle's original command
+        // IDs. Check the exact recorded operation while the source is stable.
+        if self.status(namespace)?.state != State::Active {
+            return Err(error(
+                ErrorKind::Stale,
+                "public-git-asset-source-use-original-receipt",
+            ));
+        }
+        Ok(held)
+    }
     /// Withdraw only the original adopted revision. Retains it as a predecessor;
     /// no Retire, payload deletion, scratch cleanup or creative selection occurs.
     /// Retry only with the same cancel operation; historical replay is observed.

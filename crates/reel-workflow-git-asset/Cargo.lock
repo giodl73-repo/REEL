@@ -336,7 +336,7 @@ dependencies = [
 [[package]]
 name = "git-asset"
 version = "0.1.0"
-source = "git+https://github.com/giodl73-repo/git-asset?rev=3ddeab5572f9479475134e6b7334a26effcb9277#3ddeab5572f9479475134e6b7334a26effcb9277"
+source = "git+https://github.com/giodl73-repo/git-asset?rev=0ccb137cf5a78416e780f8a3372017f642a5cb71#0ccb137cf5a78416e780f8a3372017f642a5cb71"
 dependencies = [
  "fs2",
  "getrandom 0.4.3",
@@ -355,7 +355,7 @@ dependencies = [
 [[package]]
 name = "git-asset-core"
 version = "0.1.0"
-source = "git+https://github.com/giodl73-repo/git-asset?rev=3ddeab5572f9479475134e6b7334a26effcb9277#3ddeab5572f9479475134e6b7334a26effcb9277"
+source = "git+https://github.com/giodl73-repo/git-asset?rev=0ccb137cf5a78416e780f8a3372017f642a5cb71#0ccb137cf5a78416e780f8a3372017f642a5cb71"
 dependencies = [
  "serde",
  "serde_json",
@@ -365,7 +365,7 @@ dependencies = [
 [[package]]
 name = "git-asset-model"
 version = "0.1.0"
-source = "git+https://github.com/giodl73-repo/git-asset?rev=3ddeab5572f9479475134e6b7334a26effcb9277#3ddeab5572f9479475134e6b7334a26effcb9277"
+source = "git+https://github.com/giodl73-repo/git-asset?rev=0ccb137cf5a78416e780f8a3372017f642a5cb71#0ccb137cf5a78416e780f8a3372017f642a5cb71"
 dependencies = [
  "git-asset-core",
  "serde",
@@ -376,7 +376,7 @@ dependencies = [
 [[package]]
 name = "git-asset-store"
 version = "0.1.0"
-source = "git+https://github.com/giodl73-repo/git-asset?rev=3ddeab5572f9479475134e6b7334a26effcb9277#3ddeab5572f9479475134e6b7334a26effcb9277"
+source = "git+https://github.com/giodl73-repo/git-asset?rev=0ccb137cf5a78416e780f8a3372017f642a5cb71#0ccb137cf5a78416e780f8a3372017f642a5cb71"
 dependencies = [
  "fs2",
  "getrandom 0.4.3",
@@ -390,7 +390,7 @@ dependencies = [
 [[package]]
 name = "git-asset-windows-process"
 version = "0.1.0"
-source = "git+https://github.com/giodl73-repo/git-asset?rev=3ddeab5572f9479475134e6b7334a26effcb9277#3ddeab5572f9479475134e6b7334a26effcb9277"
+source = "git+https://github.com/giodl73-repo/git-asset?rev=0ccb137cf5a78416e780f8a3372017f642a5cb71#0ccb137cf5a78416e780f8a3372017f642a5cb71"
 dependencies = [
  "sha2 0.11.0",
  "windows-sys",

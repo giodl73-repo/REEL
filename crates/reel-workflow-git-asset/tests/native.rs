@@ -224,7 +224,7 @@ impl Fixture {
                 })
                 .collect();
             let path = root.join(format!("namespace-{index}"));
-            let mut ns = Namespace::create(
+            let mut ns = Namespace::create_fenced(
                 &path,
                 key("fixture"),
                 key("epoch"),
@@ -570,6 +570,46 @@ fn exercise(bare: bool) {
         .admit_claim(&f.handle, &mut f.nodes, &limits())
         .unwrap();
     assert_eq!(status.state, State::Active);
+    let protected = inputs
+        .protect_claim(&f.handle, &mut f.nodes, &limits())
+        .unwrap();
+    // The handle came from copied metadata, but the guard must fence the real
+    // configured namespace. Shared byte guards alone permit claim mutation.
+    assert_eq!(
+        f.handle
+            .cancel(
+                &mut actual,
+                key("cancel-while-protected"),
+                &f.nodes,
+                &limits()
+            )
+            .unwrap_err()
+            .kind,
+        ErrorKind::Busy
+    );
+    actual
+        .apply(
+            key("enroll-independent-generation"),
+            Command::Enroll {
+                source: key("independent-generation"),
+                owner: key("owner"),
+                class: Kind::Retention,
+            },
+            &f.nodes,
+            &limits(),
+        )
+        .unwrap();
+    let other = Select {
+        prepare: key("independent-prepare"),
+        adopt: key("independent-adopt"),
+        source: key("independent-generation"),
+        owner: key("owner"),
+        expected_revision: 1,
+        selection: omitted.request().selection.clone(),
+    };
+    actual.select(&other, &f.nodes, &limits()).unwrap();
+    assert_eq!(f.handle.status(&mut actual).unwrap().state, State::Active);
+
     // Compose exact Git snapshot -> native guarded bytes -> durable claim ->
     // owned streaming workspace, without another cache/provider implementation.
     use reel_workflow_git_asset::workspace::{Budget, Preparation, Ticket, Workspace};
@@ -624,7 +664,7 @@ fn exercise(bare: bool) {
         current.fence(&object),
         Err(git_asset_store::source_claims::admission::Error::Busy)
     ));
-    drop(inputs);
+    drop(protected);
     let fence = current.fence(&object).unwrap();
     assert!(
         current

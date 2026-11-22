@@ -254,3 +254,84 @@ joined crash/recovery acceptance. Source status remains observation only; existi
 qualified private route remains untouched pending those gates. The predecessor
 d672de8ee7507ba630015281c51e7e8a6708c27a passed hosted Windows/Ubuntu checks
 (run44985783442); new source needs its own hosted result.
+
+
+## Source-generation bridge entry
+
+Input4a883eaed9b0bb852e6f6f0e40ac8e9e353a91ea; candidate public SDK
+b9f9d84fe1f516d01f62e7a64152de99ab9196de (draft git-asset PR73;
+full regression/lint/hosted qualification still pending at entry).
+WP-004/008/009/011/016, REQ-001/002/003/004/006/007/008/010,
+SPEC-002/003/004/005/007/008/010/011, IF-002/004/005/008/010/012,
+PKG-001/003/004/006; RUST/PROVIDER/INTEGRATION profiles. Contract:
+public SDK specs/SOURCE-GENERATION-USE.md at that immutable candidate.
+Allowed: isolated public SDK pin, original claim-handle source-use acquisition,
+finished-metadata fixtures and explicit Unsupported for old namespace formats.
+Entry: original handle minimum/owner/Select and immutable returned Version.
+Exit: exact original admitted receipt plus held current-generation use, no writes
+or latest substitution; failure releases partial guards. L0 pins/fmt/diff; L1
+locked adapter regression, strict Clippy and original-operation counterexamples;
+L2 local namespace/source contention plus real ordinary/bare native byte/roster
+joining in newly allocated temporary fixture pools. No production namespace creation.
+Do not represent the candidate as qualified before source/consumer checks pass.
+No private route replacement, cache migration, provider call, render or deletion.
+Source-only use is not byte custody or complete ProtectedJob/Lifecycle. Completed
+output readback must remain possible after explicit job settlement; never revive
+the job merely to verify its already retained outputs.
+
+
+The bridge also consumes GuardedInputs into ProtectedInputs, reusing actual pool
+roster resolution, fixed policy and flat-tree coverage checks before acquiring
+source use. Its private fields own both the real byte/config/namespace guards and
+the original source generation. It does not accept a replacement namespace path,
+admit a new claim, publish candidates or close a task. Ordinary/bare native
+fixtures must show original-source cancellation Busy while another source selects,
+then release only live guards while durable obligations survive.
+
+
+Candidate correction: source0ccb137cf5a78416e780f8a3372017f642a5cb71 removes
+only an unnecessary unit expression flagged by stable Rust1.100 Clippy in
+b9f9d84. All four public dependencies and transitive Windows-process source
+move together; no registry dependency version changes. Source local strict
+workspace Clippy, six guard fixtures, standalone check and L0 pass. Exact-head
+hosted/source-consumer qualification remains pending; the private route is unchanged.
+
+
+## Source-generation bridge checkpoint
+
+Implemented Handle::hold using the SDK's actual source-use guard, exact original
+Select receipt, owner, expected source revision and full Version. A competing
+original request with equal bytes/revision is refused; its partial guard is
+released. Old namespace formats return Unsupported without mutation or upgrade.
+GuardedInputs::protect_claim consumes the input reader, reuses actual pool roster,
+policy and flat coverage checks, and owns byte/config/namespace plus generation
+guards in ProtectedInputs. Cooperative total time is checked after acquisition;
+no method admits/replaces claims, publishes results or completes a task.
+
+Verification: source0ccb137cf5a78416e780f8a3372017f642a5cb71; 30 default locked
+Windows tests PASS (three new claim cases), four explicit native cases PASS
+(43.17 seconds), strict all-target Clippy/fmt/diff PASS. No registry dependency
+versions changed. Candidate source and this consumer still need exact hosted
+qualification; predecessor4a883ea passed hosted44988638980.
+
+Validation: both ordinary/bare actual annex input fixtures now use fresh fenced
+namespaces. The original handle is prepared from copied metadata, yet protected
+use blocks cancellation at the real configured root; unrelated source selection
+in that namespace proceeds. Existing byte-fence checks still refuse while held,
+then release after Drop with durable demand intact. Retained return fixtures
+reopen actual bytes after producer sources are offline. Synthetic roots only.
+
+Trace: entry controls, pinned public source contract and claims/native fixtures;
+external source-use manifests/logs under the existing development evidence root.
+Review: producer-applied identity/namespace, concurrency/recovery, custody,
+provider/privacy, adoption and REEL provenance lenses. Findings: original receipt
+is necessary in addition to equal selected bytes (fixed); a copied namespace ID
+must not redirect a real guard (actual roster root enforced); source stability
+must not be called byte custody (guards owned together, boundary documented);
+no expiry/renewal or settlement-driven generation revival (explicit remaining
+Lifecycle gate). No independent, human or production acceptance is claimed.
+
+Remaining P4: original complete task/request/control retention and admission,
+full ProtectedJob/Lifecycle and joined publication/crash/reconciliation paths.
+Completed retained-output verification must not require reactivating a settled
+input job. The existing private consumer route and runtime bindings stay intact.
