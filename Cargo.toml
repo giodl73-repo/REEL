@@ -149,6 +149,7 @@ resolver = "3"
 
 [dev-dependencies]
 reel-assets = { path = "crates/reel-assets" }
+reel-workflow = { path = "crates/reel-workflow" }
 flate2 = "1"
 
 # Repeated immutable-media/runtime hashing should not dominate qualification.
