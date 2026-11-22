@@ -335,3 +335,133 @@ Remaining P4: original complete task/request/control retention and admission,
 full ProtectedJob/Lifecycle and joined publication/crash/reconciliation paths.
 Completed retained-output verification must not require reactivating a settled
 input job. The existing private consumer route and runtime bindings stay intact.
+
+
+## Retained controls / Lifecycle entry
+
+Inputbe3bec855820a824e53ab2cffdc2756654d380a8 and qualified public SDK0ccb137;
+source hosted44995031081 and consumer44995403521 passed Windows/Linux. The
+subsequent public documentation head has separate live CI. Same P4 controls:
+WP-004/008/009/011/016; REQ-001/002/003/004/006/007/008/010;
+SPEC-002/003/004/005/007/008/010/011; IF-002/004/005/008/010/012;
+PKG-001/003/004/006, RUST/PROVIDER/INTEGRATION. Allowed: reuse existing guarded
+Namespace, metadata tree and native managed reader/publication for explicit
+retained control sets and original task handoff. No new cache/journal engine,
+provider invocation, renderer, private-route conversion or production operation.
+Entry: qualified protected inputs, candidate publication and owned workspace.
+Exit: raw original control/result bytes remain protected across restarts; active
+work holds original input generation; retained-result verification after job
+settlement does not revive the job. Original frozen operations only; uncertain
+publication cannot be replaced or blindly repeated. L0 pins/fmt/diff; L1 locked
+adapter regression/Clippy and malformed/foreign/advanced control negatives; L2
+owned ordinary/bare native control retention and joined crash/reconciliation.
+
+A retention seed fixes an independently pre-enrolled empty Kind::Retention
+source, owner, minimum, expected revision and original Prepare/Adopt IDs. It
+contains no future selection hash, avoiding self-reference when a binding names
+its own control-source seed. Explicit admission adopts a fixed flat control tree
+only while its actual native bytes/config/namespace guards are held. Reopen
+requires the exact original adopted revision, context and recorded command IDs;
+advanced/pending/withdrawn sources refuse, even when equal bytes survive. No
+current/latest fallback. One variant accepts a separately expected selection;
+original-result discovery accepts only that seed's single fixed adopted revision
+and verifies its original receipt under source use before reading any control.
+All roots come from the actual native pool roster, never control-supplied paths.
+No clock expiry/renewal, claim replacement or deletion. Trusted metadata-root
+stability and namespace rollback limitations remain the SDK's admitted boundary.
+
+Controls are bounded (64 objects, 1 MiB each, 64 MiB total plus caller bounds),
+metadata traversal uses caller Limits, and elapsed time is cooperative (kernel
+IO cannot be preempted). A live control set owns actual managed byte/config/
+namespace and source-use guards, not decoded receipt substitutes. Original raw
+returned JSON is loaded from that retained set; serde reserialization cannot
+replace it. A separate immutable result-control adoption keeps frozen plans and
+raw result outside the original task binding, eliminating a second self-hash.
+Producer lenses: identity (exact revision/receipt and external binding), custody
+(actual bytes plus persistent retention), concurrency (scoped source use), privacy
+(no raw paths/payloads in errors), adoption (old routes and namespaces untouched).
+These are entry/review obligations, not independent or production acceptance.
+
+
+Binding closure refinement: immutable bindings fix their own logical ID (not
+their own hash), original packet byte pin, semantic Packet pin, exact preview,
+job handle and three independent retention seeds: original controls, frozen raw
+return/plans, and final retained cohort. Only fixed role/index metadata paths are
+built; input logical IDs never become physical paths. The final cohort includes
+all outputs, worker receipt, raw return and frozen plans and is admitted while
+actual Ready/managed guards hold all bytes, before REEL records Retained. Thus
+individual publication-source history changes cannot remove the task's retained
+reference. Final readback uses its original seed and full cohort, independently
+of active input-job selection. No implicit job revival or control self-hash.
+
+
+Media-size correction before qualification: the small-control Held set is not
+used to buffer final media. Final protection uses actual native verified readers
+without payload Vecs, under separate ProtectionBudget (<=256 objects, <=64 GiB
+per object, <=1 TiB logical total, <=300000 cooperative milliseconds) plus the
+actual SDK profile's limits. Active input reopening similarly uses hold_all,
+retaining streamed verification guards instead of the small InputReader Vec API.
+The <=1 MiB small-control bound remains for raw packets/plans. No byte/storage
+limit is raised in the upstream SDK, and no kernel IO preemption is claimed.
+
+
+## Lifecycle implementation checkpoint (verification in progress)
+
+Added bounded retention seeds/sets, immutable non-self-referential task Binding,
+and actual public Lifecycle/ProtectedJob over existing SDK engines. Three stable
+control sources separate original controls, original raw return/frozen plans,
+and the final result cohort. Byte guards and source-use guards cover the final
+REEL journal append; input source and creative selection remain independent.
+Read-only retained recovery proves original job admission but does not revive
+its active generation or require Git/producer/staging. All original bytes/plans
+are reopened through the actual admitted pool; no mutable-path callback or new
+cache/journal engine. Inputs and final media use streamed guards, not small-Vec
+limits. Original output namespace changes cannot remove the final task cohort's
+independent retained reference.
+
+Evidence so far: pure Binding correspondence (3), seed/parser/admission checks
+(2), actual ordinary/bare retained controls (2), actual ordinary/bare complete
+handoff/settled-input readback (2), injected lost workflow acknowledgement and
+actual native effect uncertainty. A synthetic257 MiB input succeeds under
+streamed guarding while the Vec path refuses. Final consolidated current-tree
+regression/lint/native results are still required. Existing Source/claim process
+exits prove their own components; joined abrupt process-exit acceptance remains
+OPEN, as do complete UI/client enrollment, P2 legacy handoff and production use.
+
+Review findings addressed before qualification: binding logical ID must be fixed
+in addition to byte hash (fixed); packet whitespace must survive (raw pin plus
+semantic Packet check); current bytes/revision do not establish original command
+IDs (receipt under source use); post-commit timeout is not denied admission
+(NeedsRecovery/original IDs); control limits must not shrink media support
+(separate streamed ProtectionBudget); retained-only recovery still needs original
+job-admission proof (checked); final outputs need independent persistent task
+retention, not just ephemeral Ready guards (final cohort source). Producer
+checklists only; no independent or owner acceptance.
+
+
+## Lifecycle local verification closeout
+
+Current-tree verification: 35 default locked all-target tests PASS; 10 explicit
+native tests PASS (179.14 seconds); strict all-target Clippy/fmt/diff PASS.
+Validation covers complete ordinary/bare Journal waiting/import/readback,
+input settlement, offline producer/Git/staging, lost workflow acknowledgement
+leaving ImportPending then original retained recovery, actual imported native
+effect with incomplete acknowledgement staying uncertain across import/resume,
+original control revision/context/operation conflicts and budget/parser refusal.
+Streamed257 MiB input holds actual native protection beyond the Vec read limit.
+All roots and data are synthetic; no provider/render, production cache or private
+route operation. Constructor/reopen performs no source enrollment/publication.
+
+Trace: Binding resource paths and three seeds, Seed original receipt/source use,
+Lifecycle/ProtectedJob, final cohort protection and native lifecycle fixtures
+compose the earlier source0ccb137 and bridgebe3bec8 evidence. Qualified upstream
+source documentation headf6e66f2 also passed hosted44996918189; code pin stays
+0ccb137. This consumer commit still requires exact hosted Windows/Linux results.
+Producer review only, no independent/owner acceptance. Full P4 acceptance is
+not closed: joined actual child-exit matrix, complete client control-ingress/
+enrollment entry and real-project reversible acceptance remain OPEN. SDK's
+existing actual producer exits and claim exits retain their narrower scope.
+Next: original controls/metadata recovery after abrupt process exits across
+waiting/import/unknown/native-complete/workflow-ack boundaries; use the existing
+frozen operations and preserve all bytes/claims. Do not add another journal/cache
+engine, weaken uncertainty or replace the still-working private route.

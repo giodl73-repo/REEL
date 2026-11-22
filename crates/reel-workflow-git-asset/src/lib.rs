@@ -14,8 +14,11 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
+pub mod binding;
 pub mod candidates;
 pub mod claims;
+pub mod handoff;
+pub mod retention;
 pub mod workspace;
 
 pub const SDK_COMMIT: &str = "0ccb137cf5a78416e780f8a3372017f642a5cb71";
@@ -274,6 +277,25 @@ impl GuardedInputs {
             admission,
             preview,
         })
+    }
+}
+impl GuardedInputs {
+    /// Open/hash-verify only the declared inputs and retain actual native guards,
+    /// without constructing in-memory payload vectors. Caller/SDK byte, request,
+    /// live-reader and time limits still apply; attempts consume byte budget.
+    pub fn hold_all(&mut self) -> Result<()> {
+        for (id, input) in &self.declared {
+            if self.held.contains_key(id) {
+                continue;
+            }
+            if input.object.bytes > self.remaining || input.object.bytes > 64 * 1024 * 1024 * 1024 {
+                return Err(error(ErrorKind::Budget, "public-git-asset-read-budget"));
+            }
+            self.remaining -= input.object.bytes;
+            let held = self.reader.open(&input.object).map_err(native_error)?;
+            self.held.insert(id.clone(), held);
+        }
+        Ok(())
     }
 }
 impl InputReader for GuardedInputs {

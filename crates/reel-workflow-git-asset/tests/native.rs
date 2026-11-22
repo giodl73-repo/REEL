@@ -130,6 +130,9 @@ struct Fixture {
 }
 impl Fixture {
     fn new(bare: bool) -> Self {
+        Self::new_sized(bare, 256 * 1024)
+    }
+    fn new_sized(bare: bool, size: usize) -> Self {
         let temp = tempfile::Builder::new()
             .prefix("reel-public-native-fixture-")
             .tempdir()
@@ -161,8 +164,8 @@ impl Fixture {
             command_millis: 60000,
             output_bytes: 16384,
             limits: existing::Limits {
-                object_bytes: 1024 * 1024,
-                total_bytes: 16 * 1024 * 1024,
+                object_bytes: (size as u64).max(1024 * 1024),
+                total_bytes: (size as u64 * 4).max(16 * 1024 * 1024),
                 requests: 32,
                 live_readers: 8,
                 verify_millis: 30000,
@@ -184,7 +187,7 @@ impl Fixture {
             &["config", "user.email", "fixture@example.invalid"],
         );
         run(&pool, true, &["init", "synthetic-public-input-claim"]);
-        let bytes = vec![37u8; 256 * 1024];
+        let bytes = vec![37u8; size];
         let object = Object::from_bytes(&bytes);
         let input = root.join("synthetic-input.bin");
         fs::write(&input, &bytes).unwrap();
@@ -387,7 +390,7 @@ impl Fixture {
             .preview(
                 std::slice::from_ref(&artifact),
                 &BTreeMap::from([(artifact.logical_id.clone(), None)]),
-                1024 * 1024,
+                (size as u64).max(1024 * 1024),
             )
             .unwrap();
         let missing_source = Snapshot::capture(
@@ -710,5 +713,34 @@ fn bare_native_input_guards_become_original_durable_claims() {
 
 #[path = "common/mod.rs"]
 mod common;
+#[path = "native/lifecycle.rs"]
+mod lifecycle;
+#[path = "native/retention.rs"]
+mod retention;
 #[path = "native/returns.rs"]
 mod returns;
+
+#[test]
+#[ignore = "explicit native tools; fresh synthetic 257 MiB input; streaming guard only"]
+fn streamed_native_input_exceeds_small_vector_read_limit() {
+    let size = 257 * 1024 * 1024;
+    let f = Fixture::new_sized(false, size);
+    let mut inputs =
+        GuardedInputs::new(f.profile.clone(), &f.source, &f.preview, size as u64).unwrap();
+    assert_eq!(
+        inputs.read(&f.artifact, size as u64).unwrap_err().kind,
+        ErrorKind::Budget
+    );
+    inputs.hold_all().unwrap();
+    let ns = Namespace::open(&f.profile.members[0].root, f.handle.minimum()).unwrap();
+    let object = Object {
+        sha256: Digest::parse(&f.artifact.sha256).unwrap(),
+        bytes: f.artifact.bytes,
+    };
+    assert!(matches!(
+        ns.fence(&object),
+        Err(git_asset_store::source_claims::admission::Error::Busy)
+    ));
+    drop(inputs);
+    drop(ns.fence(&object).unwrap());
+}
