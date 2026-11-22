@@ -17,6 +17,10 @@ struct Args {
 enum Action {
     /// Check a private endpoint binding's declared shape, without probing.
     ValidateBinding { binding: PathBuf },
+    /// Check private session shape, without reading originals or devices.
+    ValidateSession { request: PathBuf },
+    /// Independently check pinned original PCM/text. No endpoint or playback.
+    CheckSession { request: PathBuf },
     /// Explicitly observe one pinned WASAPI output in an owned quiet worker.
     Probe {
         request: PathBuf,
@@ -26,19 +30,42 @@ enum Action {
     #[command(name = "__probe-worker", hide = true)]
     Worker,
 }
-fn load<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+fn bytes(path: &Path, max: usize) -> Result<Vec<u8>> {
     let file = File::open(path)?;
     ensure!(
-        file.metadata()?.len() <= 4096,
+        file.metadata()?.len() <= max as u64,
         "installation control byte profile"
     );
     let mut raw = Vec::new();
-    file.take(4097).read_to_end(&mut raw)?;
-    ensure!(raw.len() <= 4096, "installation control byte profile");
-    Ok(serde_json::from_slice(&raw)?)
+    file.take(max as u64 + 1).read_to_end(&mut raw)?;
+    ensure!(raw.len() <= max, "installation control byte profile");
+    Ok(raw)
+}
+fn load<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
+    Ok(serde_json::from_slice(&bytes(path, 4096)?)?)
+}
+fn session(path: &Path) -> Result<native::SessionRequest> {
+    native::SessionRequest::parse(&bytes(path, native::MAX_SESSION_REQUEST_BYTES)?)
 }
 fn run() -> Result<()> {
     match Args::parse().command {
+        Action::ValidateSession { request } => {
+            session(&request)?;
+            println!(
+                "{}",
+                serde_json::json!({"session_shape_checked":true,
+                "originals_checked":false,"endpoint_probed":false,"device_playback_checked":false})
+            );
+        }
+        Action::CheckSession { request } => {
+            let summary = session(&request)?.check_originals(
+                reel::spoken_programme::producer::ProductionControl {
+                    timeout: std::time::Duration::from_secs(30),
+                    cancellation: || Ok(()),
+                },
+            )?;
+            println!("{}", serde_json::to_string(&summary)?);
+        }
         Action::ValidateBinding { binding } => {
             let value: EndpointBinding = load(&binding)?;
             value.validate()?;

@@ -1,0 +1,136 @@
+# From checked originals to explicit playback
+
+**Status: M12b.2 implementation in progress.** The merged
+[M12b.1 foundation](installation-native-foundation-v1.md),
+[#403](https://github.com/giodl73-repo/REEL/pull/403), supplies metadata and
+callback ownership. This document maps the remaining native session boundary.
+It does not qualify a playback command, terminal or actual audio endpoint.
+The [M11 limits](offline-installation-v1.md) remain authoritative.
+
+```mermaid
+flowchart LR
+    accTitle: Original production and native playback have different identities
+    accDescr: Retained original compiler bytes and programme controls feed the existing independent checker. The same checked transport moves into the callback only after explicit Start and native readiness. The foreground exchanges bounded commands and observations, never a restart permit.
+    original["Original compiler/producer bytes<br/>declaration · plan · receipt · access"] --> check["Existing checker + retained inputs<br/>no current-player substitution"]
+    check --> ready["Controller owns same transport<br/>initial Ready / verified Restarting"]
+    ready --> start["Explicit Start / Restart<br/>bounded exact-endpoint open"]
+    start --> callback["Transfer the same transport<br/>only when native callback is ready"]
+    callback --> returned["Return intact for Stop/Restart<br/>fresh check permit stays in worker"]
+    returned -->|"explicit Restart + fresh checks"| check
+    operator["Foreground operator<br/>exact text + line commands"] <-->|"bounded private IPC<br/>session + sequence + generation"| start
+```
+
+## Private invocation, existing programme
+
+`reel.installation-session.v1` is a private invocation request, not another
+authoring, storage or programme manifest. Its maximum encoded size is 16 KiB.
+
+| Field | Meaning |
+| --- | --- |
+| `edition_id`, `passes` | Exactly one original edition; one to three passes. |
+| `original` | Exact FileRefs for declaration, plan, production receipt, optional processing policy, access manifest and retained original compiler/producer bytes; explicit source/candidate/access roots. |
+| `playback` | Separate retained executable FileRef, independently bound source commit/Cargo.lock context and pinned CPAL version. A declared build context is not an inferred source attestation. |
+| `endpoint` | M12b.1's exact private profile/device/build/driver/configuration binding. Shape validation does not probe it. |
+
+Never fill the original compiler identity from the current player or from the
+receipt being checked. Original runtime bytes may have been produced on another
+platform: retain and hash them without executing them or demanding a Windows
+executable suffix. Only the actual native player/worker is an executable binding.
+
+The source loader holds mandatory Windows file and parent-path guards using the
+existing runtime protection primitive. Metadata is read under its exact pin;
+providers retain the corresponding guards for source/candidate/access reads.
+They reject changed roots, conflicting pins, missing/case-mismatched names,
+escapes and excessive inputs. Each provider admits at most 128 held files / 64
+MiB; no source lookup, cache initialization, restoration or fallback is added.
+Unsupported guarding refuses rather than claiming cooperative native custody.
+
+`SessionRequest::check_originals` is an explicit read-only source operation.
+Its counts-only result distinguishes checked original runtime bytes and guarded
+reads from **unchecked** playback build, host, endpoint and device playback. It
+does not open the declared player, probe a device or create a success artifact.
+Original checking stays within one aggregate 30 s cooperative deadline.
+
+The CLI exposes `validate-session <private-request.json>` for shape only and
+`check-session <private-request.json>` for those original checks. Neither
+command is playback. Protected original file checking currently requires
+Windows; unsupported platforms refuse rather than reporting protected reads.
+
+Fresh checks still run before transport creation and restart. Once their seals
+match, Prepared and Transport share the same frozen sample/text allocations;
+the active session does not retain a second identical playback PCM buffer.
+
+## Ownership before and after native readiness
+
+The controller must retain the actual transport while native probe/open/play
+is pending. An output callback can submit zeros before receiving the transport;
+only explicit Start may create that stream. After native readiness, transfer
+the same object once. A startup Stop can therefore update the real transport
+without waiting for a blocked native call or losing the context needed for an
+explicit later Restart. Late native completion cannot acquire a cancelled box.
+
+While active, M12b.1's callback owns the sole source/interval clock. Stop,
+Restart, completion or failure must return that object before replacement.
+Neither a private wire status nor a deserialized success flag creates a restart
+permit. Prepared and the opaque ticket/permit exchange stay in one native
+worker; original checking and native open/drop stay off the control/callback
+threads. A failed native cleanup remains a failed profile, not a timer success.
+
+## Controller and operator obligations
+
+The session's 120 s lifetime starts at invocation, including preparation and
+pauses. Initial checks share a 30 s budget; Start has a 2 s aggregate bound and
+Restart has 35 s including old close, checking, probe and open. Stage limits do
+not reset those aggregates. The 20 ms controller tick, 100 ms acknowledgement,
+250 ms watchdog and 2 s cleanup limits remain unchanged.
+
+Console/IPC work must not block that controller. The operator needs the actual
+UTF-8 terminal geometry and exact original text before Ready/Start. Standard
+line editing, echo and EOF/Ctrl+C must work while the checked transcript remains
+visible above the status/input area. No raw terminal mode or text normalization.
+Any proposed scrolling/display mechanism needs an actual Windows console test;
+a simulated screen alone cannot qualify it.
+
+The core's 256 diagnostic entries and callback's 256 transient report slots
+serve different purposes. Native observations must be bounded too: retain
+explicit aggregates and a declared sample of boundary/control records, without
+claiming that a sampled timeline contains every callback. Physical capture
+and device measurements remain M12c.
+
+## Requirement/test map
+
+One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
+checklists. These are review lenses, not independent reviewers or approvals.
+
+| Obligation | Named proof / status |
+| --- | --- |
+| Original and player identities remain separate | `native_original_check_preserves_producer_identity_separately_from_player`: real original programme checks, including a different CLI executable, pass with an unavailable declared player; a correctly pinned replacement producer still fails the original receipt relationship. Passed locally. |
+| Guarded original reads and strict bounded invocation | `held_original_input_denies_mutation_and_rename_without_executable_requirement`, request-shape/cancellation/deadline and CLI cases. Passed locally. |
+| Startup Stop retains the actual session | Native-ready handoff and blocked-open cases required; pending. |
+| Callback teardown returns pending ownership | Drop-before-first-fill, queued Stop, completion, preempted writer and racing return cases passed locally. Actual native error/close integration remains pending. |
+| Exact private wire context | Foreign run/sequence/generation, oversize/unknown/truncated frames, queue overflow and closed-peer cases required; pending. |
+| Aggregate clocks and source verification cancellation | Shared Run origin, initial/restart deadlines, Stop/Quit while checking/opening/closing, no late revival; pending. |
+| Exact persistent text and line commands | Actual Windows console, Spanish cells, paste/scroll/resize, ordinary EOF/Ctrl+C, blocked I/O and bounded cleanup; pending. |
+| Real contained lifecycle and unchanged PCM | Actual controlled child barriers, source/interval frame oracles through variable callback sizes, no callback allocation/free, native fault/oversized buffer refusal; pending. |
+
+No complete M12b.2, actual playback, device/listening/usability or release claim
+follows from the implemented source loader. M13 still depends on full M12.
+
+Local source/ownership checkpoint: 26 unit cases, five CLI cases and seven
+explicit original-input cases passed. The original-input invocation ran with
+zero ignored cases; the two ordinary ignored unit fixture entries are explicitly
+launched by their parent tests. These counts do not include duplicate reruns.
+
+At ownership return, an atomic writer/return handshake prevents a newly accepted
+command from being stranded in the old callback queue. A busy writer defers
+the move without blocking `fill`; late commands already accepted move in the
+actual transport's core queue. Later sends receive a typed, nonfatal returned-
+owner refusal so the controller can apply them locally. Teardown also returns
+the same box before a first callback. Only teardown, off `fill`, may wait for a
+preempted writer; its complete native cleanup still needs the contained worker.
+
+Each report retains at most eight actual command records/refusals, selecting
+the first command record for a sequence rather than a later media event with
+the same sequence. Report capacity is checked before copying source frames:
+overflow silence cannot advance the submitted-source cursor. The isolated
+allocator fixture exercises this actual overflow with one-frame callbacks.

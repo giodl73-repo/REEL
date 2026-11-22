@@ -52,6 +52,17 @@ pub enum Command {
     Quit,
 }
 impl Command {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Restart => "restart",
+            Self::Stop => "stop",
+            Self::Status => "status",
+            Self::Quit => "quit",
+        }
+    }
     pub fn parse(line: &str) -> std::result::Result<Self, TransportError> {
         if line.len() > 32 || !line.is_ascii() {
             return Err(TransportError::InvalidCommand);
@@ -67,11 +78,7 @@ impl Command {
             Self::Quit,
         ]
         .into_iter()
-        .zip([
-            "start", "pause", "resume", "restart", "stop", "status", "quit",
-        ])
-        .find(|(_, name)| s.eq_ignore_ascii_case(name))
-        .map(|(c, _)| c)
+        .find(|c| s.eq_ignore_ascii_case(c.as_str()))
         .ok_or(TransportError::InvalidCommand)
     }
 }

@@ -128,6 +128,128 @@ fn selection() -> api::Selection {
     }
 }
 
+#[cfg(all(windows, feature = "installation-native"))]
+fn native_request(f: &InstallationFixture) -> api::native::SessionRequest {
+    use api::native::{EndpointBinding, OriginalProgramme, PlaybackBuild, SessionRequest};
+    use reel::scene_delivery::FileRef;
+    let put = |name: &str, raw: &[u8]| {
+        let path = f.root.join(name);
+        fs::write(&path, raw).unwrap();
+        FileRef {
+            path,
+            sha256: hash(raw),
+            bytes: raw.len() as u64,
+        }
+    };
+    // Provenance bytes need not be an executable on the playback OS. They are
+    // retained/hashed, never run. This also proves no implicit current-player
+    // identity can replace the original compiler/producer identity.
+    let original_path = f.root.join("retained-original-runtime.data");
+    fs::copy(std::env::current_exe().unwrap(), &original_path).unwrap();
+    SessionRequest {
+        schema: "reel.installation-session.v1".into(),
+        edition_id: "en-technical".into(),
+        passes: 2,
+        original: OriginalProgramme {
+            declaration: put(
+                "invocation-declaration.json",
+                &serde_json::to_vec(&f.f.document).unwrap(),
+            ),
+            plan: put("invocation-plan.json", &f.plan),
+            receipt: put("invocation-receipt.json", &f.receipt),
+            processing: Some(put(
+                "invocation-processing.json",
+                &serde_json::to_vec(&f.policy).unwrap(),
+            )),
+            access_manifest: put("invocation-access.json", &f.access_manifest),
+            compiler_producer: FileRef {
+                path: original_path,
+                sha256: f.runtime.sha256.clone(),
+                bytes: f.runtime.bytes,
+            },
+            source_root: f.root.clone(),
+            candidate_root: f.candidate.clone(),
+            access_root: f.access.clone(),
+        },
+        playback: PlaybackBuild {
+            runtime: put(
+                "different-unexecuted-player.exe",
+                b"unexecuted player fixture",
+            ),
+            source_commit: "a".repeat(40),
+            cargo_lock: put("invocation-Cargo.lock", b"fixture build context only"),
+            cpal_version: "0.18.2".into(),
+        },
+        endpoint: EndpointBinding {
+            profile: api::native::PROFILE.into(),
+            device_id: "wasapi:{0.0.0.00000000}.{11111111-1111-1111-1111-111111111111}".into(),
+            os_build: 26300,
+            driver_version: "fictional metadata only".into(),
+            configuration_sha256: "b".repeat(64),
+        },
+    }
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+#[test]
+#[ignore = "explicit protected original-input session qualification; no devices"]
+fn native_original_check_preserves_producer_identity_separately_from_player() {
+    let f = InstallationFixture::new(true);
+    let mut request = native_request(&f);
+    fs::remove_file(&request.playback.runtime.path).unwrap();
+    let result = request.check_originals(control()).unwrap();
+    assert!(
+        result.programme.original_pcm_and_access_checked
+            && result.original_runtime_bytes_checked
+            && result.original_reads_guarded
+    );
+    assert_eq!(result.programme.source_frames, 144000);
+    assert!(
+        !result.playback_runtime_checked && !result.host_profile_checked && !result.endpoint_probed
+    );
+    assert!(
+        !result.programme.device_playback_checked
+            && !result.programme.listening_reviewed
+            && !result.programme.authority_verified
+            && !result.programme.release_authorized
+    );
+    let portable = serde_json::to_string(&result).unwrap();
+    assert!(
+        !portable.contains("technical")
+            && !portable.contains("fictional")
+            && !portable.contains("retained-original")
+    );
+    let control_path = f.root.join("private-session-request.json");
+    fs::write(&control_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    // A different executable must retain the original test producer identity.
+    let output = Command::new(env!("CARGO_BIN_EXE_reel-installation"))
+        .arg("check-session")
+        .arg(&control_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["programme"]["source_frames"], 144000);
+    assert_eq!(report["original_runtime_bytes_checked"], true);
+    assert_eq!(report["playback_runtime_checked"], false);
+    assert_eq!(report["host_profile_checked"], false);
+    assert_eq!(report["endpoint_probed"], false);
+    // This is a valid, byte-matching alternative file, not a deliberately broken
+    // hash. It must still fail against the original production relationship.
+    fs::write(&request.playback.runtime.path, b"unexecuted player fixture").unwrap();
+    request.original.compiler_producer = request.playback.runtime.clone();
+    let failure = request
+        .check_originals(control())
+        .err()
+        .unwrap()
+        .to_string();
+    assert!(failure.contains("producer runtime differs"), "{failure}");
+}
+
 #[test]
 #[ignore = "explicit original-input installation qualification"]
 fn checked_selection_requires_original_pcm_and_access() {
