@@ -149,6 +149,19 @@ jobs:
           cargo clippy --manifest-path crates/reel-workflow-native/Cargo.toml --features film --all-targets --locked -- -D warnings
           cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --features film --all-targets --locked
           cargo test --manifest-path vendor/git-asset-capacity/Cargo.toml -p git-asset-store --test metadata_capacity --locked
+      - name: Qualify contained workflow film render and check recovery
+        if: matrix.lane == 'core' && matrix.shard == 0 && runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CARGO_TARGET_DIR: target/workflow-native
+        run: |
+          cargo build --manifest-path crates/reel-workflow-native/Cargo.toml --features film --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:REEL_FILM_TEST_RUNTIME = (Resolve-Path target/workflow-native/debug/reel-workflow-native.exe).Path
+          $env:REEL_TEST_FFMPEG = (Get-Command ffmpeg -ErrorAction Stop).Source
+          $env:REEL_TEST_FFPROBE = (Get-Command ffprobe -ErrorAction Stop).Source
+          cargo test --manifest-path crates/reel-workflow-native/Cargo.toml --features film --lib film_process::tests::contained_renderer_recovers_by_checking_without_rerendering_and_preserves_failed_intent --locked -- --ignored --exact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run ordinary test shard
         if: matrix.lane == 'core'
         run: node .github/scripts/run-test-shard.cjs ${{ matrix.shard }}

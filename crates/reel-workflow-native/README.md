@@ -137,6 +137,36 @@ alias deduplication, guarded path integrity and exact runtime selection; its
 pinned stand-in programs are never executed as media tools. Actual FFmpeg
 execution, conform receipts, large episode admission and retention remain open.
 
+## Contained film process port (optional feature)
+
+`film_process::{render,recover}` connects the live-claimed file bridge to the
+existing scene renderer in a pinned child process. Its caller owns workspace
+and capacity admission. The workspace must be new and empty for rendering;
+recovery must match the exact original request, task key, input paths and runtime.
+An existing launch is never issued again. Recovery uses a distinct independent
+check launch, preserving the render and all original request/outcome files.
+An uncertain or already-issued check remains a recovery case, not a fresh render.
+
+The version-2 process outcome binds the complete output table, including the
+delivery receipt. The parent reopens guarded files and compares that table before
+returning them. `Rendered::files` contains held, verified file objects rather
+than whole-movie buffers. `Output::copy_to` copies and hashes through a 64 KiB
+buffer; it neither publishes bytes nor acknowledges retained ownership.
+
+Explicit process limits allow up to five hours, 16 GiB of output and 64 GiB of
+workspace. Memory, process count, frame/sample and raw-picture limits are also
+declared and enforced. These ceilings do not enlarge native admission or prove
+production-scale support. Ordinary tests stream a 128 MiB-plus synthetic file;
+the explicit process fixture renders a three-frame synthetic scene, independently
+checks it without replacing outputs, binds the child result and preserves failed
+scratch. Neither fixture qualifies a multi-GiB master or real episode.
+
+The internal `film-process-child ... --apply` command is a trusted process port,
+not a workflow admission/completion command. The `capabilities` response keeps
+`producer_execution` and episode-scale qualification false until task dispatch,
+producer receipts, retained publication and original-operation recovery are
+connected end to end. No project profile, asset selection or delivery is adopted.
+
 ## Validation
 
 ```text
