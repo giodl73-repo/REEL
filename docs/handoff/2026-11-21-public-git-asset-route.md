@@ -149,3 +149,57 @@ No independent/human acceptance or full P4 closure is claimed.
 The input-only/claims predecessor def1ca47f021b1471b0d9759666bbb96258cc7aa passed
 full hosted Windows/Ubuntu checks (run44982537105). Current source needs its own
 hosted result; native runtime evidence is local opt-in, not hosted installation.
+
+## Returned-candidate adapter entry
+
+Input 55a435b6312ec12d3c4ca1e838517238f4c94ffc; same SDK pin, P4
+WP-004/008/009/011/016 and existing candidate publication / managed read controls.
+Allowed: bounded exact returned-packet binding, compact private provenance,
+original native-plan correspondence and held retained candidate aggregation.
+Reuse Publisher apply/resume/reopen; no new engine, journal, operation allocator,
+provider calls, renderer, selection, deletion, or production activation. Entry:
+original Ticket, original returned JSON bytes, immutable SDK plans and explicit
+admitted resources. Exit: wrong attempts/outputs/provenance/plan substitutions
+refuse before effects; retained packet/output guards coexist before ack exposure;
+original packet bytes survive without canonical rewriting. L0 pins/fmt/diff,
+L1 strict parsers/budgets/plan binding and locked tests/Clippy, L2 explicitly
+admitted synthetic native apply/reopen with original input unavailable. This is
+not yet an implementation of the complete handoff Lifecycle actor-generation
+contract; owned preparation, original control retention and task closure remain
+separate requirements. Producer review is not independent/human approval.
+
+## Returned-candidate checkpoint
+
+Implemented `candidates::{Candidates, Prepared, Retained, RetainedBatch}` over the
+pinned SDK's existing publication Plan/Publisher/Ready. Original returned JSON is
+an immutable candidate; compact private provenance binds original ticket/raw
+reply. The hash-pinned plan cohort fixes every original operation, source and
+baseline before effects. Whole returned-packet/output guards are required before
+exposing its retained packet Artifact; no decoded receipt can construct a guard.
+
+Verification: 18 default locked all-target cases PASS; 4 opt-in native cases PASS
+(2 input bridge + 2 returned publication, ordinary/bare), strict locked Clippy,
+fmt and diff PASS. Returned fixtures publish and read exact raw JSON and output,
+preserve whitespace, move producer and project locators offline, reopen stores
+at saved minima and reverify both native bodies. Completed apply and resume
+perform zero producer opens and leave source/capacity checkpoints unchanged.
+Duplicate roles fail complete coverage; creative selection remains empty.
+Pure cases cover malformed/wrong attempt/identity, missing/mismatched/legacy plans,
+hash-pinned control restoration and rewritten packet/control refusal.
+
+Validation scope: candidate/retention component, not full task closure. Producer
+identity review required immutable plan IDs and raw-byte pins (implemented);
+concurrency/recovery required original-operation recovery rather than new IDs or
+reupload (implemented, native completed retry evidence); custody required actual
+held SDK Ready values for every role (implemented); privacy required local-only
+provenance and bounded fixed diagnostics (implemented). Independent review,
+rights/creative approval and owner activation remain separate.
+
+Remaining P4 gates: explicit owned materialization with path/collision/retry
+acceptance; complete task/request/control coverage and durable original control
+retention; an original job-generation guard spanning Lifecycle use; joined REEL
+handoff crash/uncertainty/restart acceptance. Current namespace status is an
+observation, not such a generation guard. This crate deliberately does not yet
+implement ProtectedJob/Lifecycle or mark semantic completion. Existing native
+route, private vendor and existing jobs remain unchanged. No cache adoption,
+production publication, provider calls, rendering or deletion was performed.

@@ -14,6 +14,7 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
+pub mod candidates;
 pub mod claims;
 
 pub const SDK_COMMIT: &str = "3ddeab5572f9479475134e6b7334a26effcb9277";
@@ -37,20 +38,22 @@ fn source_error(e: source::Error) -> Error {
     )
 }
 fn native_error(e: annex::managed::Error) -> Error {
-    let e = annex::publication::Error::from(e);
+    publication_error(e.into())
+}
+fn publication_error(e: annex::publication::Error) -> Error {
+    use annex::publication::Error as E;
     error(
         match e {
-            annex::publication::Error::Missing | annex::publication::Error::MissingAcknowledged => {
-                ErrorKind::Missing
-            }
-            annex::publication::Error::Integrity => ErrorKind::Integrity,
-            annex::publication::Error::Busy => ErrorKind::Busy,
-            annex::publication::Error::Budget => ErrorKind::Budget,
-            annex::publication::Error::Stale => ErrorKind::Stale,
-            annex::publication::Error::Conflict => ErrorKind::Conflict,
-            annex::publication::Error::Denied => ErrorKind::Denied,
-            annex::publication::Error::Unsupported => ErrorKind::Unsupported,
-            _ => ErrorKind::NeedsRecovery,
+            E::Invalid => ErrorKind::Invalid,
+            E::Unsupported => ErrorKind::Unsupported,
+            E::Denied => ErrorKind::Denied,
+            E::Budget => ErrorKind::Budget,
+            E::Busy => ErrorKind::Busy,
+            E::Conflict => ErrorKind::Conflict,
+            E::Stale => ErrorKind::Stale,
+            E::Integrity => ErrorKind::Integrity,
+            E::Missing | E::MissingAcknowledged => ErrorKind::Missing,
+            E::ProtectionLost | E::NeedsRecovery | E::Uncertain => ErrorKind::NeedsRecovery,
         },
         e.code(),
     )

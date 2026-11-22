@@ -1,4 +1,4 @@
-# Public git-asset input adapter (experimental)
+# Public git-asset workflow adapter (experimental)
 
 An isolated Rust integration for REEL's `publication::InputReader`. It pins
 public git-asset at `3ddeab5572f9479475134e6b7334a26effcb9277`, with its own
@@ -43,9 +43,9 @@ Previews contain private IDs and hashes: they are local control data, not
 privacy-safe public receipts. Store expanding control/evidence asset-side.
 
 **This is not complete production adoption.** Shared byte guards end at process
-exit. The claims adapter below adds durable declared obligations, but native
-pool/roster integration, owned workspace preparation, returned-result ingestion,
-retained publication and the complete handoff Lifecycle are still open. This
+exit. The claims and candidate adapters below add durable declared obligations
+and retained publication. Owned workspace preparation, complete original task
+control retention and the generation-fenced handoff Lifecycle are still open. This
 package does not acknowledge task completion or retire scratch.
 
 ## Durable declared job claims
@@ -131,7 +131,8 @@ cargo test --manifest-path crates/reel-workflow-git-asset/Cargo.toml --all-targe
 
 Linux checks qualify metadata contracts only; native managed byte access still
 has the pinned SDK's Windows/runtime/binding/roster obligations. Full P4 exit
-requires separate native persistent-job and retained-publication fixtures.
+requires the complete generation-fenced handoff, owned preparation and joined
+crash/uncertainty acceptance, beyond the component fixtures below.
 
 Native bridge qualification is opt-in on Windows with explicitly admitted
 `GIT_ASSET_TEST_GIT_EXE`, `GIT_ASSET_TEST_ANNEX_EXE` and
@@ -147,3 +148,55 @@ They qualify ordinary/bare annex, bare Git metadata, guard-to-claim continuity,
 enforcing roster locations, exact historical selection, missing bytes, wrong
 policy/context, incomplete closure and budgets. The normal CI workflow does not
 install a native runtime and does not claim this opt-in qualification.
+
+## Returned candidates and retained handoff
+
+`candidates::Candidates::bind(ticket, original_json, packet_id)` validates the
+original task/attempt and declared outputs. It keeps the original returned bytes
+(including whitespace), not a reserialized approximation. It exposes expected
+roles `output/<name>`, optional `worker-receipt`, and `return-packet`, plus compact
+private provenance pinning the ticket, exact raw reply and supplied provenance.
+These are declarations, not authenticated provider identity or creative approval.
+Bodies remain opaque bytes; media interpretation belongs to REEL's adapters.
+
+1. Use the existing SDK to freeze one native candidate Plan per expected role,
+   with the exact Artifact identity and `Object::from_bytes(set.provenance())`.
+   Admit distinct Retention sources/owners and the existing witness/capacity/
+   staging resources explicitly. Finish/reopen metadata before publication.
+2. `Candidates::prepare(plans)` seals the complete original plan cohort. Persist
+   `Prepared::control()` asset-side with an independent immutable hash BEFORE any
+   effect. It fixes all original operations, roots and baselines. Recovery uses
+   `Candidates::restore(control, original_object)`; it cannot rewrite a reply or
+   replace an operation in that record. Store resource profiles, recovery minima
+   and provider metadata durably as well; a returned packet hash alone cannot
+   reconstruct all admission state.
+3. Call `Prepared::apply(role, publisher, resources, byte_source)`. Its plans are
+   internal; retries cannot accept substitute plans. `Candidates::packet_source`
+   serves only the original JSON body. Other bodies use existing guarded sources.
+   The SDK verifies bytes, accounts staging/native effects and records immutable
+   unselected retention. No Git selected pointer or creative source is changed.
+4. `resume` uses the original SDK recovery protocol. `reopen` freshly verifies
+   retained bytes without producer input or staging. Uncertain effects remain
+   NeedsRecovery with code `uncertain`; acknowledged missing bytes keep code
+   `missing_acknowledged`. Do not allocate new operations or reupload implicitly.
+5. Keep each returned `Retained` guard. `Prepared::gather` requires exactly the
+   complete cohort, rejecting omissions, duplicate roles and mixed controls.
+   The resulting `RetainedBatch` holds all byte/protection guards while exposing
+   the original return-packet Artifact as `acknowledgement()`. Serialized receipts
+   alone cannot construct this type. Inspect/read named candidates through it.
+
+Bounds: original JSON and serialized plan control each 1 MiB; at most 128 output
+artifacts plus worker receipt and packet; compact provenance 4 KiB. Existing
+SDK/profile body, transfer, metadata, command and stage limits still apply.
+Registration can precede bytes; completion and accounting can have separate crash
+boundaries. Persist the original controls, preserve scratch on uncertain outcomes,
+and reopen retained bytes before semantic completion or cleanup. Any required
+independent downstream-owner adoption remains explicit. This component performs
+no task completion, scratch deletion, claim withdrawal or creative selection and
+does not yet implement `handoff::Lifecycle`'s original actor-generation guard.
+
+The native returned-candidate fixtures publish a synthetic output and its exact
+raw reply in ordinary/bare pools, then reopen both with the old producer and
+project locations offline. Completed apply/recovery must avoid reopening producer
+input or appending another registration. These are local opt-in component checks;
+normal hosted CI runs their bounded parser/control counterparts.

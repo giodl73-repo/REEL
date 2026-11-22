@@ -487,6 +487,7 @@ dependencies = [
 name = "reel-workflow-git-asset"
 version = "0.1.0"
 dependencies = [
+ "fs2",
  "git-asset",
  "git-asset-core",
  "git-asset-model",
