@@ -114,6 +114,12 @@ inputs; real-project control derivation, affected-language scheduling and the
 complete issue/fix/rebuild application remain open. See its
 [scoped review](reviews/workflow-retained-children-review.md).
 
+The [candidate film rebuild adapter](workflow-film-rebuild.md) derives exact
+still-replacement controls while preserving each language's existing clock and
+recordings. It prepares affected render bindings and withholds stale downstream
+assemblies. Native orchestration and project adoption remain open; see its
+[scoped review](reviews/workflow-film-rebuild-review.md).
+
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:
 

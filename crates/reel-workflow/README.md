@@ -78,6 +78,11 @@ sharing writes during checks on Windows; portable checks do not promise an
 immutable snapshot against concurrent writers on other platforms, nor does any
 candidate record make mutable external paths durable.
 
+Candidate still-control derivation and affected-language render planning are
+documented in [film rebuild preparation](../../docs/workflow-film-rebuild.md).
+The planner exports metadata; native admission, selection and completed renders
+remain separate.
+
 Validation:
 
 ```text

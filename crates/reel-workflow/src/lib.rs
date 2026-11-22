@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod film_inspect;
+pub mod film_rebuild;
 pub mod film_repair;
 pub mod film_review;
 pub mod handoff;

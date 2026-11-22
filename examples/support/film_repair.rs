@@ -137,9 +137,25 @@ pub fn run(root: &Path, export: &film_review::ExportRequest) -> Result<()> {
         "candidate replay failed"
     );
     let old_job = fs::read(root.join("job.json"))?;
-    let mut job: serde_json::Value = serde_json::from_slice(&old_job)?;
-    job["pictures"][1]["source"] = fixture::reference(root, "repaired-picture.png");
-    fixture::save(root, "job-repaired.json", &job);
+    let job: scene_delivery::Job = serde_json::from_slice(&old_job)?;
+    let replacement = scene_delivery::repair::StillReplacement {
+        schema: "reel.scene-still-replacement.v1".into(),
+        attachments: vec!["p-b".into()],
+        expected: job.pictures[1].source.clone(),
+        replacement: serde_json::from_value(fixture::reference(root, "repaired-picture.png"))?,
+    };
+    fixture::save(root, "still-replacement.json", &replacement);
+    let derived = scene_delivery::repair::write_candidate(
+        &root.join("job.json"),
+        &digest(&old_job),
+        &root.join("still-replacement.json"),
+        &digest(&fs::read(root.join("still-replacement.json"))?),
+        &root.join("job-repaired.json"),
+    )?;
+    ensure!(
+        !derived.creative_approval,
+        "technical control generation granted approval"
+    );
     scene_delivery::render(
         &root.join("job-repaired.json"),
         root,
