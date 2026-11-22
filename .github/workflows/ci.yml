@@ -173,6 +173,10 @@ jobs:
         if: matrix.lane == 'core' && matrix.shard == 2
         run: |
           cargo test --locked --all-features --test spoken_programme_media lesson:: -- --ignored --test-threads=1
+      - name: Qualify checked offline installation transport without sound devices
+        if: matrix.lane == 'core' && matrix.shard == 2
+        run: |
+          cargo test --locked --all-features --test spoken_programme_media installation:: -- --ignored --test-threads=1
       - name: Qualify spoken companion clocks and original input bindings
         if: matrix.lane == 'core' && matrix.shard == 2
         run: |
