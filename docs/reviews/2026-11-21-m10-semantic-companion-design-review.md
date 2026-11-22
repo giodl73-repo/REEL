@@ -115,3 +115,24 @@ not counted as executed tests.
 The branch was subsequently rebased onto `dc16335` (#393/#396). Their guarded
 film/workflow changes are preserved. A fresh complete hosted cycle is required
 on that combined tree before merge; the first cycle alone does not qualify it.
+
+## Final current-base qualification and merge
+
+Tested head `3816901b0a3e6f9415a41afaa37dc062d20b8f84` passed
+[full CI](https://github.com/giodl73-repo/REEL/actions/runs/44980260341)
+in **16m48s** and
+[assembly/source replay](https://github.com/giodl73-repo/REEL/actions/runs/44980260333)
+in **5m26s**, based on main `dc16335`. All required Rust/FFmpeg checks passed;
+PR deployment was intentionally skipped.
+
+The actual logs show six companion cases executed on Windows (10.96s) and Linux
+(8.42s), all passing with zero ignored. Windows also executed both native cases
+(23.77s), passing with zero ignored. These preserve the separate lexical metadata
+and controlled-signal/native-render proof boundaries described above.
+
+[PR #395](https://github.com/giodl73-repo/REEL/pull/395) merged as
+`d7602b2af2afbf0301e9fb8cae822e462dc09cb0`. Its Git tree exactly matches tested
+head `3816901` (`76ecaa3652ced4c44cf4a177e38356bad9aa9e31`). No administrator
+bypass, manual cancellation or timeout relaxation was used. This checkpoint
+supersedes the earlier pending hosted statuses. Acoustic/listening, device,
+authority, release and project-adoption gates remain open.
