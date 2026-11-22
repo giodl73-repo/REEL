@@ -51,6 +51,7 @@ The primary screen should be a project/work production board:
   comment on a stable cel/cue/panel target and navigate to its review clock.
 - Recovery: explain what is waiting and resume the original task/attempt. A
   button must not silently replace an uncertain API call or release its claims.
+  Closing or reconnecting a UI session must not cancel the job or regenerate assets.
 
 Existing S5 drawings and recordings must appear as reusable inputs. Spanish and
 English share semantic identities while keeping their own cue words, takes and
@@ -94,7 +95,10 @@ cues, then one returned image candidate appearing under its original attempt
 without disturbing an older selection. Cover unavailable previews, reconnect,
 stale events, exact historical navigation and preserved uncertain jobs. Include
 a synthetic comic page projection without making comic completion a film gate.
-Real-project/browser acceptance and scale remain separate qualifications.
+The first UI PR must include actual synthetic browser review at desktop and
+narrow sizes with visible media and cue controls; DOM/controller tests alone do
+not establish visual or playback acceptance. Real-project adoption and scale
+remain separate qualifications.
 
 Producer-applied [.roles](../.roles/ROLE.md) lenses: editor requires visible,
 stable targets and correct language clocks; platform/audience requires useful
