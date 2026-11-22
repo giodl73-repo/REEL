@@ -1,0 +1,1204 @@
+//! Foreground protocol/control state. Actual console I/O and process ownership
+//! remain separate: display confirmation is an integration boundary, not proof
+//! that any particular console has rendered these observations.
+use super::{
+    output::OutputClock,
+    pipe::Channel,
+    protocol::{Input, Output, ParentGate, Preparation, RuntimeBinding},
+    wire::Packet,
+    *,
+};
+use std::{collections::VecDeque, sync::Arc};
+use windows::Win32::System::Performance::QueryPerformanceCounter;
+
+#[derive(Clone, Copy)]
+pub struct DisplayTicket(u64);
+pub struct DisplayItem {
+    pub ticket: DisplayTicket,
+    pub report: Output,
+    /// A late historical observation cannot clear an outer Fault notice.
+    pub fault_overlay: bool,
+}
+pub enum ParentEvent {
+    Display(DisplayItem),
+    Fault,
+    LocalStatus(Option<Snapshot>),
+    QuitRequested,
+}
+#[derive(Clone, Copy)]
+pub struct LayoutObservation {
+    pub columns: u16,
+    pub rows: u16,
+    pub input_code_page: u32,
+    pub output_code_page: u32,
+}
+struct Credit {
+    id: u64,
+    command: Command,
+    received_us: u64,
+    received_counter: i64,
+    expected_generation: u64,
+    reported: Option<(u64, i64)>,
+    shown: Option<i64>,
+}
+enum DisplayKind {
+    Transcript(String),
+    Ack(u64, u64),
+    Final,
+    Observation,
+}
+struct PendingDisplay {
+    ticket: u64,
+    kind: DisplayKind,
+}
+
+/// Owns both bounded foreground queues and the actual local channel. The PID
+/// supplied here must come from the existing held process owner, not a child
+/// report. Construction performs no console I/O, originals check or device work.
+pub struct ParentSession {
+    channel: Channel,
+    gate: ParentGate,
+    _runtime: Arc<RuntimeBinding>,
+    worker_pid: u32,
+    nonce: [u8; 16],
+    clock: OutputClock,
+    authorized: bool,
+    transcript: bool,
+    text_shown: bool,
+    active: bool,
+    worker_fault: bool,
+    protocol_fault: bool,
+    final_seen: bool,
+    final_displayed: bool,
+    quit: bool,
+    observed: Option<Snapshot>,
+    last_counter: i64,
+    last_receipt: i64,
+    last_id: u64,
+    last_ticket: u64,
+    credits: VecDeque<Credit>,
+    displays: VecDeque<PendingDisplay>,
+    events: VecDeque<ParentEvent>,
+}
+impl ParentSession {
+    pub fn new(
+        runtime: Arc<RuntimeBinding>,
+        channel: Channel,
+        nonce: [u8; 16],
+        worker_pid: u32,
+        clock: OutputClock,
+    ) -> Result<Self> {
+        Ok(Self {
+            gate: ParentGate::new(runtime.context(), worker_pid, nonce)?,
+            channel,
+            _runtime: runtime,
+            worker_pid,
+            nonce,
+            clock,
+            authorized: false,
+            transcript: false,
+            text_shown: false,
+            active: false,
+            worker_fault: false,
+            protocol_fault: false,
+            final_seen: false,
+            final_displayed: false,
+            quit: false,
+            observed: None,
+            last_counter: 0,
+            last_receipt: 0,
+            last_id: 0,
+            last_ticket: 0,
+            credits: VecDeque::with_capacity(8),
+            displays: VecDeque::with_capacity(256),
+            events: VecDeque::with_capacity(256),
+        })
+    }
+    pub fn event(&mut self) -> Option<ParentEvent> {
+        let mut event = self.events.pop_front()?;
+        if let ParentEvent::Display(item) = &mut event {
+            item.fault_overlay = self.failed();
+        }
+        Some(event)
+    }
+    pub fn observed(&self) -> Option<Snapshot> {
+        self.observed
+    }
+    pub fn outstanding(&self) -> usize {
+        self.credits.len()
+    }
+    pub fn final_displayed(&self) -> bool {
+        self.final_displayed
+    }
+    pub fn failed(&self) -> bool {
+        self.protocol_fault || self.worker_fault
+    }
+    pub fn quit_requested(&self) -> bool {
+        self.quit
+    }
+    fn emit(&mut self, event: ParentEvent) -> Result<()> {
+        ensure!(self.events.len() < 256, "installation parent event bound");
+        self.events.push_back(event);
+        Ok(())
+    }
+    fn fault(&mut self) {
+        if !self.protocol_fault {
+            self.protocol_fault = true;
+            self.gate.end();
+            self.displays.clear();
+            self.events.clear();
+            self.events.push_back(ParentEvent::Fault);
+        }
+    }
+    fn send(&mut self, generation: u64, input: Input) -> Result<()> {
+        self.channel.send(generation, &input.bytes()?)
+    }
+    /// Called after complete ASCII line receipt; its original QPC counter is
+    /// preserved. Invalid syntax does not mutate protocol/transport state.
+    pub fn line(&mut self, line: &str, received_counter: i64) -> Result<Option<u64>> {
+        ensure!(
+            line.is_ascii() && line.len() <= 32,
+            "installation command line profile"
+        );
+        self.command(Command::parse(line)?, received_counter)
+    }
+    pub fn command(&mut self, command: Command, received_counter: i64) -> Result<Option<u64>> {
+        if command == Command::Status
+            && (!self.authorized || self.protocol_fault || self.final_seen || self.quit)
+        {
+            self.emit(ParentEvent::LocalStatus(self.observed))?;
+            return Ok(None);
+        }
+        if command == Command::Quit
+            && (!self.authorized || self.protocol_fault || self.final_seen || self.quit)
+        {
+            self.quit = true;
+            self.emit(ParentEvent::QuitRequested)?;
+            return Ok(None);
+        }
+        ensure!(
+            self.authorized && !self.final_seen && !self.protocol_fault && !self.quit,
+            "installation foreground command unavailable"
+        );
+        ensure!(
+            !self.worker_fault || matches!(command, Command::Status | Command::Quit),
+            "installation foreground terminal Fault"
+        );
+        let result = self.submit(command, received_counter);
+        if result.is_err() {
+            self.fault();
+        }
+        result.map(Some)
+    }
+    fn submit(&mut self, command: Command, received_counter: i64) -> Result<u64> {
+        let now = counter()?;
+        ensure!(
+            received_counter >= self.clock.origin().0
+                && received_counter >= self.last_receipt
+                && received_counter <= now,
+            "installation foreground receipt context"
+        );
+        ensure!(
+            self.credits.len() < 8,
+            "installation foreground eight-command bound"
+        );
+        let received_us = self
+            .clock
+            .elapsed_at(received_counter)
+            .ok_or_else(|| anyhow::anyhow!("installation foreground receipt clock"))?;
+        ensure!(
+            self.clock
+                .now_us()
+                .is_some_and(|now| now.saturating_sub(received_us) <= 100_000),
+            "installation foreground receipt expired"
+        );
+        let id = self
+            .last_id
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("installation command ID exhausted"))?;
+        let generation = self.observed.map_or(0, |status| status.generation);
+        self.send(
+            generation,
+            Input::Control {
+                id,
+                command,
+                received_counter,
+            },
+        )?;
+        self.last_id = id;
+        self.last_receipt = received_counter;
+        self.credits.push_back(Credit {
+            id,
+            command,
+            received_us,
+            received_counter,
+            expected_generation: generation,
+            reported: None,
+            shown: None,
+        });
+        if command == Command::Quit {
+            self.quit = true;
+        }
+        Ok(id)
+    }
+    /// Poll at the foreground's <=20 ms cadence. No blocking reads/writes,
+    /// hashing of files, rendering or cleanup joins occur on this path.
+    pub fn tick(&mut self) -> Result<()> {
+        if self.protocol_fault || self.final_seen {
+            return Ok(());
+        }
+        let result = self.poll();
+        if result.is_err() {
+            self.fault();
+        }
+        result
+    }
+    fn poll(&mut self) -> Result<()> {
+        ensure!(
+            !self.channel.failed() && !self.channel.stopped(),
+            "installation foreground channel ended"
+        );
+        if !self.channel.verify_peer(self.worker_pid)? {
+            ensure!(
+                self.clock.now_us().is_some_and(|now| now < 30_000_000),
+                "installation foreground peer deadline"
+            );
+            return Ok(());
+        }
+        self.deadlines()?;
+        for _ in 0..8 {
+            ensure!(
+                !self.channel.failed() && !self.channel.stopped(),
+                "installation foreground channel ended"
+            );
+            let Some(packet) = self.channel.receive() else {
+                break;
+            };
+            if !self.authorized {
+                let input = self.gate.authorize(&self.channel, &packet)?;
+                self.send(0, input)?;
+                self.authorized = true;
+            } else {
+                self.report(&packet)?;
+            }
+            if self.final_seen {
+                break;
+            }
+        }
+        self.deadlines()
+    }
+    fn deadlines(&self) -> Result<()> {
+        let now = self
+            .clock
+            .now_us()
+            .ok_or_else(|| anyhow::anyhow!("installation foreground clock"))?;
+        ensure!(
+            !self
+                .credits
+                .iter()
+                .any(|credit| credit.shown.is_none()
+                    && now.saturating_sub(credit.received_us) > 100_000),
+            "installation foreground acknowledgement deadline"
+        );
+        ensure!(
+            now < MAX_SESSION_MS * 1000 || self.quit,
+            "installation foreground lifetime reached"
+        );
+        Ok(())
+    }
+    fn observation_counter(&mut self, value: i64) -> Result<()> {
+        ensure!(
+            value >= self.clock.origin().0 && value >= self.last_counter && value <= counter()?,
+            "installation worker observation counter differs"
+        );
+        self.last_counter = value;
+        Ok(())
+    }
+    fn snapshot(&mut self, snapshot: Snapshot) -> Result<()> {
+        let previous_generation = self.observed.map_or(0, |value| value.generation);
+        ensure!(
+            snapshot.pass <= self._runtime.request().passes
+                && snapshot.generation >= previous_generation
+                && snapshot.generation <= previous_generation.saturating_add(1),
+            "installation foreground snapshot context"
+        );
+        if snapshot.generation > previous_generation {
+            ensure!(
+                self.credits.iter().any(|credit| matches!(
+                    credit.command,
+                    Command::Start | Command::Restart
+                ) && credit.expected_generation
+                    == previous_generation),
+                "installation unsolicited stream generation"
+            );
+        }
+        if let Some(previous) = self.observed {
+            ensure!(
+                snapshot.command_sequence >= previous.command_sequence,
+                "installation worker command sequence reversed"
+            );
+        }
+        ensure!(
+            snapshot.state != State::Ready
+                || (snapshot.generation == 0
+                    && snapshot.source_frame == 0
+                    && snapshot.interval_frame == 0
+                    && !snapshot.session_closed),
+            "installation spurious Ready snapshot"
+        );
+        if snapshot.state == State::Fault {
+            self.worker_fault = true;
+        }
+        self.observed = Some(snapshot);
+        Ok(())
+    }
+    fn report(&mut self, packet: &Packet) -> Result<()> {
+        ensure!(
+            packet.as_bytes()[8..24] == self.nonce,
+            "installation foreground run context differs"
+        );
+        let report = Output::parse(packet)?;
+        let kind = match &report {
+            Output::Hello { .. } => anyhow::bail!("installation repeated worker Hello"),
+            Output::Transcript { sha256, .. } => {
+                ensure!(
+                    !self.transcript && !self.active && !self.worker_fault,
+                    "installation transcript order"
+                );
+                self.transcript = true;
+                DisplayKind::Transcript(sha256.clone())
+            }
+            Output::Preparing {
+                phase,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    !self.active && !matches!(phase, Preparation::Stopped),
+                    "installation preparation order"
+                );
+                if matches!(phase, Preparation::AwaitingText) {
+                    ensure!(self.transcript, "installation missing transcript");
+                }
+                if matches!(phase, Preparation::Fault) {
+                    self.worker_fault = true;
+                } else {
+                    ensure!(
+                        !self.worker_fault,
+                        "installation preparation revived after Fault"
+                    );
+                }
+                DisplayKind::Observation
+            }
+            Output::Ready {
+                snapshot,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    !self.active && self.text_shown && !self.worker_fault,
+                    "installation Ready before display or after Fault"
+                );
+                self.snapshot(*snapshot)?;
+                self.active = true;
+                DisplayKind::Observation
+            }
+            Output::State {
+                snapshot,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(self.active, "installation state before Ready");
+                self.snapshot(*snapshot)?;
+                DisplayKind::Observation
+            }
+            Output::Ack {
+                id,
+                snapshot,
+                observed_counter,
+                ..
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    self.active,
+                    "installation core acknowledgement before Ready"
+                );
+                self.check_ack(*id, *observed_counter)?;
+                self.snapshot(*snapshot)?;
+                self.ack(*id, snapshot.generation, *observed_counter)?;
+                DisplayKind::Ack(*id, snapshot.generation)
+            }
+            Output::PreparationAck {
+                id,
+                phase,
+                observed_counter,
+                ..
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    !self.active,
+                    "installation preparation acknowledgement after Ready"
+                );
+                if matches!(phase, Preparation::Fault) {
+                    self.worker_fault = true;
+                }
+                self.ack(*id, 0, *observed_counter)?;
+                DisplayKind::Ack(*id, 0)
+            }
+            Output::CreditReleased {
+                id,
+                generation,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                let index = self
+                    .credits
+                    .iter()
+                    .position(|credit| credit.id == *id)
+                    .ok_or_else(|| anyhow::anyhow!("installation unknown command credit"))?;
+                let credit = &self.credits[index];
+                ensure!(
+                    credit
+                        .reported
+                        .is_some_and(|(reported_generation, _)| reported_generation == *generation)
+                        && credit.shown.is_some_and(|shown| shown <= *observed_counter),
+                    "installation command credit before display"
+                );
+                self.credits.remove(index);
+                return Ok(());
+            }
+            Output::SessionFault {
+                generation,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    self.active
+                        && *generation >= self.observed.map_or(0, |s| s.generation)
+                        && *generation
+                            <= self.observed.map_or(0, |s| s.generation).saturating_add(1),
+                    "installation Fault generation context"
+                );
+                let current = self.observed.map_or(0, |snapshot| snapshot.generation);
+                ensure!(
+                    *generation == current
+                        || self.credits.iter().any(|credit| matches!(
+                            credit.command,
+                            Command::Start | Command::Restart
+                        ) && credit.expected_generation
+                            == current),
+                    "installation unsolicited Fault generation"
+                );
+                self.worker_fault = true;
+                DisplayKind::Observation
+            }
+            Output::Ended {
+                snapshot,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(self.active, "installation core end before Ready");
+                self.snapshot(*snapshot)?;
+                self.final_report()?;
+                DisplayKind::Final
+            }
+            Output::PreparationEnded {
+                phase,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    !self.active && (matches!(phase, Preparation::Fault) || !self.worker_fault),
+                    "installation preparation end context"
+                );
+                self.final_report()?;
+                DisplayKind::Final
+            }
+            Output::ResourcesClosed {
+                generation,
+                observed_counter,
+            } => {
+                self.observation_counter(*observed_counter)?;
+                ensure!(
+                    self.active && Some(*generation) == self.observed.map(|s| s.generation),
+                    "installation resource closure context"
+                );
+                self.final_report()?;
+                DisplayKind::Final
+            }
+        };
+        self.last_ticket = self
+            .last_ticket
+            .checked_add(1)
+            .ok_or_else(|| anyhow::anyhow!("installation display ticket exhausted"))?;
+        ensure!(
+            self.displays.len() < 256,
+            "installation foreground display bound"
+        );
+        self.displays.push_back(PendingDisplay {
+            ticket: self.last_ticket,
+            kind,
+        });
+        self.emit(ParentEvent::Display(DisplayItem {
+            ticket: DisplayTicket(self.last_ticket),
+            report,
+            fault_overlay: self.failed(),
+        }))
+    }
+    fn ack(&mut self, id: u64, generation: u64, at: i64) -> Result<()> {
+        self.check_ack(id, at)?;
+        let credit = self
+            .credits
+            .iter_mut()
+            .find(|credit| credit.id == id)
+            .ok_or_else(|| anyhow::anyhow!("installation unsolicited command acknowledgement"))?;
+        credit.reported = Some((generation, at));
+        Ok(())
+    }
+    fn check_ack(&self, id: u64, at: i64) -> Result<()> {
+        let credit = self
+            .credits
+            .iter()
+            .find(|credit| credit.id == id)
+            .ok_or_else(|| anyhow::anyhow!("installation unsolicited command acknowledgement"))?;
+        ensure!(
+            credit.reported.is_none() && at >= credit.received_counter,
+            "installation duplicate or pre-receipt command acknowledgement"
+        );
+        Ok(())
+    }
+    fn final_report(&mut self) -> Result<()> {
+        ensure!(
+            self.quit
+                || self
+                    .clock
+                    .now_us()
+                    .is_some_and(|now| now >= MAX_SESSION_MS * 1000),
+            "installation unsolicited worker closure"
+        );
+        self.final_seen = true;
+        Ok(())
+    }
+    /// Integration callback AFTER actual rendering, in event order. Transcript
+    /// requires the real layout/code-page observation. No I/O is performed here.
+    pub fn displayed(
+        &mut self,
+        ticket: DisplayTicket,
+        layout: Option<LayoutObservation>,
+    ) -> Result<()> {
+        let result = self.confirm_display(ticket, layout);
+        if result.is_err() {
+            self.fault();
+        }
+        result
+    }
+    /// Blocking IPC destruction only, after the enclosing owner has arranged
+    /// final delivery/reaping or explicit cancellation. Not a process receipt.
+    pub fn shutdown_channel(&mut self) -> Result<()> {
+        ensure!(
+            self.final_displayed || (self.protocol_fault && self.quit),
+            "installation foreground still active"
+        );
+        self.channel.shutdown()
+    }
+    fn confirm_display(
+        &mut self,
+        ticket: DisplayTicket,
+        layout: Option<LayoutObservation>,
+    ) -> Result<()> {
+        ensure!(
+            !self.protocol_fault,
+            "installation display after protocol failure"
+        );
+        self.deadlines()?;
+        ensure!(
+            self.displays
+                .front()
+                .is_some_and(|display| display.ticket == ticket.0),
+            "installation display receipt order/replay"
+        );
+        let display = self.displays.pop_front().unwrap();
+        match display.kind {
+            DisplayKind::Transcript(sha256) => {
+                let layout = layout
+                    .ok_or_else(|| anyhow::anyhow!("installation transcript layout missing"))?;
+                self.send(
+                    0,
+                    Input::TextShown {
+                        transcript_sha256: sha256,
+                        columns: layout.columns,
+                        rows: layout.rows,
+                        input_code_page: layout.input_code_page,
+                        output_code_page: layout.output_code_page,
+                    },
+                )?;
+                self.text_shown = true;
+            }
+            DisplayKind::Ack(id, generation) => {
+                let at = counter()?;
+                self.send(
+                    generation,
+                    Input::AckShown {
+                        id,
+                        observed_counter: at,
+                    },
+                )?;
+                let credit = self
+                    .credits
+                    .iter_mut()
+                    .find(|credit| credit.id == id)
+                    .ok_or_else(|| anyhow::anyhow!("installation lost display command credit"))?;
+                credit.shown = Some(at);
+            }
+            DisplayKind::Final => {
+                self.final_displayed = true;
+                self.credits.clear();
+            }
+            DisplayKind::Observation => {}
+        }
+        Ok(())
+    }
+}
+fn counter() -> Result<i64> {
+    let mut at = 0;
+    unsafe {
+        QueryPerformanceCounter(&mut at)?;
+    }
+    ensure!(at > 0, "installation foreground counter unavailable");
+    Ok(at)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{protocol::WorkerGate, session::fixture_request};
+    use super::*;
+    use crate::scene_delivery::FileRef;
+    struct Fixture {
+        parent: ParentSession,
+        peer: Channel,
+        _root: tempfile::TempDir,
+    }
+    fn fixture() -> Fixture {
+        let root = tempfile::tempdir().unwrap();
+        let mut request = fixture_request();
+        let path = std::env::current_exe().unwrap();
+        let identity = crate::media_runtime::ByteIdentity::observe_file(&path).unwrap();
+        request.playback.runtime = FileRef {
+            path,
+            sha256: identity.sha256,
+            bytes: identity.bytes,
+        };
+        let lock = include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.lock"));
+        let path = root.path().join("retained.lock");
+        std::fs::write(&path, lock).unwrap();
+        request.playback.cargo_lock = FileRef {
+            path,
+            sha256: crate::production::sha256_bytes(lock),
+            bytes: lock.len() as u64,
+        };
+        let runtime =
+            Arc::new(RuntimeBinding::bind(&serde_json::to_vec(&request).unwrap()).unwrap());
+        let (invitation, channel) = Channel::server().unwrap();
+        let mut peer = Channel::connect(&invitation).unwrap();
+        let hello = WorkerGate::new(runtime.context(), std::process::id(), invitation.nonce)
+            .unwrap()
+            .hello();
+        let mut parent = ParentSession::new(
+            runtime,
+            channel,
+            invitation.nonce,
+            std::process::id(),
+            OutputClock::start().unwrap(),
+        )
+        .unwrap();
+        peer.send(0, &hello.bytes().unwrap()).unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        while !parent.authorized {
+            parent.tick().unwrap();
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(
+            Input::parse(&receive(&mut peer)).unwrap(),
+            Input::Authorize { .. }
+        ));
+        Fixture {
+            parent,
+            peer,
+            _root: root,
+        }
+    }
+    fn receive(peer: &mut Channel) -> Packet {
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(packet) = peer.receive() {
+                return packet;
+            }
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    fn deliver(f: &mut Fixture, generation: u64, report: Output) -> Result<()> {
+        let next = f.parent.last_ticket;
+        let count = f.parent.outstanding();
+        f.peer.send(generation, &report.bytes()?).unwrap();
+        let until = Instant::now() + Duration::from_secs(2);
+        loop {
+            f.parent.tick()?;
+            if f.parent.last_ticket != next || f.parent.outstanding() != count {
+                return Ok(());
+            }
+            ensure!(Instant::now() < until, "parent test report deadline");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+    fn item(f: &mut Fixture) -> DisplayItem {
+        match f.parent.event().unwrap() {
+            ParentEvent::Display(item) => item,
+            _ => panic!("missing display item"),
+        }
+    }
+    fn ready_snapshot() -> Snapshot {
+        Snapshot {
+            state: State::Ready,
+            generation: 0,
+            source_frame: 0,
+            interval_frame: 0,
+            pass: 1,
+            command_sequence: 0,
+            session_closed: false,
+            fault: None,
+        }
+    }
+    fn ready(f: &mut Fixture) {
+        let text = "Señal de ingeniería\n";
+        deliver(
+            f,
+            0,
+            Output::Transcript {
+                text: text.into(),
+                sha256: crate::production::sha256_bytes(text.as_bytes()),
+            },
+        )
+        .unwrap();
+        let display = item(f);
+        f.parent
+            .displayed(
+                display.ticket,
+                Some(LayoutObservation {
+                    columns: 80,
+                    rows: 30,
+                    input_code_page: 65001,
+                    output_code_page: 65001,
+                }),
+            )
+            .unwrap();
+        assert!(matches!(
+            Input::parse(&receive(&mut f.peer)).unwrap(),
+            Input::TextShown { .. }
+        ));
+        deliver(
+            f,
+            0,
+            Output::Ready {
+                snapshot: ready_snapshot(),
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        let display = item(f);
+        f.parent.displayed(display.ticket, None).unwrap();
+    }
+    fn status_ack(f: &mut Fixture, id: u64) -> DisplayItem {
+        deliver(
+            f,
+            0,
+            Output::PreparationAck {
+                id,
+                phase: Preparation::Checking,
+                refusal: None,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        item(f)
+    }
+    #[test]
+    fn invalid_ack_does_not_replace_the_last_admitted_snapshot() {
+        for unknown in [true, false] {
+            let mut f = fixture();
+            ready(&mut f);
+            let before = counter().unwrap();
+            let received = loop {
+                let value = counter().unwrap();
+                if value > before {
+                    break value;
+                }
+            };
+            f.parent.command(Command::Start, received).unwrap();
+            receive(&mut f.peer);
+            let mut snapshot = ready_snapshot();
+            snapshot.state = State::Starting;
+            snapshot.generation = 1;
+            snapshot.command_sequence = 1;
+            let report = Output::Ack {
+                id: if unknown { 2 } else { 1 },
+                snapshot,
+                refusal: None,
+                observed_counter: if unknown { counter().unwrap() } else { before },
+            };
+            assert!(deliver(&mut f, 1, report).is_err());
+            assert_eq!(f.parent.observed(), Some(ready_snapshot()));
+        }
+    }
+    #[test]
+    fn future_fault_generation_requires_a_pending_start_or_restart() {
+        let mut f = fixture();
+        ready(&mut f);
+        assert!(
+            deliver(
+                &mut f,
+                1,
+                Output::SessionFault {
+                    generation: 1,
+                    observed_counter: counter().unwrap()
+                }
+            )
+            .is_err()
+        );
+        assert_eq!(f.parent.observed(), Some(ready_snapshot()));
+    }
+    #[test]
+    fn reversed_counters_and_replayed_ack_ids_end_admission_before_old_display() {
+        let mut f = fixture();
+        ready(&mut f);
+        let old = f.parent.clock.origin().0;
+        assert!(
+            deliver(
+                &mut f,
+                0,
+                Output::State {
+                    snapshot: ready_snapshot(),
+                    observed_counter: old
+                }
+            )
+            .is_err()
+        );
+        let mut f = fixture();
+        ready(&mut f);
+        f.parent
+            .command(Command::Status, counter().unwrap())
+            .unwrap();
+        receive(&mut f.peer);
+        let mut snapshot = ready_snapshot();
+        snapshot.command_sequence = 1;
+        deliver(
+            &mut f,
+            0,
+            Output::Ack {
+                id: 1,
+                snapshot,
+                refusal: None,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(!f.parent.displays.is_empty());
+        assert!(
+            deliver(
+                &mut f,
+                0,
+                Output::Ack {
+                    id: 1,
+                    snapshot,
+                    refusal: None,
+                    observed_counter: counter().unwrap()
+                }
+            )
+            .is_err()
+        );
+        assert!(matches!(f.parent.event(), Some(ParentEvent::Fault)));
+        assert!(f.parent.displays.is_empty() && f.parent.event().is_none());
+    }
+    #[test]
+    fn quitting_refuses_new_transport_commands_and_keeps_status_local() {
+        let mut f = fixture();
+        assert_eq!(
+            f.parent.command(Command::Quit, counter().unwrap()).unwrap(),
+            Some(1)
+        );
+        receive(&mut f.peer);
+        assert!(
+            f.parent
+                .command(Command::Start, counter().unwrap())
+                .is_err()
+        );
+        assert_eq!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            f.parent.command(Command::Quit, counter().unwrap()).unwrap(),
+            None
+        );
+        assert_eq!(f.parent.outstanding(), 1);
+        assert_eq!(f.parent.last_id, 1);
+        assert!(!f.parent.protocol_fault);
+    }
+    #[test]
+    fn foreground_credit_stays_owned_until_the_worker_confirms_display() {
+        let mut f = fixture();
+        for _ in 0..8 {
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap();
+            assert!(matches!(
+                Input::parse(&receive(&mut f.peer)).unwrap(),
+                Input::Control { .. }
+            ));
+        }
+        let display = status_ack(&mut f, 1);
+        f.parent.displayed(display.ticket, None).unwrap();
+        assert!(matches!(
+            Input::parse(&receive(&mut f.peer)).unwrap(),
+            Input::AckShown { id: 1, .. }
+        ));
+        assert_eq!(f.parent.outstanding(), 8);
+        deliver(
+            &mut f,
+            0,
+            Output::CreditReleased {
+                id: 1,
+                generation: 0,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        assert_eq!(f.parent.outstanding(), 7);
+        assert_eq!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap(),
+            Some(9)
+        );
+    }
+    #[test]
+    fn ninth_command_faults_without_stealing_credit_and_local_status_quit_survive() {
+        let mut f = fixture();
+        for _ in 0..8 {
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap();
+            receive(&mut f.peer);
+        }
+        let display = status_ack(&mut f, 1);
+        f.parent.displayed(display.ticket, None).unwrap();
+        receive(&mut f.peer);
+        assert!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .is_err()
+        );
+        assert_eq!(f.parent.outstanding(), 8);
+        assert!(matches!(f.parent.event(), Some(ParentEvent::Fault)));
+        assert_eq!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap(),
+            None
+        );
+        assert!(matches!(
+            f.parent.event(),
+            Some(ParentEvent::LocalStatus(None))
+        ));
+        assert_eq!(
+            f.parent.command(Command::Quit, counter().unwrap()).unwrap(),
+            None
+        );
+        assert!(f.parent.quit_requested());
+    }
+    #[test]
+    fn late_display_cannot_erase_the_original_foreground_receipt_deadline() {
+        let mut f = fixture();
+        f.parent
+            .command(Command::Status, counter().unwrap())
+            .unwrap();
+        receive(&mut f.peer);
+        let display = status_ack(&mut f, 1);
+        std::thread::sleep(Duration::from_millis(120));
+        assert!(f.parent.displayed(display.ticket, None).is_err());
+        assert!(f.parent.protocol_fault);
+        assert!(f.parent.credits[0].shown.is_none());
+        assert!(matches!(f.parent.event(), Some(ParentEvent::Fault)));
+    }
+    #[test]
+    fn report_order_rejects_ready_before_text_and_unsolicited_new_generation() {
+        let mut f = fixture();
+        assert!(
+            deliver(
+                &mut f,
+                0,
+                Output::Ready {
+                    snapshot: ready_snapshot(),
+                    observed_counter: counter().unwrap()
+                }
+            )
+            .is_err()
+        );
+        assert!(f.parent.failed());
+        let mut f = fixture();
+        ready(&mut f);
+        let mut snapshot = ready_snapshot();
+        snapshot.generation = 1;
+        snapshot.state = State::Playing;
+        assert!(
+            deliver(
+                &mut f,
+                1,
+                Output::State {
+                    snapshot,
+                    observed_counter: counter().unwrap()
+                }
+            )
+            .is_err()
+        );
+        assert!(f.parent.failed());
+    }
+    #[test]
+    fn credit_and_acknowledgements_require_a_real_pending_command_and_display() {
+        for unknown in [true, false] {
+            let mut f = fixture();
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap();
+            receive(&mut f.peer);
+            let report = if unknown {
+                Output::PreparationAck {
+                    id: 2,
+                    phase: Preparation::Checking,
+                    refusal: None,
+                    observed_counter: counter().unwrap(),
+                }
+            } else {
+                Output::CreditReleased {
+                    id: 1,
+                    generation: 0,
+                    observed_counter: counter().unwrap(),
+                }
+            };
+            assert!(deliver(&mut f, 0, report).is_err());
+            assert!(f.parent.failed() && f.parent.outstanding() == 1);
+        }
+    }
+    #[test]
+    fn display_receipts_are_ordered_once_and_require_the_actual_layout_observation() {
+        for missing in [true, false] {
+            let mut f = fixture();
+            let text = "Señal\n";
+            deliver(
+                &mut f,
+                0,
+                Output::Transcript {
+                    text: text.into(),
+                    sha256: crate::production::sha256_bytes(text.as_bytes()),
+                },
+            )
+            .unwrap();
+            let display = item(&mut f);
+            if missing {
+                assert!(f.parent.displayed(display.ticket, None).is_err());
+            } else {
+                f.parent
+                    .displayed(
+                        display.ticket,
+                        Some(LayoutObservation {
+                            columns: 80,
+                            rows: 30,
+                            input_code_page: 65001,
+                            output_code_page: 65001,
+                        }),
+                    )
+                    .unwrap();
+                assert!(f.parent.displayed(display.ticket, None).is_err());
+            }
+            assert!(f.parent.failed());
+        }
+    }
+    #[test]
+    fn worker_fault_remains_visible_when_a_late_actual_acknowledgement_arrives() {
+        let mut f = fixture();
+        ready(&mut f);
+        f.parent
+            .command(Command::Start, counter().unwrap())
+            .unwrap();
+        receive(&mut f.peer);
+        deliver(
+            &mut f,
+            1,
+            Output::SessionFault {
+                generation: 1,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        let mut snapshot = ready_snapshot();
+        snapshot.generation = 1;
+        snapshot.command_sequence = 1;
+        snapshot.state = State::Starting;
+        deliver(
+            &mut f,
+            1,
+            Output::Ack {
+                id: 1,
+                snapshot,
+                refusal: None,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(item(&mut f).fault_overlay);
+        assert!(item(&mut f).fault_overlay);
+        assert!(f.parent.failed());
+        assert!(
+            f.parent
+                .command(Command::Start, counter().unwrap())
+                .is_err()
+        );
+    }
+    #[test]
+    fn final_observation_requires_quit_and_is_not_displayed_by_queue_acceptance() {
+        let mut f = fixture();
+        assert!(
+            deliver(
+                &mut f,
+                0,
+                Output::PreparationEnded {
+                    phase: Preparation::Stopped,
+                    observed_counter: counter().unwrap()
+                }
+            )
+            .is_err()
+        );
+        let mut f = fixture();
+        f.parent.command(Command::Quit, counter().unwrap()).unwrap();
+        receive(&mut f.peer);
+        let display = status_ack(&mut f, 1);
+        f.parent.displayed(display.ticket, None).unwrap();
+        receive(&mut f.peer);
+        deliver(
+            &mut f,
+            0,
+            Output::PreparationEnded {
+                phase: Preparation::Stopped,
+                observed_counter: counter().unwrap(),
+            },
+        )
+        .unwrap();
+        assert!(!f.parent.final_displayed());
+        let display = item(&mut f);
+        f.parent.displayed(display.ticket, None).unwrap();
+        assert!(f.parent.final_displayed() && f.parent.outstanding() == 0);
+    }
+}

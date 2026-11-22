@@ -759,6 +759,11 @@ fn native_worker_routes_exact_spanish_originals_and_refuses_start_before_display
                         refusal: None,
                         ..
                     } => assert!(refused),
+                    Output::CreditReleased {
+                        id: 1,
+                        generation: 0,
+                        ..
+                    } => assert!(refused),
                     Output::PreparationEnded {
                         phase: Preparation::Stopped,
                         ..

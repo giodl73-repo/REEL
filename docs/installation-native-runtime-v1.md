@@ -97,19 +97,22 @@ The low-level channel now uses two distinct one-way Windows named-pipe file
 objects. A blocked read therefore cannot serialize an unrelated write on the
 same synchronous handle. Its owned reader/writer threads exchange bounded
 packets; controller/callback code polls queues. The worker now routes guarded
-admission and real transport events. The dotted foreground links still require
-operator integration; there is no implemented Run command.
+admission and real transport events. `ParentSession` routes foreground protocol
+and command credits. The actual console links still require integration; there
+is no implemented Run command.
 
 ```mermaid
 flowchart LR
     accTitle: Separate one-way pipes isolate blocked command and report I/O
-    accDescr: The foreground still needs integration. Bounded queues and owned I/O threads connect the local pipes to the authenticated worker session. Both actual worker pipe peers must match the PID held by the existing process runner.
-    fg["Foreground controller<br/>(integration pending)"] -.-> cq["8-command queue<br/>owned writer thread"]
+    accDescr: ParentSession and WorkerSession exchange guarded commands and observations through owned pipe I/O. ParentSession keeps command credits through worker confirmation of display. The actual terminal still needs integration. Both actual worker pipe peers must match the PID held by the existing process runner.
+    console["Actual terminal surface<br/>(pending)"] -.-> fg["ParentSession<br/>8 credits + display tickets"]
+    fg -.-> console
+    fg --> cq["8-command queue<br/>owned writer thread"]
     cq --> cp["Local command pipe<br/>owned reader thread"]
     cp --> worker["Authenticated WorkerSession<br/>actual controller + source checks"]
     worker --> rq["256-report queue<br/>owned writer thread"]
     rq --> rp["Local report pipe<br/>owned reader thread"]
-    rp -.-> fg
+    rp --> fg
 ```
 
 The server creates a cryptographically random 16-byte run context and derives
@@ -183,6 +186,7 @@ commands. They are bounded by the same frame limit:
 | Worker `transcript` → parent `text_shown` | Exact admitted UTF-8 text/hash; acknowledgement names that same hash and at least 80×30 / UTF-8 input and output observations. Actual console measurement/display still belongs to the pending operator implementation. |
 | Parent `control` | Canonical command, consecutive unique ID and nondecreasing complete-receipt counter within the Run clock domain. The worker retains each of eight outstanding IDs through actual application/refusal and matching display acknowledgement. |
 | Worker `ack` / `preparation_ack` → parent `ack_shown` | Match an actually emitted command report, its ID and frame generation. Display counter cannot precede that report or be in the future. A parsed display claim is not console-rendering evidence. |
+| Worker `credit_released` → parent credit pool | Only after the worker accepts `ack_shown`. ID/generation must match an acknowledged and displayed command; its counter cannot precede display. Queueing `ack_shown` alone does not free foreground credit. |
 | Worker `ready`, `state`, `ack`, `ended` | Immutable bounded observations; snapshot generation agrees with the frame. They cannot deserialize or construct a transport, prepared programme or restart permit. |
 | Worker `session_fault`, `resources_closed` | Generation-bound lifecycle metadata without a fabricated snapshot. Resource closure means source/output owners joined; it does not mean IPC delivery or process-tree reaping. |
 
@@ -328,6 +332,65 @@ success path. Unwinding also closes native output before dropping original
 guards and before channel destruction. No CLI/console or complete two-second
 cleanup qualification follows from this worker component.
 
+### Foreground protocol: one credit follows one command
+
+`native::parent::ParentSession` now owns the foreground channel, guarded runtime
+and bounded observation/display queues. Its worker PID must come from the
+existing held process owner. It checks actual peers and Hello before sending
+Authorize, then checks report order, original-clock counters, pending IDs,
+generation changes and terminal state. It stores observations, never a mutable
+transport or restart permit.
+
+```mermaid
+sequenceDiagram
+    accTitle: A command credit stays owned through the worker's display receipt
+    accDescr: Complete foreground line receipt reserves one of eight credits. The worker applies or refuses the actual command. ParentSession issues a display ticket. Only after rendering confirmation does it send AckShown; the worker accepts it and returns CreditReleased. ParentSession then frees that credit. All deadlines retain the original foreground receipt time.
+    participant P as ParentSession (8 credits)
+    participant W as WorkerSession
+    participant D as Console actor (pending)
+    P->>P: Complete line receipt; reserve ID and original QPC
+    P->>W: Control with ID/generation/receipt
+    W-->>P: Actual application/refusal acknowledgement
+    P->>D: Ordered opaque display ticket + observation
+    D-->>P: Rendering complete (same ticket)
+    P->>W: AckShown; foreground still owns credit
+    W->>W: Validate actual report, ID, generation and counter
+    W-->>P: CreditReleased
+    P->>P: Validate return; release that one credit
+```
+
+The foreground checks the original 100 ms receipt budget before draining late
+reports and before accepting rendering completion. A late acknowledgement
+cannot erase that failure. The worker independently bounds receipt through its
+display-return path. Parent credit returns may not be guessed from queue
+acceptance. The eighth displayed command still occupies a credit until its
+worker return arrives; a ninth outstanding command faults without sending it.
+
+Display tickets are private, ordered and accepted once. Transcript confirmation
+requires the layout/UTF-8 observation and names the exact original hash. Ready
+cannot precede that confirmation. Bad acknowledgements are rejected before
+replacing the last admitted snapshot; a new generation requires an actual
+pending Start/Restart. A worker Fault remains visible over late historical
+snapshots. Protocol Fault clears obsolete queued display work, preserves the
+last admitted observation and keeps local Status/Quit available. After Quit,
+new transport controls refuse and Status is local; no extra ID is stranded in
+the exiting worker's queue.
+
+A final observation must follow Quit or lifetime termination. Receiving it does
+not mark it displayed. The display ticket still needs confirmation before
+`final_displayed` becomes true. That flag is **not** final worker delivery
+acknowledgement, native/process reaping or a complete cleanup receipt.
+`shutdown_channel` is a blocking IPC barrier for the enclosing cleanup owner;
+it must remain off the control loop and inside the shared cleanup budget.
+
+The APIs currently accept synthetic rendering confirmations in tests. Actual
+Windows cooked input/echo, persistent transcript, UTF-8 geometry, EOF/Ctrl+C,
+scroll/resize and blocked-output behavior are unimplemented. No console or
+end-to-end timing qualification follows from the protocol component.
+The future input reader must reserve from the same eight-command pool at
+complete line receipt. Adding an independent eight-line input queue beside
+eight occupied protocol credits would violate the global bound.
+
 ### Existing runner and output ports
 
 The existing contained process runner now offers an explicit observer port.
@@ -409,8 +472,8 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest worker/controller/admission checkpoint: 79 unit cases, five CLI cases and
-11 explicit original/runtime-input cases passed: **95 distinct focused cases**. The
+Latest foreground/worker/controller checkpoint: 91 unit cases, five CLI cases and
+11 explicit original/runtime-input cases passed: **107 distinct focused cases**. The
 original-input invocation ran with zero ignored cases; the six ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains

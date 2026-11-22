@@ -15,6 +15,8 @@ mod device;
 pub mod output;
 #[cfg(windows)]
 mod owned;
+#[cfg(windows)]
+pub mod parent;
 mod probe;
 pub mod protocol;
 #[cfg(windows)]

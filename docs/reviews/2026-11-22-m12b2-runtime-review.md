@@ -340,6 +340,49 @@ That is **95 distinct focused passing cases**, not a sum of reruns. Formatting,
 whitespace, actionlint and changed-document relative links passed. No actual
 endpoint, playback, capture, listening, console usability or release is claimed.
 
+## Foreground protocol and command-credit checkpoint
+
+The same assistant applied Platform/Audience, Sound, Editor and
+Rights/Provenance checklists to `ParentSession` and the worker credit return.
+These are checklist findings, not independent reviews or approval.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Platform/Audience — global command bound | Releasing foreground credit when `ack_shown` is merely queued leaves the worker holding an old ID while a ninth could enter the foreground. The worker now sends `credit_released` after accepting display. ParentSession retains credit until that matching ID/generation/counter return. Eight displayed commands can still fill the pool; queue acceptance never releases one. |
+| Platform/Audience — observations | Check actual peers and guarded Hello before authorization, then original-clock counters, report stage, ID and generation. Ready before transcript display, unsolicited stream generations, unknown/duplicate acknowledgements and pre-receipt counters fault. Validate a bad acknowledgement before replacing the last admitted snapshot. |
+| Platform/Audience — failure and closing | Protocol Fault discards obsolete queued display work and keeps local Status/Quit usable. Worker Fault stays visible over late actual-history snapshots. After Quit, new transport controls refuse without adding an ID; Status is local. Final receipt alone is not final display confirmation or process reaping. |
+| Sound/Editor | The parent owns immutable observations and scoped commands, no transport or restart capabilities. No sample, pass, interval, text or DSP behavior changed. Existing callback allocation, same-core ownership and PCM cases remain in the unit qualification. |
+| Rights/Provenance | Runtime guards remain owned through channel teardown. The contained missing-original test now uses the actual ParentSession and WorkerSession, with PID from the held runner, guarded authorization, Fault/Status/display-return/credit/Quit/final-observation flow and actual reaping before foreground IPC shutdown. No original substitution or readiness is inferred from missing originals. |
+
+Parent metadata cases use an actual local channel and guarded same-process
+Hello exchange, with synthetic worker reports and rendering confirmations. They
+are distinct from the held-child flow and from actual console rendering. No
+parent test starts an original checker or an output port. The contained flow
+does check missing originals and never constructs output. Actual Windows
+rendering, cooked input, resize/scroll, EOF/Ctrl+C, blocked I/O and the full
+render/IPC/process deadlines remain open.
+
+The timestamp regression initially allowed two adjacent QPC reads to be equal;
+the fixture now waits for a strictly later counter before declaring a report
+pre-receipt. The production rejection rule was preserved. No deadline or
+numeric gate was weakened to accommodate that fixture correction.
+
+Final execution on the exclusive Windows target:
+
+- Installation unit filter: **91 passed**, zero failed, in 24.13 s. Includes
+  12 new foreground cases and the existing held-child case now driven by the
+  actual ParentSession. The six ordinary ignored fixtures were parent-launched;
+  child executions and earlier reruns are not extra cases.
+- Explicit original/runtime-input integration: **11 passed**, zero failed or
+  ignored, in 42.11 s. The Spanish source/channel case still stops before device
+  admission; its explicit credit-return observation is now handled.
+- Native CLI: **five passed**, zero failed or ignored, in 0.13 s.
+- Final all-target/all-feature Clippy passed with warnings denied in 47.58 s.
+
+That is **107 distinct focused passing cases**. Formatting, whitespace,
+actionlint and changed-document relative links passed. No actual console,
+endpoint, playback, capture, human listening/usability or release is qualified.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
@@ -349,9 +392,14 @@ native session integration remains open.
 Framing, peer, authentication components and scoped command application passed.
 The authenticated worker routes preparation controls and actual controller
 events, and retains its command credits through report display acknowledgement.
-Full contained success/cancellation tests, parent observation ordering and
-foreground command-window accounting, console behavior, native cancellation
-through the complete process owner and all aggregate deadlines remain open.
+Parent ordering/display tickets and the eight-credit return path are now
+implemented, including a contained missing-original flow. Full contained
+success/cancellation and actual rendering tests, global foreground input/console
+integration, native cancellation through the complete process owner and all
+aggregate deadlines remain open.
+The cooked-input queue must share the existing credit reservation at complete
+line receipt; a separate eight-line queue cannot be added beside eight protocol
+credits and called a global bound.
 Final delivery must be observed before IPC shutdown; actual tree reaping and
 combined working-set evidence must come from the held owner. A normal or failed
 join cannot manufacture a two-second cleanup pass. Lifetime termination still

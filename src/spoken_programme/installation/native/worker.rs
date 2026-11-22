@@ -343,6 +343,14 @@ impl WorkerSession {
                 if let Some(controller) = &mut self.controller {
                     controller.acknowledgement_shown(id);
                 }
+                self.send(
+                    generation,
+                    Output::CreditReleased {
+                        id,
+                        generation,
+                        observed_counter: counter()?,
+                    },
+                )?;
             }
             Admission::Command {
                 id,
@@ -631,7 +639,7 @@ mod tests {
             bytes: lock.len() as u64,
         };
         let raw = serde_json::to_vec(&request).unwrap();
-        let binding = RuntimeBinding::bind(&raw).unwrap();
+        let binding = Arc::new(RuntimeBinding::bind(&raw).unwrap());
         std::fs::write(root.path().join("session.json"), raw).unwrap();
         let clock = OutputClock::start().unwrap();
         std::fs::write(
@@ -666,6 +674,90 @@ mod tests {
                 Ok(())
             }).map_err(|error| error.to_string()));
             let _cancel = Cancel(cancel.clone());
+            if mode == 0 {
+                use super::super::parent::{ParentEvent, ParentSession};
+                let deadline = Instant::now() + Duration::from_secs(12);
+                while actual_pid.load(Ordering::Acquire) == 0 {
+                    assert!(Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                let mut foreground = ParentSession::new(
+                    binding.clone(),
+                    channel,
+                    invitation.nonce,
+                    actual_pid.load(Ordering::Acquire),
+                    clock,
+                )
+                .unwrap();
+                let (mut fault, mut status, mut status_ack, mut quit) =
+                    (false, false, false, false);
+                while !foreground.final_displayed() {
+                    foreground.tick().unwrap();
+                    while let Some(event) = foreground.event() {
+                        let ParentEvent::Display(item) = event else {
+                            panic!("unexpected foreground protocol failure");
+                        };
+                        match &item.report {
+                            Output::Preparing {
+                                phase: Preparation::Checking,
+                                ..
+                            } => {}
+                            Output::Preparing {
+                                phase: Preparation::Fault,
+                                ..
+                            } => {
+                                fault = true;
+                                assert!(item.fault_overlay);
+                            }
+                            Output::PreparationAck {
+                                id: 1,
+                                phase: Preparation::Fault,
+                                refusal: None,
+                                ..
+                            } => status_ack = true,
+                            Output::PreparationAck {
+                                id: 2,
+                                phase: Preparation::Fault,
+                                refusal: None,
+                                ..
+                            } => assert!(quit),
+                            Output::PreparationEnded {
+                                phase: Preparation::Fault,
+                                ..
+                            } => assert!(quit),
+                            _ => {
+                                panic!("missing originals reached unexpected foreground readiness")
+                            }
+                        }
+                        // Synthetic rendering confirmation, not a console claim.
+                        foreground.displayed(item.ticket, None).unwrap();
+                    }
+                    if fault && !status {
+                        foreground
+                            .command(Command::Status, counter().unwrap())
+                            .unwrap();
+                        status = true;
+                    }
+                    if status_ack && foreground.outstanding() == 0 && !quit {
+                        foreground
+                            .command(Command::Quit, counter().unwrap())
+                            .unwrap();
+                        quit = true;
+                    }
+                    assert!(Instant::now() < deadline);
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                assert!(status_ack && quit && foreground.outstanding() == 0);
+                std::fs::write(
+                    root.path().join("observed.marker"),
+                    b"actual foreground observed closure",
+                )
+                .unwrap();
+                let result = job.join().unwrap();
+                assert!(result.is_ok(), "{result:?}");
+                foreground.shutdown_channel().unwrap();
+                return;
+            }
             let deadline = Instant::now() + Duration::from_secs(12);
             let mut parent = None;
             let mut status = false;
@@ -774,6 +866,11 @@ mod tests {
                             assert!(status);
                             quit_ack = true;
                         }
+                        Output::CreditReleased {
+                            id: 1,
+                            generation: 0,
+                            ..
+                        } => assert!(status && mode == 0),
                         Output::PreparationEnded {
                             phase: Preparation::Fault,
                             ..

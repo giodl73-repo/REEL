@@ -41,6 +41,11 @@ pub enum Preparation {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Output {
+    CreditReleased {
+        id: u64,
+        generation: u64,
+        observed_counter: i64,
+    },
     SessionFault {
         generation: u64,
         observed_counter: i64,
@@ -174,7 +179,8 @@ impl Output {
                 "installation observed generation mismatch"
             );
         } else if let Self::SessionFault { generation, .. }
-        | Self::ResourcesClosed { generation, .. } = &value
+        | Self::ResourcesClosed { generation, .. }
+        | Self::CreditReleased { generation, .. } = &value
         {
             ensure!(
                 *generation == packet.generation(),
@@ -216,6 +222,16 @@ impl Output {
     }
     fn validate(&self) -> Result<()> {
         match self {
+            Self::CreditReleased {
+                id,
+                observed_counter,
+                ..
+            } => {
+                ensure!(
+                    *id > 0 && *observed_counter > 0,
+                    "installation command credit profile"
+                );
+            }
             Self::SessionFault {
                 observed_counter, ..
             }
