@@ -44,13 +44,23 @@ test('actual required-check gates reject classifier and qualification failures',
     ['success', 'false', 'skipped', false],
     ['success', 'true', 'failure', false],
   ];
-  for (const script of gates) {
+  for (const [index, script] of gates.entries()) {
     for (const [CLASSIFICATION, DOCS_ONLY, QUALIFICATION, passes] of cases) {
       const result = spawnSync(bash, ['-e', '-c', script], {
-        env: { ...process.env, CLASSIFICATION, DOCS_ONLY, QUALIFICATION }, encoding: 'utf8',
+        env: { ...process.env, CLASSIFICATION, DOCS_ONLY, QUALIFICATION, HTTP_QUALIFICATION: QUALIFICATION }, encoding: 'utf8',
       });
       assert.ifError(result.error);
       assert.equal(result.status === 0, passes, `${CLASSIFICATION}/${DOCS_ONLY}/${QUALIFICATION}`);
+    }
+    if (index === 0) {
+      for (const HTTP_QUALIFICATION of ['failure', 'cancelled', 'skipped', '']) {
+        const result = spawnSync(bash, ['-e', '-c', script], {
+          env: { ...process.env, CLASSIFICATION: 'success', DOCS_ONLY: 'false',
+            QUALIFICATION: 'success', HTTP_QUALIFICATION }, encoding: 'utf8',
+        });
+        assert.ifError(result.error);
+        assert.notEqual(result.status, 0, `HTTP failure admitted: ${HTTP_QUALIFICATION}`);
+      }
     }
   }
 });
