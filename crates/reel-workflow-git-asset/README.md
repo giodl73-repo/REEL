@@ -3,9 +3,9 @@
 An isolated Rust integration for REEL's `publication::InputReader`. It pins
 the candidate public git-asset at `0ccb137cf5a78416e780f8a3372017f642a5cb71`, with its own
 Cargo.lock. It preserves the existing private vendor and native workflow route.
-No existing job is upgraded or rebound by adding this package. This candidate
-pin is under source/consumer qualification; do not activate a production route
-from this update.
+No existing job is upgraded or rebound by adding this package. The upstream pin passed hosted44995031081; the previous bridge passed
+hosted44995403521. The lifecycle changes below require their own consumer
+qualification and do not activate a production route.
 
 1. Create `git_asset::source::Repository` with an explicit Git executable,
    repository and metadata listing/command limits.
@@ -284,3 +284,81 @@ Drop; it still implements InputReader with the original byte budget. It accepts
 no caller substitute namespace path and performs no claim admission or payload
 acquisition. All named inputs must already be held. This is a protection bridge,
 not complete task/request/control retention or retained-result Lifecycle.
+
+
+## Retained task controls and lifecycle
+
+`retention::Seed::prepare` fixes an explicitly pre-enrolled empty Retention
+source, owner, minimum, original operation IDs and expected revision. It writes
+nothing. `selection` explicitly builds metadata; `admit` verifies/holds actual
+native bytes before adopting it. `hold` requires a separately expected selection;
+`original` permits only that seed's fixed first adopted revision/context and exact
+recorded operation IDs, never a newer/current substitute. Copies of namespace
+identity cannot supply a replacement path: resolution uses the actual pool roster.
+Small controls are limited to 64 entries, 1 MiB each, 64 MiB logical total and
+300000 cooperative milliseconds, further constrained by caller/SDK limits.
+
+`binding::resources` builds fixed role/index paths for the exact task input and
+control closure. Original packet JSON bytes (including whitespace), request,
+preview, tool, native/upstream declarations and all dependency artifacts must be
+explicit. Build/admit the job tree through existing metadata/claim APIs. Capture
+`Binding` with three distinct retention seeds and the original handle; it fixes
+its own logical ID, task/attempt/tool/preview and resource root, but contains no
+self hash. Its separate control selection is built AFTER its bytes are fixed.
+Retain the binding and original controls through the existing native publisher,
+then `control_seed.admit` while actual native byte guards hold them. Do not store
+runtime packets, plans or expanding evidence in Git.
+
+After a response, `Candidates::bind/prepare` preserves raw JSON and freezes ALL
+original SDK plans. Explicitly retain raw packet and plan-control bytes and adopt
+the result seed with exactly `packet` and `plans`, context `binding.pin().sha256`.
+Build/finish `handoff::final_selection` metadata BEFORE task output effects. Its
+separate final seed will retain the complete output/receipt/raw-response/plan/
+binding cohort, so output retention is independent of input-job settlement.
+Control ingress uses the existing native publication API; lifecycle reopen does
+not publish, initialize caches, enroll sources or replace protection.
+
+`handoff::Lifecycle::new(Configuration, Publisher, Resources, source)` implements
+REEL's existing Lifecycle/ProtectedJob traits. Configuration supplies the trusted
+original Ticket and independently known tool, actual pool profile and limits.
+Active mode holds retained controls plus streamed actual inputs and the original
+job generation. Register/reconcile use only the retained original raw result and
+frozen plans; the SDK's one-shot protocol refuses uncertain effects. Final
+protection is admitted under actual verified native readers BEFORE returning an
+acknowledgement. All guards survive REEL's final journal write. No creative
+selection, approval, provider invocation or scratch cleanup occurs here.
+
+RetainedOnly mode reopens original controls, verifies the original job-admission
+receipt, all original candidate Ready guards and the exact final cohort. It does
+not require input bytes/Git/staging or reactivate a settled job. Acknowledgement
+must equal the original retained return-packet Artifact. Lost task acknowledgement
+leaves ImportPending; recovery uses original retained state. An uncertain native
+effect remains ImportPending, with no replacement operation or effect replay.
+
+Media protection uses `ProtectionBudget`: <=256 objects, <=64 GiB/object,
+<=1 TiB logical total, <=300000 cooperative milliseconds plus actual profile
+limits. `ProtectedSet` and `GuardedInputs::hold_all` retain verified native readers
+without payload Vecs; the small InputReader Vec API remains <=256 MiB. Kernel IO
+cannot be preempted and these are not filesystem quotas/capacity reservations.
+
+Error boundaries: pre-admission Budget/Invalid/Denied imply no new control
+selection; errors after a possible namespace commit require original-operation
+reconciliation. A post-commit deadline returns NeedsRecovery with
+`public-control-time-after-admission` or `public-retained-time-after-admission`.
+Stale original generations never retry against latest. Native uncertainty preserves
+code `uncertain`; completed acknowledgement is never synthesized from file presence.
+Full joined child-exit/fault acceptance, production enrollment and activation remain
+separate from implementation and the synthetic fixtures below.
+
+
+Current local checkpoint: 35 default tests and 10 explicit native cases pass,
+including complete ordinary/bare handoff, settled-input readback, lost workflow
+acknowledgement, actual uncertain native effect, retained controls and streamed
+257 MiB input. Strict Clippy/fmt/diff pass. Actual process-exit coverage of the
+joined lifecycle, complete client control-ingress setup, exact consumer hosted
+checks and project acceptance remain separate open gates. Source-level and
+SDK-native process-exit tests do not close that joined acceptance by themselves.
+Native fixture setkey operations are explicit synthetic setup, not a shipped
+control-ingress command. Client control ingress uses existing qualified Publisher
+operations with separate ingress sources, then admits the composite control seed;
+do not consume a reserved seed's first revision with an individual blob plan.
