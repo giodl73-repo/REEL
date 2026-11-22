@@ -33,6 +33,8 @@ pub mod handoff;
 mod qualified;
 pub mod response;
 pub mod retention;
+#[cfg(windows)]
+pub mod selection;
 pub mod staging;
 use tig_git::{
     annex::workflow::reader,

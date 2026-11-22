@@ -87,6 +87,13 @@ visible stable targets from an existing scene-delivery receipt, exact frame maps
 and unchanged audio/timestamps. Finding/issue/fix handling, affected rebuilds and
 protected workflow dispatch remain required before W4 is complete.
 
+The next W4 source slice is a Windows owned-selection Rust primitive: qualified
+exact-base proposals plus expected-ref CAS, immutable operation intent and
+confirmed-completion readback. It has no film selection CLI and is not complete
+W4 acceptance. Wiring retained candidates, exact annex record/leaf replacement,
+project decision authority and protected affected-language/consumer rebuilds
+remains required. See the [scoped review](reviews/workflow-owned-selection-review.md).
+
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:
 

@@ -3,9 +3,28 @@
 This isolated adapter binds exact Git records to explicit annex leaves, admits
 positive input claims, stages owned manual work, registers unselected responses,
 reopens retained outputs and recovers the original operation. It also connects
-W2 film metadata inspection to those native bindings. It calls no model/provider,
-and selects no asset or changes any active profile. The optional Windows film
+W2 film metadata inspection to those native bindings. It calls no model/provider
+and changes no active profile. The optional Windows film
 feature adds bounded owned production, retained candidates and explicit close.
+
+The Windows `selection` Rust module adds an owned-ref CAS primitive using the
+qualified exact-byte proposal API and a pinned local Git executable. Preview is
+read-only. Apply can create/update only `refs/reel-workflow/selections/<lane>`;
+it never updates a branch, index, working file, project profile or remote. Exact
+request identity is bound into the proposal commit. Separate permanent intent
+and confirmed-completion refs support original-operation recovery: an intent
+alone is never success, and an ambiguous interrupted attempt is never reapplied.
+Confirmed historical replay reports whether its commit is still selected.
+Each Git command has a five-second deadline and bounded output; hooks, inherited
+Git redirection and lazy fetch are disabled. Observed symbolic refs are refused;
+CAS compares the expected object ID and uses `--no-deref`. It is not an ABA-proof
+ref-type lock against arbitrary outside writers to the owned namespace.
+
+This primitive has no selection CLI. Its synthetic Git tests do not establish
+candidate custody, annex record/leaf binding, decision authority, production
+adoption or affected-consumer rebuilds. Those checks must precede its future
+film adapter. A decision artifact pin records lineage only; it grants no rights
+or creative approval. No existing approval transfers to replacement bytes.
 
 It builds on [SDK intake PR #389](https://github.com/giodl73-repo/REEL/pull/389).
 The separate workspace/lock preserves the existing producer SDK and root lock.
