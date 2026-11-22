@@ -59,10 +59,14 @@ impl existing::ByteSource for Offline {
 struct LoseAck<L> {
     inner: L,
     once: bool,
+    exit_marker: Option<std::path::PathBuf>,
+    exit_before_register: bool,
 }
 struct LoseGuard<'a, G> {
     inner: G,
     once: &'a mut bool,
+    exit_marker: Option<&'a Path>,
+    exit_before_register: bool,
 }
 impl<L: reel_workflow::handoff::Lifecycle> reel_workflow::handoff::Lifecycle for LoseAck<L> {
     type Guard<'a>
@@ -76,6 +80,8 @@ impl<L: reel_workflow::handoff::Lifecycle> reel_workflow::handoff::Lifecycle for
         Ok(LoseGuard {
             inner: self.inner.reopen(ticket)?,
             once: &mut self.once,
+            exit_marker: self.exit_marker.as_deref(),
+            exit_before_register: self.exit_before_register,
         })
     }
 }
@@ -87,6 +93,9 @@ impl<G: reel_workflow::handoff::ProtectedJob> reel_workflow::handoff::ProtectedJ
         t: &reel_workflow::handoff::Ticket,
         r: &reel_workflow::ReturnedResult,
     ) -> reel_workflow::Result<Artifact> {
+        if self.exit_before_register {
+            crash::abrupt(self.exit_marker.unwrap());
+        }
         self.inner.register(t, r)
     }
     fn reconcile(
@@ -103,6 +112,9 @@ impl<G: reel_workflow::handoff::ProtectedJob> reel_workflow::handoff::ProtectedJ
         a: &Artifact,
     ) -> reel_workflow::Result<()> {
         self.inner.verify_retained(t, r, a)?;
+        if let Some(marker) = self.exit_marker {
+            crash::abrupt(marker);
+        }
         if std::mem::replace(self.once, false) {
             return Err(reel_workflow::Error {
                 kind: ErrorKind::NeedsRecovery,
@@ -325,6 +337,16 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
     assert_eq!(journal.state(), JournalState::Waiting);
     assert_eq!(opens.get(), 0);
     let cfg = runtime.into_configuration();
+    crash::active_exit(
+        root,
+        &cfg,
+        &profile,
+        &cp,
+        &ns.checkpoint(),
+        &ledger.checkpoint(),
+        crash::Phase::Waiting,
+    );
+    assert_eq!(Journal::open(&path).unwrap().state(), JournalState::Waiting);
     drop(metadata);
     // Freeze original return and all SDK plans, then retain those control blobs.
     let set = Candidates::bind(&ticket, &raw_return, &binding.return_packet_id()).unwrap();
@@ -468,7 +490,7 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
         assert!(matches!(failure, Err(publication::Error::Uncertain)));
         let mut runtime = Lifecycle::new(
             cfg,
-            Publisher::new(profile).unwrap(),
+            Publisher::new(profile.clone()).unwrap(),
             Resources {
                 namespace: &mut ns,
                 metadata: &mut metadata,
@@ -486,7 +508,20 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
         );
         assert_eq!(journal.state(), JournalState::ImportPending);
         assert_eq!(journal.resume(&mut runtime).unwrap_err().code, "uncertain");
-        drop(runtime);
+        let cfg = runtime.into_configuration();
+        crash::active_exit(
+            root,
+            &cfg,
+            &profile,
+            &cp,
+            &ns.checkpoint(),
+            &ledger.checkpoint(),
+            crash::Phase::Uncertain,
+        );
+        assert_eq!(
+            Journal::open(&path).unwrap().state(),
+            JournalState::ImportPending
+        );
         assert!(
             ns.source(&key("retained"))
                 .unwrap()
@@ -510,6 +545,19 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
         );
         return;
     }
+    if !bare {
+        crash::active_exit(
+            root,
+            &cfg,
+            &profile,
+            &cp,
+            &ns.checkpoint(),
+            &ledger.checkpoint(),
+            crash::Phase::ImportPending(Box::new(prepared.candidates().result().clone())),
+        );
+        journal = Journal::open(&path).unwrap();
+        assert_eq!(journal.state(), JournalState::ImportPending);
+    }
     let runtime = Lifecycle::new(
         cfg,
         Publisher::new(profile.clone()).unwrap(),
@@ -527,8 +575,15 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
     let mut wrapped = LoseAck {
         inner: runtime,
         once: lose_ack,
+        exit_marker: None,
+        exit_before_register: false,
     };
-    let imported = journal.import(result, &mut wrapped);
+    let imported = if journal.state() == JournalState::ImportPending {
+        assert_eq!(journal.result(), Some(&result));
+        journal.resume(&mut wrapped)
+    } else {
+        journal.import(result, &mut wrapped)
+    };
     if lose_ack {
         assert_eq!(
             imported.unwrap_err().code,
@@ -564,6 +619,19 @@ fn exercise(bare: bool, lose_ack: bool, uncertain: bool) {
     .unwrap();
     let ns_before = ns.checkpoint();
     let ledger_before = ledger.checkpoint();
+    // Reopen in a separate process while parent handles remain live. Its exit
+    // must release only live guards, without dropping durable task retention.
+    crash::retained_exit(
+        root,
+        &cfg,
+        &profile,
+        &cp,
+        &ns.checkpoint(),
+        &ledger.checkpoint(),
+    );
+    let disk = Journal::open(&path).unwrap();
+    assert_eq!(disk.state(), journal.state());
+    assert_eq!(disk.acknowledgement(), journal.acknowledgement());
     let opens = std::rc::Rc::new(std::cell::Cell::new(0));
     let mut runtime = Lifecycle::new(
         cfg,
@@ -610,3 +678,6 @@ fn bare_handoff_retained_completion_survives_input_settlement() {
 fn uncertain_native_effect_never_completes_workflow_or_replays_publication() {
     exercise(false, false, true)
 }
+
+#[path = "lifecycle/crash.rs"]
+mod crash;
