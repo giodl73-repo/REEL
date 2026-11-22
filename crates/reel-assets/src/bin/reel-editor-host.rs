@@ -1,5 +1,5 @@
 //! Explicit, short-lived loopback hosting for a single native editor export.
-#[cfg(all(test, any(windows, target_os = "macos")))]
+#[cfg(test)]
 use reel_assets::loopback::browser_command;
 use reel_assets::loopback::open_browser;
 use reel_assets::loopback::{byte_range, request, response};
