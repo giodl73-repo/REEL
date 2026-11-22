@@ -635,6 +635,183 @@ fn continue_original_film_close_after_retained_layout_repair() {
     );
 }
 
+#[cfg(all(windows, feature = "film"))]
+#[test]
+#[ignore = "Owned CLI fixture over an explicitly completed original synthetic pool/index; preserves new attempt, capacity and scratch; no pool initialization"]
+fn owned_film_cli_runs_pinned_tickets_and_preserves_capacity_and_identity() {
+    use reel_workflow_native::{admission::Prepared, film_cli};
+    let original = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_ORIGINAL")
+            .expect("Set completed original film evidence"),
+    );
+    let completed: serde_json::Value =
+        serde_json::from_slice(&fs::read(original.join("closed.json")).unwrap()).unwrap();
+    assert_eq!(completed["slot_idle"], true);
+    let locations: serde_json::Value =
+        serde_json::from_slice(&fs::read(original.join("locations.json")).unwrap()).unwrap();
+    let packet: Packet = serde_json::from_value(locations["packet"].clone()).unwrap();
+    let source = serde_json::from_value(locations["native"].clone()).unwrap();
+    let mut profile: reel_workflow_native::admission::Profile =
+        serde_json::from_value(locations["admission_profile"].clone()).unwrap();
+    profile.scope.operation = tig_store::Key::parse("owned-cli-film-job").unwrap();
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_NATIVE_FILM_EVIDENCE").expect("Set NEW CLI evidence directory"),
+    );
+    fs::create_dir(&evidence).unwrap();
+    fs::copy(
+        env!("CARGO_BIN_EXE_reel-workflow-native"),
+        evidence.join("reel-workflow-native.exe"),
+    )
+    .unwrap();
+    let parent = evidence.join("owned");
+    fs::create_dir(&parent).unwrap();
+    fs::write(
+        evidence.join("admission-intent.json"),
+        serde_json::to_vec(&json!({"packet":packet,"source":source,"profile":profile,"attempt":"owned-cli-attempt-1"})).unwrap(),
+    ).unwrap();
+    let receipt = Prepared::open(&packet, &source, &profile, "owned-cli-attempt-1")
+        .unwrap()
+        .accept()
+        .unwrap();
+    fs::write(
+        evidence.join("admission.json"),
+        receipt.canonical_bytes().unwrap(),
+    )
+    .unwrap();
+    let request = film_cli::Request {
+        schema: "reel.workflow-film-cli.v1".into(),
+        packet,
+        source,
+        admission: profile.clone(),
+        receipt,
+        runtime: serde_json::from_value(locations["runtime"].clone()).unwrap(),
+        programs: serde_json::from_value(locations["programs"].clone()).unwrap(),
+        workspace: film_cli::WorkspaceProfile {
+            parent: parent.clone(),
+            maximum_bytes: 36 * 1024 * 1024,
+            capacity_policy: reel_assets::admission::Policy {
+                minimum_free_bytes: 100 * 1024 * 1024,
+                minimum_free_basis_points: 0,
+                max_object_bytes: 128 * 1024 * 1024,
+                tier_minimum_free_bytes: BTreeMap::new(),
+            },
+        },
+        retained: reel_workflow_native::retention::Target {
+            schema: "reel.workflow-retained-target.v1".into(),
+            actor: tig_store::Key::parse("retained").unwrap(),
+            owner: profile.scope.owner.clone(),
+        },
+        close_operation: tig_store::Key::parse("owned-cli-close-1").unwrap(),
+    };
+    let raw = serde_json::to_vec(&request).unwrap();
+    let pin = digest(&raw);
+    let request_path = evidence.join("request.json");
+    fs::write(&request_path, &raw).unwrap();
+    let ticket_path = evidence.join("ticket.json");
+    let cli = |command: &str, ticket: bool, apply: bool, ticket_pin: &str| {
+        let mut cmd = Command::new(evidence.join("reel-workflow-native.exe"));
+        cmd.arg(command).arg(&request_path).arg(&pin);
+        if command == "prepare-film" {
+            cmd.arg(&ticket_path);
+        }
+        if ticket {
+            cmd.arg(&ticket_path).arg(ticket_pin);
+        }
+        if apply {
+            cmd.arg("--apply");
+        }
+        let output = cmd.output().unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        (output.status.success(), value)
+    };
+    let no_apply = cli("prepare-film", false, false, "");
+    assert!(!no_apply.0);
+    assert!(!ticket_path.exists());
+    let prepared = cli("prepare-film", false, true, "");
+    assert!(prepared.0, "{:?}", prepared.1);
+    let ticket_pin = prepared.1["ticket_sha256"].as_str().unwrap();
+    let bad = cli("run-film", true, true, &"0".repeat(64));
+    assert!(!bad.0);
+    assert_eq!(bad.1["error"]["code"], "film-cli-ticket-pin");
+    let ticket: serde_json::Value =
+        serde_json::from_slice(&fs::read(&ticket_path).unwrap()).unwrap();
+    let root = parent.join(ticket["root_name"].as_str().unwrap());
+    let work = root.join("work");
+    assert!(fs::read_dir(&work).unwrap().next().is_none());
+    fs::rename(&work, root.join("original-work")).unwrap();
+    fs::create_dir(&work).unwrap();
+    let replaced = cli("run-film", true, true, ticket_pin);
+    assert!(!replaced.0);
+    assert_eq!(replaced.1["error"]["code"], "film-cli-workspace-replaced");
+    fs::remove_dir(&work).unwrap();
+    fs::rename(root.join("original-work"), &work).unwrap();
+    let ran = cli("run-film", true, true, ticket_pin);
+    assert!(ran.0, "{:?}", ran.1);
+    assert_eq!(ran.1["task_completed"], true);
+    assert_eq!(ran.1["capacity_released"], false);
+    assert_eq!(ran.1["selected"], false);
+    let resumed = cli("resume-film", true, true, ticket_pin);
+    assert!(resumed.0, "{:?}", resumed.1);
+    assert_eq!(resumed.1["task_completed"], true);
+    let reservation = ticket["reservation"].as_str().unwrap();
+    assert!(
+        profile
+            .scope
+            .coordination_root
+            .join("admissions")
+            .join(format!("{reservation}.json"))
+            .is_file()
+    );
+    let verified = cli("verify-film", true, false, ticket_pin);
+    assert!(verified.0, "{:?}", verified.1);
+    let preview = cli("preview-film-close", true, false, ticket_pin);
+    assert!(preview.0, "{:?}", preview.1);
+    let stage = cli("stage-film-close", true, true, ticket_pin);
+    assert!(stage.0, "{:?}", stage.1);
+    let closed = cli("recover-film-close", true, true, ticket_pin);
+    assert!(closed.0, "{:?}", closed.1);
+    assert_eq!(closed.1["slot_idle"], true);
+    assert!(
+        profile
+            .scope
+            .coordination_root
+            .join("admissions")
+            .join(format!("{reservation}.json"))
+            .is_file()
+    );
+    fs::write(evidence.join("complete.json"), serde_json::to_vec(&json!({"request_sha256":pin,"ticket_sha256":ticket_pin,"closed":closed.1,"capacity_preserved":true})).unwrap()).unwrap();
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[test]
+fn film_cli_refuses_unpinned_or_nonexplicit_actions_before_creating_outputs() {
+    let root = tempfile::tempdir().unwrap();
+    let request = root.path().join("request.json");
+    fs::write(&request, b"{}").unwrap();
+    let ticket = root.path().join("ticket.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+        .arg("prepare-film")
+        .arg(&request)
+        .arg("0".repeat(64))
+        .arg(&ticket)
+        .arg("--apply")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!ticket.exists());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["error"]["code"], "film-cli-request-pin");
+    let output = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+        .arg("prepare-film")
+        .arg(&request)
+        .arg(digest(b"{}"))
+        .arg(&ticket)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(!ticket.exists());
+}
+
 fn git_path() -> PathBuf {
     if let Some(path) = std::env::var_os("REEL_TEST_GIT") {
         return PathBuf::from(path);

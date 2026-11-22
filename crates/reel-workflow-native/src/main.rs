@@ -64,12 +64,70 @@ fn new_receipt(
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
         #[cfg(all(windows, feature = "film"))]
+        [command, request, pin, output, apply]
+            if command == "prepare-film" && apply == "--apply" =>
+        {
+            let (request, _request) =
+                reel_workflow_native::film_cli::read(Path::new(request), pin)?;
+            let mut file = new_receipt(Path::new(output), &request.source, &request.admission)?;
+            let ticket = reel_workflow_native::film_cli::prepare(&request, pin)?;
+            let raw = ticket.bytes()?;
+            use std::io::Write;
+            file.write_all(&raw)
+                .and_then(|_| file.sync_all())
+                .map_err(|_| reel_workflow::Error {
+                    kind: reel_workflow::ErrorKind::NeedsRecovery,
+                    code: "film-cli-ticket-write-preserve".into(),
+                })?;
+            Ok(
+                serde_json::json!({"ok":true,"ticket_sha256":reel_workflow::digest(&raw),"task_completed":false,"capacity_released":false}),
+            )
+        }
+        #[cfg(all(windows, feature = "film"))]
+        [command, request, pin, ticket, ticket_pin, apply]
+            if [
+                "run-film",
+                "resume-film",
+                "stage-film-close",
+                "close-film",
+                "recover-film-close",
+            ]
+            .contains(&command.as_str())
+                && apply == "--apply" =>
+        {
+            let (request, _request) =
+                reel_workflow_native::film_cli::read(Path::new(request), pin)?;
+            let (raw, _ticket) = reel_workflow_native::film_cli::read_ticket(Path::new(ticket))?;
+            let action = match command.as_str() {
+                "run-film" => reel_workflow_native::film_cli::Action::Run,
+                "resume-film" => reel_workflow_native::film_cli::Action::Resume,
+                "stage-film-close" => reel_workflow_native::film_cli::Action::StageClose,
+                "close-film" => reel_workflow_native::film_cli::Action::Close,
+                _ => reel_workflow_native::film_cli::Action::RecoverClose,
+            };
+            reel_workflow_native::film_cli::execute(&request, pin, &raw, ticket_pin, action)
+        }
+        #[cfg(all(windows, feature = "film"))]
+        [command, request, pin, ticket, ticket_pin]
+            if ["verify-film", "preview-film-close"].contains(&command.as_str()) =>
+        {
+            let (request, _request) =
+                reel_workflow_native::film_cli::read(Path::new(request), pin)?;
+            let (raw, _ticket) = reel_workflow_native::film_cli::read_ticket(Path::new(ticket))?;
+            let action = if command == "verify-film" {
+                reel_workflow_native::film_cli::Action::Verify
+            } else {
+                reel_workflow_native::film_cli::Action::PreviewClose
+            };
+            reel_workflow_native::film_cli::execute(&request, pin, &raw, ticket_pin, action)
+        }
+        #[cfg(all(windows, feature = "film"))]
         [command, path, pin, apply] if command == "film-process-child" && apply == "--apply" => {
             reel_workflow_native::film_process::child(Path::new(path), pin)?;
             Ok(serde_json::json!({"film_process_child_verified": true, "task_completed": false}))
         }
         [command] if command == "capabilities" => Ok(
-            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"producer_execution":false,"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
+            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
         ),
         [command, packet, source, request, output] if command == "inspect-film" => {
             let packet = read_control(Path::new(packet))?;
@@ -422,6 +480,15 @@ fn main() -> ExitCode {
     if matches!(args.as_slice(), [a] if a == "--help") {
         println!(concat!(
             "reel-workflow-native capabilities\n",
+            "Optional Windows film feature:\n",
+            "reel-workflow-native prepare-film REQUEST REQUEST_SHA NEW_TICKET --apply\n",
+            "reel-workflow-native run-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
+            "reel-workflow-native resume-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
+            "reel-workflow-native verify-film REQUEST REQUEST_SHA TICKET TICKET_SHA\n",
+            "reel-workflow-native preview-film-close REQUEST REQUEST_SHA TICKET TICKET_SHA\n",
+            "reel-workflow-native stage-film-close REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
+            "reel-workflow-native close-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
+            "reel-workflow-native recover-film-close REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
             "reel-workflow-native inspect-film PACKET NATIVE_PROFILE REQUEST NEW_SIDECAR\n",
             "reel-workflow-native preview-close CLOSE_REQUEST REQUEST_SHA256\n",
             "reel-workflow-native stage-close CLOSE_REQUEST REQUEST_SHA256 NEW_OUTCOME --apply\n",
@@ -446,7 +513,7 @@ fn main() -> ExitCode {
             "Response staging records work; registration admits output claims; ingestion publishes native bytes.\n",
             "Retain-response acknowledges retained ownership; verify-retained checks live retained protection and bytes.\n",
             "Native handoff completion requires original work, actual retained-owner proof and exact output bytes.\n",
-            "No provider execution, cleanup, actor close or selection."
+            "Film execution and retained actor close require explicit commands; no API provider execution, cleanup or selection."
         ));
         return ExitCode::SUCCESS;
     }

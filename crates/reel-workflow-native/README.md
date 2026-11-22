@@ -1,10 +1,11 @@
-# Protected native workflow handoffs (W3a.2)
+# Protected native workflow and bounded film dispatch
 
 This isolated adapter binds exact Git records to explicit annex leaves, admits
 positive input claims, stages owned manual work, registers unselected responses,
 reopens retained outputs and recovers the original operation. It also connects
 W2 film metadata inspection to those native bindings. It calls no model/provider,
-executes no film/comic producer, selects no asset and changes no active profile.
+and selects no asset or changes any active profile. The optional Windows film
+feature adds bounded owned production, retained candidates and explicit close.
 
 It builds on [SDK intake PR #389](https://github.com/giodl73-repo/REEL/pull/389).
 The separate workspace/lock preserves the existing producer SDK and root lock.
@@ -106,8 +107,7 @@ SDK's stricter 64 KiB metadata-node bound applying to persisted control nodes.
 
 Composite graph jobs, large native episode execution, direct API/proxy calls and
 new voice takes are not enabled. Optional film APIs provide bounded task-bound
-production and retained candidates; the CLI still has no owned film dispatch
-entry point. A caller must supply its own admitted workspace/capacity lifecycle.
+production and retained candidates through an owned CLI workspace/capacity lifecycle.
 Accepted existing film producers remain in use. Further W3a producer/scale work,
 W3b providers, W4 review/rebuild and W5 owned adoption/rollback remain required;
 this is not Season 5 adoption or full episode-scale qualification.
@@ -164,10 +164,10 @@ checks it without replacing outputs, binds the child result and preserves failed
 scratch. Neither fixture qualifies a multi-GiB master or real episode.
 
 The internal `film-process-child ... --apply` command is a trusted process port,
-not a workflow admission/completion command. The `capabilities` response keeps
-`producer_execution` and episode-scale qualification false for the generic CLI.
-The bounded Rust task API below adds those producer/retention steps; an owned
-dispatch entry point and project acceptance remain separate. No profile, asset selection or delivery is adopted.
+not a workflow admission/completion command. The `capabilities` response reports
+producer execution and owned dispatch only for the optional Windows film feature.
+Episode-scale qualification remains false. The task API and owned CLI below add
+bounded producer/retention steps. No profile, asset selection or delivery is adopted.
 
 ## Task-bound film production and retention (optional feature)
 
@@ -232,6 +232,51 @@ new `REEL_NATIVE_FILM_EVIDENCE` directory, preserves all job/source/scratch root
 and freezes its worker/media binaries. It initializes no native pool and uses
 no project assets. A failed qualification must continue those original handles,
 not start a new case and assume the first one had no effects.
+
+## Owned film CLI (optional Windows film feature)
+
+The CLI consumes a private `reel.workflow-film-cli.v1` request containing the
+exact packet, source/admission profiles, original accepted receipt, pinned
+producer/media tools, retained target, original close operation key and an owned
+workspace profile. Pin its raw SHA-256 externally. Profiles remain explicit
+machine bindings; copy and pin one for your lane rather than editing another.
+
+```text
+reel-workflow-native prepare-film REQUEST REQUEST_SHA NEW_TICKET --apply
+reel-workflow-native run-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply
+reel-workflow-native resume-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply
+reel-workflow-native verify-film REQUEST REQUEST_SHA TICKET TICKET_SHA
+reel-workflow-native preview-film-close REQUEST REQUEST_SHA TICKET TICKET_SHA
+reel-workflow-native stage-film-close REQUEST REQUEST_SHA TICKET TICKET_SHA --apply
+reel-workflow-native recover-film-close REQUEST REQUEST_SHA TICKET TICKET_SHA --apply
+```
+
+`prepare-film` requires already accepted native protection. It validates the film
+request and tool pins, reserves capacity using REEL's existing ledger, and creates
+a fresh owned root with intent, internal ticket and empty `work` directory. The
+ticket binds the request, admission identity, parent/root/work filesystem
+identities, reservation, volume and byte budget. Persist the returned ticket and
+its reported SHA before running. An internal ticket copy remains in the owned
+root if external receipt delivery is lost; preparation never adopts an existing
+directory or allocates a replacement on resume.
+
+The workspace budget must cover the declared process workspace plus 4 MiB of
+owner controls. Rendering borrows verified existing media through native paths;
+the CLI does not export another copy of F-first media. `run-film` publishes and
+retains the actual guarded candidate. `resume-film` uses original task/native
+work and never renders again. Verification and close use the same original
+ticket and close operation key; `close-film ... --apply` can also perform a full
+explicit close without the separate staging command.
+
+The exact capacity lease is held through each command and conservatively kept
+after it. Close releases only the native job slot into retained coverage. It
+does not release capacity, retire scratch, delete payloads or apply selection.
+Wrong pins, changed tickets, replaced directories and an unavailable original
+lease refuse. No command discovers or initializes a native pool.
+
+This is the bounded native film path, not full S5/episode-scale qualification,
+API/proxy generation, publication approval or owned project-profile adoption.
+The 1 GiB protection/128 MiB response limits above still apply.
 
 ## Validation
 
