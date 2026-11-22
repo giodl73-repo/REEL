@@ -108,3 +108,44 @@ This closes the declared-claim adapter component, not P4. Reusing the actual
 native pool roster, holding managed bytes through claim admission, materializing
 an owned workspace, binding a full task/attempt ticket, candidate ingestion and
 retained verify-before-completion are still required before activating a route.
+
+## Native input-to-claim bridge entry
+
+Input def1ca47f021b1471b0d9759666bbb96258cc7aa; same public SDK and P4
+WP-004/008/009/011/016, REQ-001/003/004/006/007/008/010, SPEC/IF/PKG controls
+from the declared-claim slice. Allowed: bind held managed input guards to an
+exact preview context and explicit complete flat claim, opening the namespace
+at the actual held pool's roster location. No caller-provided shadow namespace
+path, missing-input adoption, changed preview, automatic hydration or execution
+lease. Entry: held exact named inputs and finished metadata. Exit: native
+ordinary/bare synthetic pool bytes remain protected by durable current claims
+through release/reopen; wrong roster/policy/context/coverage refuse. L0 pin/
+fmt/diff, L1 negatives/locked tests/strict Clippy, L2 explicitly admitted native
+synthetic runtime only. Actual pool/metadata/byte identity and protection are
+component gates; whole REEL ticket/publication and official activation remain open.
+
+## Native bridge checkpoint
+
+Local locked all-target suite: 14 PASS (8 claims + 6 snapshot), with the child
+worker invoked by its parent and native cases excluded from the default profile.
+Explicit native run: 2 PASS, real 256 KiB input in ordinary and bare annex pools;
+the bare case also opens original metadata from a bare Git repository after a
+new commit selected absent bytes. The old input is read exactly; opening the new
+absent payload reports Missing without fallback. Both cases prove shared byte /
+full-roster guards coexist with durable admission, their release leaves current
+pool demand, and a copied namespace with the same identity cannot receive the
+bridge's writes. Wrong Job pool policy, omitted input, changed preview, unheld
+input, missing metadata, incomplete roster and tight budgets refuse admission.
+
+Verification: locked default tests + explicit native tests, strict Clippy, fmt
+and diff. Validation: native input-to-claim component only. Trace: same named P4
+controls and existing managed-read / mandatory-admission protocols. Producer
+review: identity requires preview-context and full input membership (implemented);
+concurrency/custody requires the held pool's actual roster location and current
+Job place (implemented and shadow/policy fixtures); adoption keeps task completion,
+returned candidates, original control retention and owner activation separate.
+No independent/human acceptance or full P4 closure is claimed.
+
+The input-only/claims predecessor def1ca47f021b1471b0d9759666bbb96258cc7aa passed
+full hosted Windows/Ubuntu checks (run44982537105). Current source needs its own
+hosted result; native runtime evidence is local opt-in, not hosted installation.

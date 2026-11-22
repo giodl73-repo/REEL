@@ -284,3 +284,19 @@ fn bounded_decode_is_not_a_custody_or_source_acknowledgement() {
         ErrorKind::Invalid
     );
 }
+
+#[test]
+fn encoded_preview_is_bounded_before_serializing_submitted_fields() {
+    let f = Fixture::new();
+    f.record(Some(b"old"));
+    let c = f.commit();
+    let s = f.capture(&c).unwrap();
+    let p = preview(&s, b"old");
+    assert_eq!(Preview::decode(&p.encode().unwrap()).unwrap(), p);
+    let mut oversized = p.clone();
+    oversized.inputs = vec![p.inputs[0].clone(); 129];
+    assert_eq!(oversized.encode().unwrap_err().kind, ErrorKind::Budget);
+    let mut oversized = p;
+    oversized.inputs[0].stream = Some("x".repeat(129));
+    assert_eq!(oversized.encode().unwrap_err().kind, ErrorKind::Budget);
+}

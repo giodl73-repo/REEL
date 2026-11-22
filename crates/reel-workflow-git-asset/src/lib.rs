@@ -73,6 +73,28 @@ pub struct Preview {
     pub logical_bytes: u64,
 }
 impl Preview {
+    /// Deterministic private control bytes; the hash binds the exact input view.
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        if self.inputs.is_empty() || self.inputs.len() > 128 {
+            return Err(error(ErrorKind::Budget, "public-git-asset-preview-count"));
+        }
+        if self.schema != "reel.workflow-public-git-asset-inputs.v1" {
+            return Err(error(ErrorKind::Invalid, "public-git-asset-preview-wire"));
+        }
+        GitId::parse(&self.commit).map_err(source_error)?;
+        for input in &self.inputs {
+            reel_publication::check_artifact(&input.artifact).map_err(Error::from)?;
+            if input.stream.as_ref().is_some_and(|s| s.len() > 128) {
+                return Err(error(ErrorKind::Budget, "public-git-asset-preview-stream"));
+            }
+        }
+        let bytes = serde_json::to_vec(self)
+            .map_err(|_| error(ErrorKind::Invalid, "public-git-asset-preview-wire"))?;
+        if bytes.len() > 128 * 1024 {
+            return Err(error(ErrorKind::Budget, "public-git-asset-preview-wire"));
+        }
+        Ok(bytes)
+    }
     /// Bounded decoding only; call Snapshot::verify_preview before trusting it.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > 128 * 1024 {
@@ -221,6 +243,8 @@ pub struct GuardedInputs {
     declared: BTreeMap<String, Input>,
     held: BTreeMap<String, annex::managed::Read>,
     remaining: u64,
+    admission: annex::managed::Profile,
+    preview: Object,
 }
 impl GuardedInputs {
     pub fn new(
@@ -235,12 +259,16 @@ impl GuardedInputs {
             .iter()
             .map(|input| (input.artifact.logical_id.clone(), input.clone()))
             .collect();
+        let admission = profile.clone();
+        let preview = Object::from_bytes(&preview.encode()?);
         let reader = annex::managed::Reader::new(profile).map_err(native_error)?;
         Ok(Self {
             reader,
             declared,
             held: BTreeMap::new(),
             remaining: read_budget,
+            admission,
+            preview,
         })
     }
 }
@@ -283,5 +311,101 @@ impl InputReader for GuardedInputs {
             return Err(error(ErrorKind::Integrity, "public-git-asset-content"));
         }
         Ok(bytes)
+    }
+}
+
+impl GuardedInputs {
+    /// Bridge all named, already verified live byte guards into the original
+    /// durable input claim. Opens only the namespace in the held pool's roster,
+    /// never a caller-supplied duplicate namespace path. No byte acquisition,
+    /// candidate publication, execution lease or task completion is performed.
+    pub fn admit_claim(
+        &mut self,
+        handle: &claims::Handle,
+        nodes: &mut git_asset_store::metadata::MetadataReader,
+        limits: &git_asset_store::protection::Limits,
+    ) -> Result<claims::Status> {
+        use git_asset_core::tree::{Tree, TreeError, TreeLimits};
+        use git_asset_store::source_claims::{Kind, admission::Namespace};
+        let start = std::time::Instant::now();
+        limits
+            .validate()
+            .map_err(|_| error(ErrorKind::Budget, "public-git-asset-claim-budget"))?;
+        if self.declared.keys().any(|id| !self.held.contains_key(id)) {
+            return Err(error(ErrorKind::Denied, "public-git-asset-inputs-not-held"));
+        }
+        if handle.request().selection.context != self.preview.sha256 {
+            return Err(error(ErrorKind::Conflict, "public-git-asset-claim-preview"));
+        }
+        let member = self
+            .admission
+            .binding
+            .members()
+            .iter()
+            .find(|m| &m.namespace == handle.minimum().identity())
+            .ok_or_else(|| error(ErrorKind::Denied, "public-git-asset-claim-roster"))?;
+        let location = self
+            .admission
+            .members
+            .iter()
+            .find(|m| m.minimum.identity() == &member.namespace)
+            .ok_or_else(|| error(ErrorKind::Denied, "public-git-asset-claim-roster"))?;
+        let mut namespace =
+            Namespace::open(&location.root, &location.minimum).map_err(claims::admission_error)?;
+        let places = namespace
+            .policy()
+            .classes
+            .get(&Kind::Job)
+            .ok_or_else(|| error(ErrorKind::Denied, "public-git-asset-claim-policy"))?;
+        if !places.current.iter().any(|p| member.places.contains(p)) {
+            return Err(error(
+                ErrorKind::Denied,
+                "public-git-asset-claim-pool-not-required",
+            ));
+        }
+        let (_, metrics) = Tree::from_root(handle.request().selection.root.clone())
+            .entries(
+                nodes,
+                TreeLimits {
+                    max_entries: limits.bindings.min(512),
+                    max_reads: limits.reads.min(4096),
+                    max_read_bytes: limits.read_bytes.min(4 * 1024 * 1024),
+                    ..TreeLimits::default()
+                },
+            )
+            .and_then(|(entries, metrics)| {
+                if self
+                    .declared
+                    .values()
+                    .any(|input| !entries.values().any(|o| o == &input.object))
+                {
+                    return Err(TreeError::PathConflict);
+                }
+                Ok((entries, metrics))
+            })
+            .map_err(|e| {
+                error(
+                    match e {
+                        TreeError::Budget => ErrorKind::Budget,
+                        TreeError::MissingNode(_) => ErrorKind::Missing,
+                        TreeError::Integrity | TreeError::InvalidNode => ErrorKind::Integrity,
+                        TreeError::PathConflict => ErrorKind::Conflict,
+                        TreeError::StaleRoot => ErrorKind::Stale,
+                        TreeError::Store(_) => ErrorKind::NeedsRecovery,
+                    },
+                    "public-git-asset-claim-closure",
+                )
+            })?;
+        // Coverage verification and namespace admission share one caller budget.
+        let mut remaining = limits.clone();
+        remaining.reads = remaining.reads.saturating_sub(metrics.reads);
+        remaining.read_bytes = remaining.read_bytes.saturating_sub(metrics.read_bytes);
+        remaining.millis = remaining
+            .millis
+            .saturating_sub(u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX));
+        if remaining.reads == 0 || remaining.read_bytes == 0 || remaining.millis == 0 {
+            return Err(error(ErrorKind::Budget, "public-git-asset-claim-budget"));
+        }
+        handle.admit(&mut namespace, nodes, &remaining)
     }
 }
