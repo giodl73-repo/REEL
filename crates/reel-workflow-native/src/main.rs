@@ -63,8 +63,13 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        #[cfg(all(windows, feature = "film"))]
+        [command, path, pin, apply] if command == "film-process-child" && apply == "--apply" => {
+            reel_workflow_native::film_process::child(Path::new(path), pin)?;
+            Ok(serde_json::json!({"film_process_child_verified": true, "task_completed": false}))
+        }
         [command] if command == "capabilities" => Ok(
-            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"producer_execution":false,"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
+            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"producer_execution":false,"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
         ),
         [command, packet, source, request, output] if command == "inspect-film" => {
             let packet = read_control(Path::new(packet))?;

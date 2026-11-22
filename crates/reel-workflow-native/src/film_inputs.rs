@@ -224,6 +224,45 @@ impl Inputs {
     pub fn objects(&self) -> usize {
         self.held.len()
     }
+    pub(crate) fn programs(&self) -> Programs {
+        self.programs.clone()
+    }
+    pub(crate) fn task_key(&self) -> &str {
+        &self._native.snapshot.packet.task_key
+    }
+    pub(crate) fn validate_runtime(&self, runtime: &Tool) -> Result<()> {
+        let pin = &self
+            ._native
+            .snapshot
+            .packet
+            .task
+            .tool
+            .as_ref()
+            .ok_or_else(|| error(ErrorKind::Missing, "film-input-tool-contract"))?
+            .executable;
+        if pin.sha256 != runtime.sha256 || pin.bytes != runtime.bytes {
+            return Err(error(ErrorKind::Conflict, "film-input-runtime-content"));
+        }
+        Ok(())
+    }
+    pub(crate) fn process_files(&self) -> Result<BTreeMap<String, FileRef>> {
+        self.files
+            .iter()
+            .map(|(name, (object, index))| {
+                let path = self.held[*index]
+                    .with_path(Path::to_path_buf)
+                    .map_err(path_error)?;
+                Ok((
+                    name.clone(),
+                    FileRef {
+                        path,
+                        sha256: object.sha256.as_str().into(),
+                        bytes: object.bytes,
+                    },
+                ))
+            })
+            .collect()
+    }
     fn binding(&self, item: &FileRef) -> anyhow::Result<&VerifiedRead> {
         let name = item
             .path
