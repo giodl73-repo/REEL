@@ -689,6 +689,11 @@ and 226.8 ms respectively, measured from before sending the input. These
 upper bounds include input delivery and process observation. They do not
 measure how long source audio remained at the physical output.
 
+The live Quit acknowledgement test remains open. Two Dell runs exited
+cleanly after Quit, but the terminal stream did not expose the numbered
+reply. A diagnostic run showed the final Stopped row. This verifies visible
+closure and process exit, while the numbered reply timing still needs proof.
+
 The opt-in `actual_station_refuses_changed_endpoint_configuration` test
 changes only the configuration fingerprint in a temporary request. On the
 same Dell output whose valid request completed playback, the changed request

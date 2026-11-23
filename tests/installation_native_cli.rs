@@ -218,6 +218,28 @@ fn actual_station_restart_acknowledges_and_returns_to_pass_one() {
 }
 
 #[cfg(windows)]
+#[test]
+#[ignore = "explicit native quit timing; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_quit_acknowledges_and_closes_playback() {
+    let elapsed = run_station(
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b"quit\r"),
+            (b"Command 2: Stopped", b""),
+        ],
+        45,
+    );
+    assert_acknowledgement_time("Quit", elapsed[2]);
+    let exit = elapsed
+        .last()
+        .copied()
+        .flatten()
+        .expect("exit timing missing");
+    println!("Quit sent to confirmed process exit: {exit:?}");
+    assert!(exit <= std::time::Duration::from_secs(2));
+}
+
+#[cfg(windows)]
 fn assert_playing_time(command: &str, duration: Option<std::time::Duration>, limit_seconds: u64) {
     let duration = duration.expect("playback observation missing");
     println!("{command} sent to visible Playing: {duration:?}");
