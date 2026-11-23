@@ -658,6 +658,17 @@ The test did not capture the output, establish physical onset or quiescence,
 or exercise device disconnect. The total test duration is not a measurement
 of any individual control deadline.
 
+For a continuous 48 kHz stereo digital capture of the uninterrupted two-pass
+fixture, retain the original recording and its clock/configuration evidence.
+Set `REEL_INSTALLATION_CAPTURE_F32LE` to the exact interleaved float32 PCM
+analysis input and run the CLI test `capture::measure_retained_station_capture`
+with `--ignored --exact --nocapture`. Retain any conversion command and its
+tool identity. Keep channel order and sample rate unchanged and preserve
+leading silence and packet gaps. The analyzer prints the input hash, the
+inferred loop gap and both marker spans. It checks the 250 ±50 ms loop gap
+and ≤20 ms source-span error. Use a separate uninterrupted run because
+the operator smoke test deliberately pauses and restarts playback.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 

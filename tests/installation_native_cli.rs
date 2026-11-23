@@ -1,5 +1,8 @@
 //! Windows CLI coverage. Hardware playback requires an explicit station request.
 #![cfg(feature = "installation-native")]
+#[path = "support/installation_capture.rs"]
+mod capture;
+
 use serde_json::json;
 use std::{fs, process::Command};
 fn tool() -> Command {
