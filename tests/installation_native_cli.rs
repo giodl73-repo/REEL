@@ -186,6 +186,35 @@ fn actual_station_refuses_changed_endpoint_configuration() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "requires a physically absent enrolled endpoint in REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_reports_missing_endpoint_before_start() {
+    let (path, request) = station_request();
+    let (result, steps, elapsed) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[(b"Fault", b"quit\r")],
+        10,
+        None,
+        &[],
+        false,
+    );
+    assert_eq!(
+        steps, 1,
+        "missing endpoint fault was not visible: {result:?}"
+    );
+    let error = result.expect_err("a missing endpoint must remain visible in the exit status");
+    assert!(error.starts_with("Job step exited 2;"), "{error}");
+    let exit = elapsed
+        .last()
+        .copied()
+        .flatten()
+        .expect("missing exit time");
+    println!("Quit to confirmed fault exit: {exit:?}");
+    assert!(exit <= std::time::Duration::from_secs(2));
+}
+
+#[cfg(windows)]
+#[test]
 #[ignore = "explicit station console timing; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_status_acknowledgement_meets_outer_deadline() {
     let elapsed = run_station(

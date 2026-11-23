@@ -724,7 +724,10 @@ The pinned source independently passed `check-session`. Windows enumerated
 the Dell endpoint only as a non-present device. The same silent fixture on the
 enrolled CA-2890 opened successfully and reported a 480-frame period, five
 callbacks, a largest observed callback of 1,056 frames and zero submitted
-source frames. The Dell attempts establish absence before playback.
+source frames. A dedicated check with the unchanged Dell request observed
+Fault before Start, then confirmed exit status 2 within 175.73 ms of Quit.
+The earlier playback harness waited for Ready and therefore missed that
+startup outcome. These checks establish absence before playback.
 
 A new private session retained the exact `f42b864` runtime and checked source
 and selected the previously enrolled CA-2890 endpoint. After `check-session`
