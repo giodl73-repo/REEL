@@ -53,3 +53,13 @@ the opening. `close` or end of input discards the session.
 The demo delivers stereo PCM to an explicitly selected output and confirms
 submission through its audio callback. This is a local delivery test surface.
 Acoustic playback and station qualification require their own evidence.
+
+## Acceptance evidence
+
+| Review lens | Engineering evidence |
+| --- | --- |
+| Story and Editor | The bilingual fixture checks the authored example and summary routes, visits, ending and explicit restart. |
+| Platform and Audience | Text IDs and terminal focus commands exercise the same route. The verified transcript supplies text for each playing span. |
+| Sound and Vocal Adaptation | Replay compares delivered PCM against the independently checked EN/ES WAVE spans. Seek and stale completion tests use the selected edition's clock. |
+| Animation | Companion placement resolves checked anchors against the exact selected edition and span. The terminal demo exposes audio and text, while the existing browser renderer remains the visual presentation surface. |
+| Rights and Provenance | The CLI checks the original producer identity, audio and transcript. The fixture uses synthetic signals. Human listening, project authority and publication remain separate. |
