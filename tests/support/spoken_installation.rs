@@ -149,8 +149,7 @@ fn selection() -> api::Selection {
     }
 }
 
-#[test]
-fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
+fn shared_quiet_programme() -> InstallationFixture {
     let mut f = Fixture::new();
     for (language, index) in [("en", 0), ("es", 3)] {
         f.signals[index][..4800 * 2].fill(0);
@@ -171,7 +170,12 @@ fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
             .push(edition.id.clone());
         f.document.editions.push(edition);
     }
-    let shared = InstallationFixture::from_programme(f);
+    InstallationFixture::from_programme(f)
+}
+
+#[test]
+fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
+    let shared = shared_quiet_programme();
     assert_eq!(shared.f.document.editions.len(), 6);
     let receipt: producer::ProductionReceipt = serde_json::from_slice(&shared.receipt).unwrap();
     for (language, expected_frames) in [("en", 144_000), ("es", 168_000)] {
@@ -224,6 +228,46 @@ fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
         refused.to_string(),
         "installation transcript terminal line profile"
     );
+}
+
+#[cfg(feature = "print")]
+#[test]
+#[ignore = "explicit shared-source reading and installation fixture using a local test font"]
+fn reading_and_installation_use_the_same_checked_programme() {
+    let shared = shared_quiet_programme();
+    let mut opening_frames = Vec::new();
+    for language in ["en", "es"] {
+        let prepared = api::prepare(
+            &api::Selection {
+                edition_id: format!("{language}-installation"),
+                passes: 1,
+            },
+            shared.inputs(),
+            control(),
+        )
+        .unwrap();
+        opening_frames.push(prepared.summary().source_frames);
+    }
+    let receipt = hash(&shared.receipt);
+    let access = hash(&shared.access_manifest);
+    let reading = super::reading::ReadingFixture::from_fixture(shared.f);
+    let prepared = reading.prepare().unwrap();
+    let output = reading.f.temp.path().join("shared-reading");
+    super::reading::publish(&prepared, &output).unwrap();
+    reel::spoken_programme::reading::check(&prepared, &output, Duration::from_secs(30)).unwrap();
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("reading.json")).unwrap()).unwrap();
+    assert_eq!(index["request"]["dialogue_receipt"]["sha256"], receipt);
+    assert_eq!(index["request"]["access"]["sha256"], access);
+    for (edition, frames) in index["editions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(opening_frames)
+    {
+        assert_eq!(edition["chapters"][0]["start_sample"], 0);
+        assert_eq!(edition["chapters"][0]["end_sample"], frames);
+    }
 }
 
 #[cfg(all(windows, feature = "installation-native"))]
