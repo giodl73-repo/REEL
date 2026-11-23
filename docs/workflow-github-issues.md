@@ -32,6 +32,8 @@ Those placeholders are not runnable values. `KEY-github.json` from
 semantic subject/version before composing the request. The adapter does not
 re-read the movie or authenticate the reported observation. The pinned request
 and explicit `--apply` authorize sending this exact text to that repository.
+Findings drafted from a copied board reference use the same issue identity and
+version key as findings for the equivalent explicit attachment and frame.
 No media, file bindings or evidence payloads are attached. Issue text contains
 project identities and hashes; keep it in an authorized destination.
 
