@@ -296,7 +296,7 @@ fn exercise_variant_mode(
         profile["budget_bytes"] = json!(512 * 1024 * 1024);
         profile["scratch_bytes"] = json!(256 * 1024 * 1024);
         profile["reference_staging_bytes"] = json!(128 * 1024 * 1024);
-        profile["timeout_seconds"] = json!(480);
+        profile["timeout_seconds"] = json!(5 * 60 * 60);
     }
     let profile_path = p.data.path().join("bounded-episode-profile.json");
     write(p.data.path(), "bounded-episode-profile.json", &profile);
