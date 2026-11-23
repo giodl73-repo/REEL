@@ -183,10 +183,11 @@ fn measure_capture_clock(
     Ok((gap, spans, head_a))
 }
 
-fn stop_to_quiet_bound(
+fn command_to_quiet_bound(
     trace: &ConsoleTrace,
     clock: &CaptureClock,
     frames: &[[f32; 2]],
+    command: &str,
 ) -> Result<u64> {
     ensure!(
         trace.schema == "reel.installation-station-console-trace.v1"
@@ -195,14 +196,14 @@ fn stop_to_quiet_bound(
             && clock.request_sha256.as_deref() == Some(trace.request_sha256.as_str()),
         "console trace and capture session differ"
     );
-    let mut stops = trace.steps.iter().filter(|step| step.command == "stop\r");
-    let sent = stops
+    let mut commands = trace.steps.iter().filter(|step| step.command == command);
+    let sent = commands
         .next()
         .and_then(|step| step.sent_qpc_ns)
-        .ok_or_else(|| anyhow::anyhow!("console trace lacks Stop time"))?;
+        .ok_or_else(|| anyhow::anyhow!("console trace lacks quiescence command time"))?;
     ensure!(
-        sent > 0 && stops.next().is_none(),
-        "ambiguous Stop observation"
+        sent > 0 && commands.next().is_none(),
+        "ambiguous quiescence command observation"
     );
     const LIMIT_NS: u64 = 250_000_000;
     let end = frame_qpc(clock, frames.len().saturating_sub(1))?;
@@ -213,10 +214,10 @@ fn stop_to_quiet_bound(
     let marker = frames
         .windows(MARKER_FRAMES)
         .position(|window| marker_at(window) == Some(Marker::First))
-        .ok_or_else(|| anyhow::anyhow!("capture lacks the source marker before Stop"))?;
+        .ok_or_else(|| anyhow::anyhow!("capture lacks the source marker"))?;
     ensure!(
         frame_qpc(clock, marker)? < sent,
-        "source marker did not precede Stop"
+        "source marker did not precede quiescence command"
     );
     ensure!(
         frames.iter().flatten().all(|sample| sample.is_finite()),
@@ -342,7 +343,13 @@ fn station_capture_measurement_detects_markers_and_applies_both_limits() {
     frames[11_039] = [0.001, -0.001];
     frames[11_040..].fill([0.0; 2]);
     assert_eq!(
-        stop_to_quiet_bound(&trace, &clock, &frames).unwrap(),
+        command_to_quiet_bound(&trace, &clock, &frames, "stop\r").unwrap(),
+        30_000_000
+    );
+    assert!(command_to_quiet_bound(&trace, &clock, &frames, "pause\r").is_err());
+    trace.steps.last_mut().unwrap().command = "pause\r".into();
+    assert_eq!(
+        command_to_quiet_bound(&trace, &clock, &frames, "pause\r").unwrap(),
         30_000_000
     );
     clock.packets[10].capture_qpc_ns += 3_000_000;
@@ -393,14 +400,26 @@ fn measure_retained_station_capture() {
         trace.is_none() || clock.is_some(),
         "console alignment requires a capture clock sidecar"
     );
-    if let (Some(clock), Some(trace)) = (&clock, &trace)
-        && trace.steps.iter().any(|step| step.command == "stop\r")
-    {
-        validate_capture_clock(clock, &bytes).unwrap();
-        let quiet = stop_to_quiet_bound(trace, clock, &frames).unwrap();
-        println!("Stop sent to captured digital silence: {quiet} ns");
-        assert!(quiet <= 250_000_000);
-        return;
+    if let (Some(clock), Some(trace)) = (&clock, &trace) {
+        let mut commands = trace
+            .steps
+            .iter()
+            .filter_map(|step| match step.command.as_str() {
+                "stop\r" => Some(("stop\r", "Stop")),
+                "pause\r" => Some(("pause\r", "Pause")),
+                _ => None,
+            });
+        if let Some((command, label)) = commands.next() {
+            assert!(
+                commands.next().is_none(),
+                "capture requires one quiescence command"
+            );
+            validate_capture_clock(clock, &bytes).unwrap();
+            let quiet = command_to_quiet_bound(trace, clock, &frames, command).unwrap();
+            println!("{label} sent to captured digital silence: {quiet} ns");
+            assert!(quiet <= 250_000_000);
+            return;
+        }
     }
     let markers = marker_offsets(&frames).unwrap();
     let (gap, spans) = measure(markers).unwrap();

@@ -234,12 +234,24 @@ fn actual_station_start_and_stop_acknowledgements_meet_outer_deadline() {
 #[test]
 #[ignore = "dedicated Stop capture stimulus; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_stop_leaves_a_quiescence_observation_window() {
+    station_quiescence_window(b"stop\r", b"Command 2: Stopped", "Stop");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "dedicated Pause capture stimulus; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_pause_leaves_a_quiescence_observation_window() {
+    station_quiescence_window(b"pause\r", b"Command 2: Paused", "Pause");
+}
+
+#[cfg(windows)]
+fn station_quiescence_window(command: &[u8], acknowledgement: &[u8], label: &str) {
     use std::time::Duration;
     let elapsed = run_station_with_delays(
         &[
             (b"Ready p", b"start\r"),
-            (b"Playing p1", b"stop\r"),
-            (b"Command 2: Stopped", b"quit\r"),
+            (b"Playing p1", command),
+            (acknowledgement, b"quit\r"),
         ],
         45,
         &[
@@ -248,7 +260,7 @@ fn actual_station_stop_leaves_a_quiescence_observation_window() {
             Duration::from_millis(350),
         ],
     );
-    assert_acknowledgement_time("Stop", elapsed[2]);
+    assert_acknowledgement_time(label, elapsed[2]);
 }
 
 #[cfg(windows)]

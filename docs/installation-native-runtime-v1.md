@@ -782,16 +782,20 @@ variable. It verifies that the trace and recording came from the same
 session request. The Start-to-first-marker check gives a conservative
 onset bound at the render mix because the marker follows the source's
 initial silence. It allows up to two seconds and needs both clock files.
-For a dedicated Stop capture, the same analyzer requires the first source
-marker before Stop and packet coverage through the next 250 ms. It measures
-from before sending Stop to the first frame of sustained digital silence.
+For a dedicated Pause or Stop capture, the same analyzer requires the first
+source marker before the command and packet coverage through the next 250 ms.
+It measures from before sending the command to the first frame of sustained
+digital silence.
 Missing packets or a recording that ends before that window cannot establish
 quiescence. This is a render-mix measurement.
-For this run, use `actual_station_stop_leaves_a_quiescence_observation_window`
-with the recorder and console trace enabled. The test waits 300 ms after
-visible Playing before sending Stop, and another 350 ms after the numbered
-Stop reply before sending Quit. The Dell playback-only test verified both
-delays in the trace. A capture still has to prove packet coverage.
+Use `actual_station_pause_leaves_a_quiescence_observation_window` and
+`actual_station_stop_leaves_a_quiescence_observation_window` in separate runs
+with the recorder and console trace enabled. Each waits 300 ms after visible
+Playing before sending its command, and another 350 ms after the numbered
+reply before sending Quit. The Dell playback-only Stop test verified both
+delays in the trace. A CA-2890 playback-only Pause run measured 302.01 ms
+before Pause, 24.68 ms to the visible acknowledgement and 351.46 ms from the
+reply to Quit. A capture still has to prove packet coverage.
 
 `actual_station_status_acknowledgement_meets_outer_deadline` times from
 before typing Status into the pseudoconsole to the reader observing its
