@@ -3,6 +3,29 @@ use super::*;
 
 mod completion;
 
+const CHECKPOINT_LIMIT: u64 = 4 * 1024 * 1024;
+
+fn bounded_bytes(path: &Path) -> Result<Vec<u8>> {
+    let file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.take(CHECKPOINT_LIMIT + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > CHECKPOINT_LIMIT {
+        bail!("episode checkpoint exceeds its bound");
+    }
+    Ok(bytes)
+}
+
+fn publish_normalization_progress(work: &Path, bytes: &[u8]) -> Result<()> {
+    if bytes.len() as u64 > CHECKPOINT_LIMIT {
+        bail!("episode checkpoint exceeds its bound");
+    }
+    let mut staged = tempfile::NamedTempFile::new_in(work)?;
+    staged.write_all(bytes)?;
+    staged.as_file().sync_all()?;
+    staged.persist(work.join("normalization-progress.json"))?;
+    Ok(())
+}
+
 pub(super) fn verify_preparation(prepared: &Path, assets: &Path) -> Result<()> {
     completion::verify_preparation(prepared, assets)
 }
@@ -115,10 +138,7 @@ pub(super) fn save_normalization(
         presentation_cache_misses: state.presentation_cache_misses,
         full_episode_verified: false,
     };
-    let pending = work.join("normalization-progress.pending.json");
-    fs::write(&pending, serde_json::to_vec_pretty(&progress)?)?;
-    fs::rename(pending, work.join("normalization-progress.json"))?;
-    Ok(())
+    publish_normalization_progress(work, &serde_json::to_vec_pretty(&progress)?)
 }
 
 pub(super) fn load_normalization(prepared: &Path, assets: &Path) -> Result<NormalizationState> {
@@ -129,11 +149,8 @@ pub(super) fn load_normalization(prepared: &Path, assets: &Path) -> Result<Norma
             "normalization progress requires its incomplete preparation inside the same workspace"
         );
     }
-    let file = prepared.join("normalization-progress.json");
-    if fs::metadata(&file)?.len() > 4 * 1024 * 1024 {
-        bail!("normalization progress exceeds its bound");
-    }
-    let progress: NormalizationProgress = serde_json::from_slice(&fs::read(file)?)?;
+    let bytes = bounded_bytes(&prepared.join("normalization-progress.json"))?;
+    let progress: NormalizationProgress = serde_json::from_slice(&bytes)?;
     if progress.schema != "reel.episode-normalization-progress.v1"
         || progress.full_episode_verified
         || progress.validator_sha256 != file_sha(&std::env::current_exe()?)?
@@ -406,11 +423,7 @@ fn finish_mode(
             "normalization consumption requires a preparation directly inside its closed workspace"
         );
     }
-    let file = prepared.join("prepared.json");
-    if fs::metadata(&file)?.len() > 4 * 1024 * 1024 {
-        bail!("episode preparation record is too large");
-    }
-    let bytes = fs::read(&file)?;
+    let bytes = bounded_bytes(&prepared.join("prepared.json"))?;
     let checkpoint: Prepared = serde_json::from_slice(&bytes)?;
     if checkpoint.schema != "reel.episode-conform-preparation.v1"
         || checkpoint.full_episode_verified
@@ -557,4 +570,25 @@ fn finish_mode(
     fs::rename(stage.path(), output)
         .with_context(|| format!("publishing completed preparation {}", output.display()))?;
     Ok(receipt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalization_progress_replacement_preserves_previous_checkpoint_on_refusal() {
+        let workspace = tempfile::tempdir().unwrap();
+        let path = workspace.path().join("normalization-progress.json");
+        publish_normalization_progress(workspace.path(), b"first").unwrap();
+        let at_limit = vec![b' '; CHECKPOINT_LIMIT as usize];
+        publish_normalization_progress(workspace.path(), &at_limit).unwrap();
+        assert_eq!(bounded_bytes(&path).unwrap(), at_limit);
+
+        let oversized = vec![b' '; CHECKPOINT_LIMIT as usize + 1];
+        assert!(publish_normalization_progress(workspace.path(), &oversized).is_err());
+        assert_eq!(bounded_bytes(&path).unwrap(), at_limit);
+        fs::write(&path, oversized).unwrap();
+        assert!(bounded_bytes(&path).is_err());
+    }
 }
