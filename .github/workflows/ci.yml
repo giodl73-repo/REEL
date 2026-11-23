@@ -144,6 +144,8 @@ jobs:
         run: |
           cargo clippy -p reel-publication -p reel-workflow --all-targets --locked -- -D warnings
           cargo test -p reel-publication -p reel-workflow --all-targets --locked
+          cargo clippy -p reel-publication --features comic --all-targets --locked -- -D warnings
+          cargo test -p reel-publication --features comic --all-targets --locked
       - name: Check isolated workflow SDK intake
         if: matrix.lane == 'core' && matrix.shard == 0
         env:

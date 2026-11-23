@@ -1,10 +1,30 @@
-//! Named artifact contracts. No renderer, storage publication or approval.
+//! Publication assembly contracts, not storage publication, creative approval,
+//! press certification or remote delivery. Renderers remain separate adapters.
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeMap, fmt};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
+#[cfg(feature = "comic")]
+pub mod comic;
+#[cfg(feature = "comic")]
+pub mod comic_issue;
+pub mod comic_issue_source;
+pub mod comic_source;
+pub mod composition;
 pub mod film_review;
+#[cfg(feature = "comic")]
+pub mod layered;
+pub mod layered_source;
+#[cfg(feature = "comic")]
+pub mod packet;
+#[cfg(feature = "comic")]
+pub mod reading;
+
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_OUTPUTS: usize = 256;
+const MAX_EDITIONS: usize = 32;
+const MAX_PAGES: usize = 512;
+const MAX_PAGE_ITEMS: usize = 256;
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -139,6 +159,121 @@ pub fn check_outputs(contracts: &OutputContracts, artifacts: &ArtifactSet) -> Re
         }
         if value.bytes > contract.max_bytes {
             return fail(ErrorKind::Budget, "output-bytes");
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Publication {
+    pub schema: String,
+    pub id: String,
+    pub editions: Vec<Edition>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Edition {
+    pub id: String,
+    pub language: String,
+    pub content: Content,
+    pub outputs: OutputContracts,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(tag = "format", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum Content {
+    /// Existing REEL production/composition source owns all audiovisual timing.
+    Film { composition: Artifact },
+    /// Page source adapters own geometry, lettering, layer closure and rendering.
+    Comic {
+        reading_direction: ReadingDirection,
+        pages: Vec<ComicPage>,
+    },
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReadingDirection {
+    LeftToRight,
+    RightToLeft,
+}
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum PageKind {
+    Story,
+    Cover,
+    Matter,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ComicPage {
+    pub id: String,
+    pub kind: PageKind,
+    pub source: Artifact,
+    /// Ordered stable IDs, never an automatically selected grid or panel count.
+    pub panel_order: Vec<String>,
+    /// Reading order of stable utterance IDs; empty is valid for a silent page.
+    pub utterance_order: Vec<String>,
+    /// When present, exactly two adjacent pages must name the same spread.
+    pub spread_id: Option<String>,
+}
+fn unique_ids(ids: &[String]) -> bool {
+    ids.len() <= MAX_PAGE_ITEMS
+        && ids.iter().all(|id| valid_id(id))
+        && ids.iter().collect::<BTreeSet<_>>().len() == ids.len()
+}
+pub fn check_publication(publication: &Publication) -> Result<()> {
+    let bytes = serde_json::to_vec(publication).map_err(|_| Error {
+        kind: ErrorKind::Invalid,
+        code: "publication-encoding",
+    })?;
+    if bytes.len() > MAX_CONTROL_BYTES {
+        return fail(ErrorKind::Budget, "publication-bytes");
+    }
+    if publication.schema != PUBLICATION_SCHEMA
+        || !valid_id(&publication.id)
+        || publication.editions.is_empty()
+        || publication.editions.len() > MAX_EDITIONS
+    {
+        return fail(ErrorKind::Invalid, "publication-contract");
+    }
+    let mut editions = BTreeSet::new();
+    for edition in &publication.editions {
+        if !valid_id(&edition.id) || !valid_id(&edition.language) || !editions.insert(&edition.id) {
+            return fail(ErrorKind::Invalid, "edition-identity");
+        }
+        check_contracts(&edition.outputs)?;
+        match &edition.content {
+            Content::Film { composition } => check_artifact(composition)?,
+            Content::Comic { pages, .. } => {
+                if pages.is_empty() || pages.len() > MAX_PAGES {
+                    return fail(ErrorKind::Budget, "page-count");
+                }
+                let mut names = BTreeSet::new();
+                let mut spreads: BTreeMap<&str, Vec<usize>> = BTreeMap::new();
+                for (index, page) in pages.iter().enumerate() {
+                    if !valid_id(&page.id)
+                        || !names.insert(&page.id)
+                        || !unique_ids(&page.panel_order)
+                        || !unique_ids(&page.utterance_order)
+                        || (page.kind == PageKind::Story && page.panel_order.is_empty())
+                    {
+                        return fail(ErrorKind::Invalid, "page-identity-order");
+                    }
+                    check_artifact(&page.source)?;
+                    if let Some(spread) = &page.spread_id {
+                        if !valid_id(spread) {
+                            return fail(ErrorKind::Invalid, "spread-identity");
+                        }
+                        spreads.entry(spread).or_default().push(index);
+                    }
+                }
+                if spreads
+                    .values()
+                    .any(|indices| indices.len() != 2 || indices[1] != indices[0] + 1)
+                {
+                    return fail(ErrorKind::Invalid, "spread-page-pair");
+                }
+            }
         }
     }
     Ok(())

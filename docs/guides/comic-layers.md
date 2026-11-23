@@ -2,9 +2,7 @@
 
 [All illustrated guides](../README.md#illustrated-guides) · [Development status](../development-status.md)
 
-Comic publication/production adapters are in the separate active workflow lane.
-This walkthrough explains their source model; it does not declare those adapters
-merged or qualify a complete project's issue-production lifecycle on main.
+The optional comic publication CLI composes private review candidates from selected issue sources. It preserves the exact selected inputs and the editable layers.
 
 An issue orders pages. Each page declares panel geometry, reading order, art
 layers and lettering. Artwork and text remain independent inputs to the reading
@@ -12,7 +10,7 @@ edition, allowing clean art and translated reading editions to coexist.
 
 ```mermaid
 flowchart TD
-    accTitle: Editable comic layers in active workflow development
+    accTitle: Editable comic layers
     accDescr: An issue orders pages with panel geometry. Background, character, prop and effect layers compose clean art. Independent lettering combines with that art into a reading page or issue PDF.
     issue["Issue: ordered pages"] --> page["Page: panels + reading order"]
     page --> background["Background layer"]
@@ -46,15 +44,7 @@ recovery should also support a fresh lettering edit and recomposition.
 
 ## Where the work lives
 
-In the active `feat/workflow-handoff` lane, `docs/publication.md` documents the
-publication model and bounded comic producer. `docs/workflow-orchestration.md`
-and `docs/workflow-completion.md` track task/handoff and native qualification.
-These are lane-local references until their owner publishes them.
-
-Main already supplies the [native print collection](../native-print-collections.md)
-route for explicitly supplied text, score SVG and retained PDF pages. That route
-can package declared inputs but does not infer panel geometry or reconstruct
-editable layers from a flattened page.
+Use the [comic publication CLI](../../crates/reel-publication/README.md) to prepare a selected BBJ book and assemble its private HTML reader. The same CLI checks portable issue plans, assembles reading editions from parts, and restores pinned editable sources. Keep approval, native custody and private delivery in their existing project workflow.
 
 Continue with [assets and revisions](assets-and-revisions.md) for retaining
 source relationships, or [editions and delivery](editions-and-delivery.md) for
