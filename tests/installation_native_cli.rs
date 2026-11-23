@@ -141,28 +141,18 @@ fn actual_station_refuses_changed_endpoint_configuration() {
 #[test]
 #[ignore = "explicit station console timing; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_status_acknowledgement_meets_outer_deadline() {
-    let (path, request) = station_request();
-    let (result, steps, elapsed) = run_console(
-        &request.playback.runtime.path,
-        &path,
+    let elapsed = run_station(
         &[(b"Ready p", b"status\r"), (b"Command 1: Ready", b"quit\r")],
         45,
     );
-    assert_eq!(steps, 2, "{result:?}");
-    result.unwrap();
-    let status = elapsed[1].expect("Status timing missing");
-    println!("Status sent to console acknowledgement: {status:?}");
-    assert!(status <= std::time::Duration::from_millis(100));
+    assert_acknowledgement_time("Status", elapsed[1]);
 }
 
 #[cfg(windows)]
 #[test]
 #[ignore = "explicit live command timing; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_pause_and_resume_acknowledgements_meet_outer_deadline() {
-    let (path, request) = station_request();
-    let (result, steps, elapsed) = run_console(
-        &request.playback.runtime.path,
-        &path,
+    let elapsed = run_station(
         &[
             (b"Ready p", b"start\r"),
             (b"Playing p1", b"pause\r"),
@@ -171,13 +161,32 @@ fn actual_station_pause_and_resume_acknowledgements_meet_outer_deadline() {
         ],
         45,
     );
-    assert_eq!(steps, 4, "{result:?}");
-    result.unwrap();
-    for (command, duration) in [("Pause", elapsed[2]), ("Resume", elapsed[3])] {
-        let duration = duration.expect("command timing missing");
-        println!("{command} sent to console acknowledgement: {duration:?}");
-        assert!(duration <= std::time::Duration::from_millis(100));
-    }
+    assert_acknowledgement_time("Pause", elapsed[2]);
+    assert_acknowledgement_time("Resume", elapsed[3]);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "explicit live command timing; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_start_and_stop_acknowledgements_meet_outer_deadline() {
+    let elapsed = run_station(
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Command 1: Starting", b""),
+            (b"Playing p1", b"stop\r"),
+            (b"Command 2: Stopped", b"quit\r"),
+        ],
+        45,
+    );
+    assert_acknowledgement_time("Start", elapsed[1]);
+    assert_acknowledgement_time("Stop", elapsed[3]);
+}
+
+#[cfg(windows)]
+fn assert_acknowledgement_time(command: &str, duration: Option<std::time::Duration>) {
+    let duration = duration.expect("command timing missing");
+    println!("{command} sent to console acknowledgement: {duration:?}");
+    assert!(duration <= std::time::Duration::from_millis(100));
 }
 
 #[cfg(windows)]
@@ -200,9 +209,12 @@ fn station_request() -> (
 }
 
 #[cfg(windows)]
-fn run_station(sequence: &[(&[u8], &[u8])], command_budget_seconds: u64) {
+fn run_station(
+    sequence: &[(&[u8], &[u8])],
+    command_budget_seconds: u64,
+) -> Vec<Option<std::time::Duration>> {
     let (path, request) = station_request();
-    let (result, steps, _) = run_console(
+    let (result, steps, elapsed) = run_console(
         &request.playback.runtime.path,
         &path,
         sequence,
@@ -214,6 +226,7 @@ fn run_station(sequence: &[(&[u8], &[u8])], command_budget_seconds: u64) {
         "station run stopped before the full control sequence: {result:?}"
     );
     result.unwrap();
+    elapsed
 }
 
 #[cfg(windows)]

@@ -733,6 +733,12 @@ one exited before the numbered Pause reply and two timed out waiting for Ready.
 The successful timings establish individual observations while station
 repeatability remains open.
 
+`actual_station_start_and_stop_acknowledgements_meet_outer_deadline`
+measured 20.3 ms for the numbered Start reply and 34.9 ms for the numbered
+Stop reply on the pinned Dell session. Start's numbered reply records
+Starting. Stop's reply records Stopped. Physical onset and quiescence still
+require independently synchronized capture.
+
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
 The controller still tracks every callback cursor, but publishes cursor-only
