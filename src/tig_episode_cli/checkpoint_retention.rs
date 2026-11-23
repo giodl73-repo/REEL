@@ -41,13 +41,15 @@ pub(super) fn retain(profile: &Path, inspection: &Path) -> Result<Value> {
     let marker = reviewed["marker"]["utf8"]
         .as_str()
         .context("missing checkpoint marker bytes")?;
-    let bytes = files
-        .values()
-        .try_fold(descriptor_pin.bytes, |total, pin| {
-            total
-                .checked_add(pin.bytes)
-                .context("episode checkpoint size overflow")
-        })?;
+    let controls = descriptor_pin
+        .bytes
+        .checked_add(requested.request.bytes)
+        .context("episode recovery control size overflow")?;
+    let bytes = files.values().try_fold(controls, |total, pin| {
+        total
+            .checked_add(pin.bytes)
+            .context("episode checkpoint size overflow")
+    })?;
     if bytes > p.scratch_bytes {
         bail!("episode checkpoint exceeds the original scratch allowance");
     }
@@ -73,6 +75,8 @@ pub(super) fn retain(profile: &Path, inspection: &Path) -> Result<Value> {
             publish(&p, cache, pin, &mut file)?;
         }
     }
+    let mut request = fs::File::open(directory.path().join("job.json"))?;
+    publish(&p, cache, &requested.request, &mut request)?;
     publish(&p, cache, &descriptor_pin, &mut descriptor.as_slice())?;
     worker::check(&ticket, &mut journal)?;
 
@@ -81,6 +85,10 @@ pub(super) fn retain(profile: &Path, inspection: &Path) -> Result<Value> {
         (
             LogicalPath::parse("checkpoint/descriptor")?,
             descriptor_pin.clone(),
+        ),
+        (
+            LogicalPath::parse("original/request")?,
+            requested.request.clone(),
         ),
         (
             LogicalPath::parse("original/context")?,
@@ -257,6 +265,10 @@ pub(super) fn resume(profile: &Path, inspection: &Path, retained: &Path) -> Resu
         (
             LogicalPath::parse("checkpoint/descriptor")?,
             checkpoint.descriptor.clone(),
+        ),
+        (
+            LogicalPath::parse("original/request")?,
+            requested.request.clone(),
         ),
         (
             LogicalPath::parse("original/context")?,
