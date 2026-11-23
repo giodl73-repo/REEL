@@ -239,8 +239,13 @@ pub fn compose(path: &Path, root: &Path, output: &Path) -> Result<Receipt> {
         {
             bail!("incompatible complete source set");
         }
-        let proofs =
-            checked_source_proofs(&set, &source_root, &original_bytes, &source.producer.sha256)?;
+        let proofs = checked_source_proofs(
+            &set,
+            &source_root,
+            &original_bytes,
+            &source.producer.sha256,
+            true,
+        )?;
         let originals = prepare_originals(&proofs)?;
         // Offsets must be integral, so original rounded local boundaries remain valid.
         if u128::from(frames) * u128::from(target.output_sample_rate) * u128::from(clock.1)

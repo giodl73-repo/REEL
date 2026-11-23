@@ -5,7 +5,7 @@ mod completion;
 
 const CHECKPOINT_LIMIT: u64 = 4 * 1024 * 1024;
 
-fn bounded_bytes(path: &Path) -> Result<Vec<u8>> {
+pub(super) fn bounded_bytes(path: &Path) -> Result<Vec<u8>> {
     let file = fs::File::open(path)?;
     let mut bytes = Vec::new();
     file.take(CHECKPOINT_LIMIT + 1).read_to_end(&mut bytes)?;

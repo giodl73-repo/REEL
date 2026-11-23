@@ -8,6 +8,7 @@ fn run() -> Result<()> {
             "Usage: reel-episode-conform <command> ...\n\
              Commands:\n\
              \x20 produce-parts <manifest> --asset-root <dir> --range <range.json> --output-dir <new-dir>\n\
+             \x20 next-part-range <part-set> --asset-root <dir> --end <exclusive-index>\n\
              \x20 finalize-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
              \x20 compose-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
              \x20 describe-resume <prepared> --asset-root <job-dir> --start-step <number>\n\
@@ -39,6 +40,17 @@ fn run() -> Result<()> {
                 Path::new(out),
             )?;
             println!("portable native lossless/compact/PCM parts and proof retained");
+            return Ok(());
+        }
+    }
+    if let [_, command, set, root_flag, root, end_flag, end] = args.as_slice() {
+        if command == "next-part-range" && root_flag == "--asset-root" && end_flag == "--end" {
+            let range = reel::episode_conform::parts::next_range(
+                Path::new(set),
+                Path::new(root),
+                end.parse()?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&range)?);
             return Ok(());
         }
     }

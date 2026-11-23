@@ -177,11 +177,55 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
         ] {
             fs::copy(source.join(name), root.join(name)).unwrap();
         }
-        write(
-            &root,
-            "range.json",
-            &json!({"start":i,"end":i+1,"start_frame":i*90,"start_sample":i*144000}),
-        );
+        let expected_range =
+            json!({"start":i,"end":i+1,"start_frame":i*90,"start_sample":i*144000});
+        let range = if i == 0 {
+            expected_range.clone()
+        } else {
+            let prefix = json!({"schema":"reel.programme-part-set.v2",
+                "manifest":reference(&final_root,"manifest.json"),"proofs":proofs});
+            write(&final_root, "set.json", &prefix);
+            job(&final_root);
+            if i == 1 {
+                let refused_output = temp.path().join("incomplete-delivery");
+                let refused = cli(
+                    &executable,
+                    &[
+                        "finalize-parts",
+                        path(&final_root.join("set.json")),
+                        "--asset-root",
+                        path(&final_root),
+                        "--output-dir",
+                        path(&refused_output),
+                    ],
+                );
+                assert!(!refused.status.success());
+                assert!(
+                    String::from_utf8_lossy(&refused.stderr)
+                        .contains("incomplete programme part coverage")
+                );
+                assert!(!refused_output.exists());
+            }
+            let planned = cli(
+                &executable,
+                &[
+                    "next-part-range",
+                    path(&final_root.join("set.json")),
+                    "--asset-root",
+                    path(&final_root),
+                    "--end",
+                    &(i + 1).to_string(),
+                ],
+            );
+            assert!(
+                planned.status.success(),
+                "{}",
+                String::from_utf8_lossy(&planned.stderr)
+            );
+            serde_json::from_slice(&planned.stdout).unwrap()
+        };
+        assert_eq!(range, expected_range);
+        write(&root, "range.json", &range);
         job(&root);
         let output = temp.path().join(format!("part-{i}"));
         success(cli(
