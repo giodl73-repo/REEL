@@ -66,6 +66,7 @@ fn real_native_receipt_drives_visible_frame_exact_ids_with_unchanged_audio_and_t
             media_type: mime.into(),
         }
     };
+    let target = &map.targets[1];
     let report = reel_workflow::film_review::Report {
         schema: reel_workflow::film_review::REPORT_SCHEMA.into(),
         review: descriptor("review.mp4", "video/mp4"),
@@ -73,7 +74,7 @@ fn real_native_receipt_drives_visible_frame_exact_ids_with_unchanged_audio_and_t
         receipt: descriptor("receipt.json", "application/json"),
         findings: vec![reel_workflow::film_review::Finding {
             id: "synthetic-green-cel".into(),
-            target_id: "p-b".into(),
+            target_id: String::new(),
             frame: 24,
             category: reel_workflow::film_review::Category::Picture,
             method: reel_workflow::film_review::Method::DeterministicCheck,
@@ -81,6 +82,23 @@ fn real_native_receipt_drives_visible_frame_exact_ids_with_unchanged_audio_and_t
                 "Controlled synthetic expectation: C101 should be green; its center pixel is blue."
                     .into(),
             evidence: vec![],
+            board_reference: Some(reel_workflow::film_review::BoardReference {
+                project: map.project.clone(),
+                source_commit: map.source_commit.clone(),
+                story_id: target.story_id.clone(),
+                display_id: target.cel_id.clone(),
+                semantic_id: target.semantic_id.clone(),
+                language: map.language.clone(),
+                version: reel_workflow::film_review::BoardVersion {
+                    designation: "selected".into(),
+                    asset: reel_workflow::Artifact {
+                        logical_id: "picture/fixture/v1".into(),
+                        sha256: target.selected_picture.sha256.clone(),
+                        bytes: target.selected_picture.bytes,
+                        media_type: "image/png".into(),
+                    },
+                },
+            }),
         }],
     };
     let bindings: reel_workflow::manual::FileBindings = [
