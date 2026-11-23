@@ -44,6 +44,7 @@ impl Spec {
             method: draft.method,
             observation: draft.observation.clone(),
             evidence: draft.evidence.clone(),
+            board_reference: None,
         };
         if draft.schema != "reel.workflow-film-issue-draft.v1"
             || draft.viewing_verified
