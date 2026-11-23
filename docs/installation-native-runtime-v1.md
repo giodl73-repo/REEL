@@ -725,6 +725,14 @@ time from above. Three Dell runs measured 12.9–14.4 ms after eliminating a
 duplicate Ready report that could overwrite the acknowledgement. These
 measurements cover Status while Ready, with no stream open.
 
+The live Pause/Resume test uses the same outer clock and reads the numbered
+replies while the stream is open. The pinned Dell player measured 29.2 ms for
+Pause and 30.7 ms for Resume in a successful run. A diagnostic build measured
+30.8 ms and 30.5 ms. Earlier runs on the same candidate were inconclusive:
+one exited before the numbered Pause reply and two timed out waiting for Ready.
+The successful timings establish individual observations while station
+repeatability remains open.
+
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
 The controller still tracks every callback cursor, but publishes cursor-only
