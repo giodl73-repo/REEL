@@ -74,7 +74,24 @@ struct CaptureClock {
     total_frames: usize,
     audio_sha256: String,
     audio_bytes: usize,
+    request_sha256: Option<String>,
     packets: Vec<CapturePacket>,
+}
+
+#[derive(serde::Deserialize)]
+struct ConsoleTrace {
+    schema: String,
+    clock: String,
+    request_sha256: String,
+    process_observed_exit_qpc_ns: u64,
+    process_exited_successfully: bool,
+    steps: Vec<ConsoleStep>,
+}
+
+#[derive(serde::Deserialize)]
+struct ConsoleStep {
+    command: String,
+    sent_qpc_ns: Option<u64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -93,7 +110,7 @@ fn measure_capture_clock(
     clock: &CaptureClock,
     bytes: &[u8],
     markers: [usize; 4],
-) -> Result<(u64, [u64; 2])> {
+) -> Result<(u64, [u64; 2], u64)> {
     ensure!(
         clock.sample_rate == RATE
             && clock.channels == 2
@@ -151,7 +168,34 @@ fn measure_capture_clock(
             .checked_sub(head_b)
             .ok_or_else(|| anyhow::anyhow!("second capture span reversed"))?,
     ];
-    Ok((gap, spans))
+    Ok((gap, spans, head_a))
+}
+
+fn start_to_marker_bound(
+    trace: &ConsoleTrace,
+    clock: &CaptureClock,
+    first_marker_ns: u64,
+) -> Result<u64> {
+    ensure!(
+        trace.schema == "reel.installation-station-console-trace.v1"
+            && trace.clock == "windows-qpc-nanoseconds"
+            && trace.process_exited_successfully
+            && clock.request_sha256.as_deref() == Some(trace.request_sha256.as_str())
+            && trace.process_observed_exit_qpc_ns > first_marker_ns,
+        "console trace and capture session differ"
+    );
+    let mut starts = trace.steps.iter().filter(|step| step.command == "start\r");
+    let sent = starts
+        .next()
+        .and_then(|step| step.sent_qpc_ns)
+        .ok_or_else(|| anyhow::anyhow!("console trace lacks Start time"))?;
+    ensure!(
+        sent > 0 && starts.next().is_none(),
+        "ambiguous Start observation"
+    );
+    first_marker_ns
+        .checked_sub(sent)
+        .ok_or_else(|| anyhow::anyhow!("capture marker precedes Start"))
 }
 
 fn capture_passes(gap: usize, spans: [usize; 2]) -> bool {
@@ -197,6 +241,7 @@ fn station_capture_measurement_detects_markers_and_applies_both_limits() {
         total_frames: frames.len(),
         audio_sha256: reel::production::sha256_bytes(&bytes),
         audio_bytes: bytes.len(),
+        request_sha256: Some("fixture-request".into()),
         packets: (0..frames.len())
             .step_by(480)
             .map(|offset_frames| CapturePacket {
@@ -207,8 +252,26 @@ fn station_capture_measurement_detects_markers_and_applies_both_limits() {
             })
             .collect(),
     };
-    let (gap_ns, spans_ns) = measure_capture_clock(&clock, &bytes, offsets).unwrap();
+    let (gap_ns, spans_ns, first_marker_ns) =
+        measure_capture_clock(&clock, &bytes, offsets).unwrap();
     assert_eq!((gap_ns, spans_ns), (250_000_000, [2_785_000_000; 2]));
+    let mut trace = ConsoleTrace {
+        schema: "reel.installation-station-console-trace.v1".into(),
+        clock: "windows-qpc-nanoseconds".into(),
+        request_sha256: "fixture-request".into(),
+        process_observed_exit_qpc_ns: first_marker_ns + 6_000_000_000,
+        process_exited_successfully: true,
+        steps: vec![ConsoleStep {
+            command: "start\r".into(),
+            sent_qpc_ns: Some(first_marker_ns - 100_000_000),
+        }],
+    };
+    assert_eq!(
+        start_to_marker_bound(&trace, &clock, first_marker_ns).unwrap(),
+        100_000_000
+    );
+    trace.request_sha256 = "other-request".into();
+    assert!(start_to_marker_bound(&trace, &clock, first_marker_ns).is_err());
     clock.packets[10].capture_qpc_ns += 3_000_000;
     clock.packets[10].callback_qpc_ns += 3_000_000;
     assert!(measure_capture_clock(&clock, &bytes, offsets).is_err());
@@ -246,6 +309,7 @@ fn measure_retained_station_capture() {
     );
     assert!(capture_passes(gap, spans), "capture failed timing gates");
     let clock_path = std::path::Path::new(&path).with_extension("clock.json");
+    let trace_path = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE");
     if clock_path.is_file() {
         let mut raw = Vec::new();
         std::fs::File::open(clock_path)
@@ -255,7 +319,8 @@ fn measure_retained_station_capture() {
             .unwrap();
         assert!(raw.len() <= 2_000_000, "capture clock sidecar too large");
         let clock: CaptureClock = serde_json::from_slice(&raw).unwrap();
-        let (gap_ns, spans_ns) = measure_capture_clock(&clock, &bytes, markers).unwrap();
+        let (gap_ns, spans_ns, first_marker_ns) =
+            measure_capture_clock(&clock, &bytes, markers).unwrap();
         println!("capture QPC loop gap {gap_ns} ns; source spans {spans_ns:?} ns");
         assert!(gap_ns.abs_diff(250_000_000) <= 50_000_000);
         assert!(
@@ -263,7 +328,24 @@ fn measure_retained_station_capture() {
                 .into_iter()
                 .all(|span| span.abs_diff(frame_ns(LAST_MARKER - FIRST_MARKER)) <= 20_000_000)
         );
+        if let Some(trace_path) = trace_path {
+            let mut raw = Vec::new();
+            std::fs::File::open(trace_path)
+                .unwrap()
+                .take(65_537)
+                .read_to_end(&mut raw)
+                .unwrap();
+            assert!(raw.len() <= 65_536, "console trace too large");
+            let trace: ConsoleTrace = serde_json::from_slice(&raw).unwrap();
+            let onset_bound = start_to_marker_bound(&trace, &clock, first_marker_ns).unwrap();
+            println!("Start sent to first captured source marker: {onset_bound} ns");
+            assert!(onset_bound <= 2_000_000_000);
+        }
     } else {
+        assert!(
+            trace_path.is_none(),
+            "console alignment requires a capture clock sidecar"
+        );
         println!("sample positions only; no capture clock sidecar");
     }
 }
@@ -290,10 +372,10 @@ fn record_isolated_station_loopback() {
         Ok("isolated-synthetic-render")
     );
     let request_path = std::env::var_os("REEL_INSTALLATION_STATION_SESSION").unwrap();
-    let request = reel::spoken_programme::installation::native::SessionRequest::parse(
-        &std::fs::read(request_path).unwrap(),
-    )
-    .unwrap();
+    let request_bytes = std::fs::read(request_path).unwrap();
+    let request =
+        reel::spoken_programme::installation::native::SessionRequest::parse(&request_bytes)
+            .unwrap();
     assert_eq!(
         (request.edition_id.as_str(), request.passes),
         ("en-technical", 2)
@@ -380,6 +462,7 @@ fn record_isolated_station_loopback() {
         &serde_json::json!({
             "capture_point": "WASAPI endpoint loopback before physical output",
             "binding": request.endpoint,
+            "request_sha256": reel::production::sha256_bytes(&request_bytes),
             "cpal_version": "0.18.2",
             "sample_rate": RATE,
             "channels": 2,

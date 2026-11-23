@@ -737,6 +737,11 @@ Its Windows QPC nanosecond timestamps share the WASAPI packet clock domain.
 The command send timestamp precedes the application's cooked-line receipt,
 and the console observation comes after rendering. Use these as outer bounds
 when comparing them with capture.
+Pass the trace path to the retained-capture analyzer through the same
+variable. It verifies that the trace and recording came from the same
+session request. The Start-to-first-marker check gives a conservative
+onset bound at the render mix because the marker follows the source's
+initial silence. It allows up to two seconds and needs both clock files.
 
 `actual_station_status_acknowledgement_meets_outer_deadline` times from
 before typing Status into the pseudoconsole to the reader observing its
