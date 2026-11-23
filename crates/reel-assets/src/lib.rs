@@ -9,6 +9,7 @@ pub mod cli;
 pub mod demotion;
 pub mod goldens;
 pub mod jobs;
+pub mod loopback;
 pub mod manager_review;
 mod object_index;
 mod output_retention;
