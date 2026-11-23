@@ -363,6 +363,12 @@ The 1 GiB protection envelope and the other admission limits above still apply;
 the generic external response ceiling remains 128 MiB. Routing a checked film
 output budget does not qualify multi-GiB native publication or Season 5 scale.
 
+The [native film rebuild binder](../../docs/workflow-native-film-rebuild.md)
+creates exact per-language packet/source/parent files from an affected-film plan.
+Live upstream admission remains separate. Windows film CLI requests can declare
+an exact still-control derivation, checked under child claims before capacity
+reservation and rendering.
+
 ## Validation
 
 ```text

@@ -63,6 +63,16 @@ fn new_receipt(
 }
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
+        [command, request, pin, directory] if command == "prepare-film-rebuild" => {
+            reel_workflow_native::film_rebuild::export(
+                Path::new(request),
+                pin,
+                Path::new(directory),
+            )?;
+            Ok(
+                serde_json::json!({"ok":true,"native_metadata_verified":true,"child_admitted":false,"consumers_rebuilt":false,"selection_verified":false}),
+            )
+        }
         #[cfg(all(windows, feature = "film"))]
         [command, request, pin, output, apply]
             if command == "prepare-film" && apply == "--apply" =>
@@ -127,7 +137,7 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             Ok(serde_json::json!({"film_process_child_verified": true, "task_completed": false}))
         }
         [command] if command == "capabilities" => Ok(
-            serde_json::json!({"native_snapshot_binding":true,"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"retained_child_inputs":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
+            serde_json::json!({"native_snapshot_binding":true,"native_film_rebuild_binding":true,"still_control_verification":cfg!(all(windows,feature="film")),"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"retained_child_inputs":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
         ),
         [command, packet, source, request, output] if command == "inspect-film" => {
             let packet = read_control(Path::new(packet))?;
@@ -538,6 +548,7 @@ fn main() -> ExitCode {
     if matches!(args.as_slice(), [a] if a == "--help") {
         println!(concat!(
             "reel-workflow-native capabilities\n",
+            "reel-workflow-native prepare-film-rebuild REQUEST SHA256 NEW_DIRECTORY\n",
             "Optional Windows film feature:\n",
             "reel-workflow-native prepare-film REQUEST REQUEST_SHA NEW_TICKET --apply\n",
             "reel-workflow-native run-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
