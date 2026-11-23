@@ -276,9 +276,7 @@ fn replacing_the_shared_english_opening_preserves_spanish_pcm() {
 }
 
 #[cfg(all(windows, feature = "tig-publication"))]
-#[test]
-#[ignore = "explicit native browser render of the shared programme openings"]
-fn shared_installation_openings_render_with_exact_pcm() {
+pub(super) fn shared_installation_openings_render_with_exact_pcm() {
     let shared = shared_quiet_programme(false);
     super::companion::native::render_shared_openings(
         shared.inputs(),

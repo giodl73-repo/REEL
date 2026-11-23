@@ -873,6 +873,12 @@ pub(super) mod native {
         })
     }
 
+    #[test]
+    #[ignore = "explicit native browser render of the shared programme openings"]
+    fn shared_installation_openings_render_with_exact_pcm() {
+        crate::installation::shared_installation_openings_render_with_exact_pcm();
+    }
+
     pub(crate) fn render_shared_openings(
         inputs: reel::spoken_programme::installation::Inputs<'_>,
         root: &Path,
