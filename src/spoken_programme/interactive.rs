@@ -91,6 +91,7 @@ pub struct CompanionPlacement {
     pub frame: u64,
 }
 
+#[cfg(feature = "tig-publication")]
 pub fn companion_placements(
     package: &CheckedPackage,
     span: Selection<'_>,
