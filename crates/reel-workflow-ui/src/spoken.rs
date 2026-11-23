@@ -1,7 +1,7 @@
 //! Project checked spoken access manifests into the private workflow viewer.
 use crate::{error, model::*};
 use reel_workflow::{Artifact, ErrorKind, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{File, OpenOptions},
@@ -20,7 +20,7 @@ struct Request {
     bundles: Vec<Bundle>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct Bundle {
     path: PathBuf,
@@ -28,7 +28,7 @@ struct Bundle {
     waves: BTreeMap<String, WaveBinding>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct WaveBinding {
     media: Media,
@@ -50,6 +50,7 @@ struct Edition {
     compiled_recipe_sha256: String,
     execution_recipe_sha256: String,
     wave: Wave,
+    transcript: Option<Wave>,
     duration_samples: u64,
     entries: Vec<Entry>,
     chapters: Vec<Chapter>,
@@ -58,6 +59,117 @@ struct Edition {
 struct Wave {
     sha256: String,
     bytes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ExpectedEdition {
+    compiled_recipe_sha256: String,
+    execution_recipe_sha256: String,
+}
+
+pub fn bind_retained(
+    project: &Path,
+    result: &Path,
+    result_pin: &str,
+    expectation: &Path,
+    expectation_pin: &str,
+) -> Result<serde_json::Value> {
+    let result: serde_json::Value = serde_json::from_slice(&pinned(result, result_pin)?)
+        .map_err(|_| error(ErrorKind::Invalid, "spoken-board-result-json"))?;
+    let mut expected: BTreeMap<String, ExpectedEdition> =
+        serde_json::from_slice(&pinned(expectation, expectation_pin)?)
+            .map_err(|_| error(ErrorKind::Invalid, "spoken-board-expected-json"))?;
+    if result["schema"] != "caminos.production-job-result.v1"
+        || result["workspace_retained"] != false
+        || expected.is_empty()
+        || expected.len() > 16
+    {
+        return Err(error(ErrorKind::Invalid, "spoken-board-retained-result"));
+    }
+    let registry = reel_assets::generic_objects(project)
+        .map_err(|_| error(ErrorKind::Missing, "spoken-board-retained-registry"))?;
+    let config = reel_assets::config(project)
+        .map_err(|_| error(ErrorKind::Missing, "spoken-board-storage-config"))?;
+    let resolve = |object: &serde_json::Value| -> Result<(Wave, PathBuf)> {
+        let pin: Wave = serde_json::from_value(serde_json::json!({
+            "sha256":object["sha256"],"bytes":object["bytes"]
+        }))
+        .map_err(|_| error(ErrorKind::Invalid, "spoken-board-retained-pin"))?;
+        if registry.get(&pin.sha256) != Some(&pin.bytes) {
+            return Err(error(
+                ErrorKind::Missing,
+                "spoken-board-unregistered-output",
+            ));
+        }
+        let path = reel_assets::active_existing(&config, &pin.sha256, pin.bytes)
+            .map_err(|_| error(ErrorKind::Integrity, "spoken-board-retained-bytes"))?
+            .ok_or_else(|| error(ErrorKind::Missing, "spoken-board-retained-object"))?;
+        Ok((pin, path))
+    };
+    resolve(&result["retirement_evidence"])?;
+    let outputs = &result["outputs"];
+    let (access_pin, path) = resolve(&outputs["spoken-access/access.json"])?;
+    let access: Access = serde_json::from_slice(&pinned(&path, &access_pin.sha256)?)
+        .map_err(|_| error(ErrorKind::Invalid, "spoken-board-access-json"))?;
+    if access.schema != "reel.spoken-access.v1" || access.editions.len() > 16 {
+        return Err(error(ErrorKind::Invalid, "spoken-board-access-schema"));
+    }
+    let mut waves = BTreeMap::new();
+    for (index, edition) in access.editions.into_iter().enumerate() {
+        let Some(desired) = expected.remove(&edition.edition_id) else {
+            continue;
+        };
+        if !exact_recipe(
+            &desired.compiled_recipe_sha256,
+            &edition.compiled_recipe_sha256,
+        ) || !exact_recipe(
+            &desired.execution_recipe_sha256,
+            &edition.execution_recipe_sha256,
+        ) {
+            return Err(error(ErrorKind::Conflict, "spoken-board-recipe"));
+        }
+        let (wave, wave_path) =
+            resolve(&outputs[format!("spoken-candidate/edition-{index:03}.wav")])?;
+        let (transcript, _) = resolve(&outputs[format!("spoken-access/edition-{index:03}.txt")])?;
+        if wave.sha256 != edition.wave.sha256
+            || wave.bytes != edition.wave.bytes
+            || edition
+                .transcript
+                .is_none_or(|pin| pin.sha256 != transcript.sha256 || pin.bytes != transcript.bytes)
+        {
+            return Err(error(
+                ErrorKind::Integrity,
+                "spoken-board-retained-access-pin",
+            ));
+        }
+        waves.insert(
+            edition.edition_id.clone(),
+            WaveBinding {
+                media: Media {
+                    path: wave_path,
+                    subject: None,
+                    artifact: Artifact {
+                        logical_id: format!("spoken/{}", edition.edition_id),
+                        sha256: wave.sha256,
+                        bytes: wave.bytes,
+                        media_type: "audio/wav".into(),
+                    },
+                },
+                compiled_recipe_sha256: desired.compiled_recipe_sha256,
+                execution_recipe_sha256: desired.execution_recipe_sha256,
+            },
+        );
+    }
+    if !expected.is_empty() {
+        return Err(error(ErrorKind::Missing, "spoken-board-edition"));
+    }
+    serde_json::to_value(Bundle {
+        path,
+        sha256: access_pin.sha256,
+        waves,
+    })
+    .map_err(|_| error(ErrorKind::Invalid, "spoken-board-binding-json"))
 }
 #[derive(Deserialize)]
 struct Entry {
