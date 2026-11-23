@@ -426,6 +426,7 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
         "reorder",
         "duplicate",
         "gap",
+        "manifest-pin",
         "language",
         "source",
         "profile",
@@ -441,6 +442,8 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
             altered["proofs"][1] = altered["proofs"][0].clone();
         } else if mutation == "gap" {
             altered["proofs"].as_array_mut().unwrap().remove(1);
+        } else if mutation == "manifest-pin" {
+            altered["manifest"]["sha256"] = "0".repeat(64).into();
         } else {
             let mut proof: Value = serde_json::from_slice(&original_proof).unwrap();
             match mutation {
@@ -473,6 +476,12 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
             ],
         );
         assert!(!result.status.success(), "mutation {mutation} accepted");
+        if mutation == "manifest-pin" {
+            assert!(
+                String::from_utf8_lossy(&result.stderr)
+                    .contains("programme manifest differs from declared scope")
+            );
+        }
         assert!(!rejected.exists());
         fs::write(final_root.join("proof-0.json"), &original_proof).unwrap();
     }

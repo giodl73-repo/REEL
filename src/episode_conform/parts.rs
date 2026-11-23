@@ -361,6 +361,40 @@ pub(super) fn declared_control<'a>(
         .context("undeclared programme control")
 }
 
+const MAX_PART_CONTROL_BYTES: u64 = 4 * 1024 * 1024;
+
+fn read_part_control(path: &Path, pin: &scene_delivery::FileRef) -> Result<Vec<u8>> {
+    if pin.bytes > MAX_PART_CONTROL_BYTES {
+        bail!("programme part control exceeds byte bound");
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(pin.bytes + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != pin.bytes || sha(&bytes) != pin.sha256 {
+        bail!("programme part control differs from declared bytes");
+    }
+    Ok(bytes)
+}
+
+fn read_part_set(
+    path: &Path,
+    root: &Path,
+    scope: &[scene_delivery::FileRef],
+) -> Result<(PartSet, Vec<u8>)> {
+    let set: PartSet = serde_json::from_slice(&read_part_control(
+        path,
+        declared_control(path, root, scope)?,
+    )?)?;
+    let manifest_path = root.join(&set.manifest.path);
+    let declared_manifest = declared_control(&manifest_path, root, scope)?;
+    if declared_manifest != &set.manifest {
+        bail!("programme manifest differs from declared scope");
+    }
+    let bytes = read_part_control(&manifest_path, declared_manifest)?;
+    Ok((set, bytes))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn publish(
     range: &Range,
@@ -554,11 +588,11 @@ fn checked_source_proofs(
     let mut signature = None;
     let mut proofs = Vec::new();
     for item in &set.proofs {
-        if item.bytes > 4 * 1024 * 1024 {
+        if item.bytes > MAX_PART_CONTROL_BYTES {
             bail!("portable part proof too large");
         }
-        let proof: Proof =
-            serde_json::from_slice(&fs::read(scene_delivery::checked_file(root, item)?)?)?;
+        let path = scene_delivery::checked_file(root, item)?;
+        let proof: Proof = serde_json::from_slice(&read_part_control(&path, item)?)?;
         proof.range.validate(&manifest)?;
         if proof.schema != PROOF
             || proof.manifest_sha256 != sha(manifest_bytes)
@@ -804,13 +838,7 @@ fn prepare_originals(proofs: &[Proof]) -> Result<Vec<PreparedPart>> {
 /// contiguous prefix. Uses the same checked evidence as part finalization.
 pub fn next_range(set_path: &Path, root: &Path, end: usize) -> Result<Range> {
     let scope = checkpoint::snapshot_job_scope(root)?;
-    declared_control(set_path, root, &scope)?;
-    let set: PartSet = serde_json::from_slice(&checkpoint::bounded_bytes(set_path)?)?;
-    if set.manifest.bytes > 4 * 1024 * 1024 {
-        bail!("programme manifest exceeds range planning bound");
-    }
-    let manifest_path = scene_delivery::checked_file(root, &set.manifest)?;
-    let bytes = checkpoint::bounded_bytes(&manifest_path)?;
+    let (set, bytes) = read_part_set(set_path, root, &scope)?;
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     let proofs = checked_source_proofs(
         &set,
@@ -846,12 +874,7 @@ pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> 
         bail!("programme output must be a new directory");
     }
     let scope = checkpoint::snapshot_job_scope(root)?;
-    declared_control(set_path, root, &scope)?;
-    if fs::metadata(set_path)?.len() > 4 * 1024 * 1024 {
-        bail!("programme part set too large");
-    }
-    let set: PartSet = serde_json::from_slice(&fs::read(set_path)?)?;
-    let bytes = fs::read(scene_delivery::checked_file(root, &set.manifest)?)?;
+    let (set, bytes) = read_part_set(set_path, root, &scope)?;
     let proofs = checked_proofs(&set, root, &bytes)?;
     let prepared = prepare_originals(&proofs)?;
     finalize_checked(root, output, &bytes, &prepared, &set.proofs, None)
