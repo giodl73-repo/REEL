@@ -59,6 +59,7 @@ fn exported_draft_adapter_checks_semantic_subject_before_preparing_an_issue() {
         method: d.method,
         observation: d.observation.clone(),
         evidence: d.evidence.clone(),
+        board_reference: None,
     };
     let identity =
         reel_workflow::canonical_digest(&(&d.review, &d.map, &d.receipt, &d.target, &d.finding_id))
