@@ -16,7 +16,7 @@ use std::{
 };
 mod adapters;
 mod salvage;
-pub use salvage::{Salvage, salvage_admitted};
+pub use salvage::{Salvage, quiescent_workspace, salvage_admitted};
 mod workspace_snapshot;
 pub use workspace_snapshot::{WorkspaceDirectory, open_workspace_directory};
 pub use workspace_snapshot::{WorkspaceEntry, WorkspaceSnapshot, snapshot_owned_workspace};

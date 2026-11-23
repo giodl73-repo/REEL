@@ -971,7 +971,7 @@ fn exercise_variant_mode(
     let mut recoverable = profile.clone();
     recoverable["source_id"] = json!("bounded-episode-cli-recoverable");
     recoverable["preserve_workspace_on_failure"] = json!(true);
-    recoverable["reference_staging_bytes"] = json!(1);
+    recoverable["pause_after_normalized_segments"] = json!(1);
     write(p.data.path(), "recoverable-profile.json", &recoverable);
     let interrupted = Command::new(&binary)
         .arg("run-episode")
@@ -986,13 +986,122 @@ fn exercise_variant_mode(
     assert_eq!(response["temporary_owner_cleanup_required"], true);
     assert!(response["handoff"].is_null());
     let job = response["result"]["job_id"].as_str().unwrap();
-    assert!(p.hot().join("staging/caminos").join(job).is_dir());
+    let workspace = p.hot().join("staging/caminos").join(job);
+    for (name, path) in [("request", "job.json"), ("ticket", "episode-ticket.json")] {
+        let bytes = fs::read(workspace.join(path)).unwrap();
+        assert_eq!(response["result"][name], json!(Object::from_bytes(&bytes)));
+    }
     let owner = journal
         .source(&key("bounded-episode-cli-recoverable"))
         .unwrap()
         .unwrap();
     assert_eq!(owner.revision, 2);
     assert!(owner.current.is_some() && owner.pending.is_none());
+
+    assert!(
+        workspace
+            .join("native-normalization/normalization-00000.json")
+            .is_file()
+    );
+    assert!(
+        !workspace
+            .join("native-normalization/normalization-00001.json")
+            .exists()
+    );
+    let inspection = json!({
+        "workspace":workspace,
+        "request":response["result"]["request"],
+        "ticket":response["result"]["ticket"],
+        "completed":1
+    });
+    write(p.data.path(), "episode-resume-inspection.json", &inspection);
+    let recovery = |command: &str, retained: Option<&std::path::Path>| -> Value {
+        let mut process = Command::new(&binary);
+        process
+            .arg(command)
+            .arg(p.data.path().join("recoverable-profile.json"))
+            .arg(p.data.path().join("episode-resume-inspection.json"));
+        if let Some(retained) = retained {
+            process.arg(retained);
+        }
+        let output = process.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{command}: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let described = recovery("describe-episode-resume", None);
+    assert_eq!(described["retained"], false);
+    assert_eq!(described["descriptor"]["start_step"], 0);
+    let retained = recovery("retain-episode-resume", None);
+    assert_eq!(retained["workspace_retained"], true);
+    assert_eq!(
+        journal
+            .source(&key("bounded-episode-cli-recoverable"))
+            .unwrap()
+            .unwrap()
+            .revision,
+        2
+    );
+    let mut stale = retained.clone();
+    stale["source_revision"] = json!(retained["source_revision"].as_u64().unwrap() + 1);
+    write(p.data.path(), "stale-resume.json", &stale);
+    let stale = Command::new(&binary)
+        .arg("resume-episode")
+        .arg(p.data.path().join("recoverable-profile.json"))
+        .arg(p.data.path().join("episode-resume-inspection.json"))
+        .arg(p.data.path().join("stale-resume.json"))
+        .output()
+        .unwrap();
+    assert!(!stale.status.success());
+    assert!(String::from_utf8_lossy(&stale.stderr).contains("checkpoint owner changed"));
+    assert_eq!(
+        journal
+            .source(&key("bounded-episode-cli-recoverable"))
+            .unwrap()
+            .unwrap()
+            .revision,
+        2
+    );
+    write(p.data.path(), "retained-resume.json", &retained);
+    let resumed = recovery(
+        "resume-episode",
+        Some(&p.data.path().join("retained-resume.json")),
+    );
+    assert_eq!(resumed["succeeded"], true);
+    assert_eq!(resumed["handoff"]["succeeded"], true);
+    assert_eq!(resumed["temporary_owner_cleanup_required"], false);
+    assert!(workspace.is_dir());
+    let resumed_outputs = &resumed["result"]["outputs"];
+    let resumed_receipt: Value = serde_json::from_slice(
+        &fs::read(
+            resumed_outputs["native/receipt.json"]["path"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    for field in [
+        "total_frames",
+        "total_samples",
+        "segments",
+        "manifest_sha256",
+    ] {
+        assert_eq!(resumed_receipt[field], receipt[field], "resumed {field}");
+    }
+    assert_eq!(
+        resumed_receipt["decoded_master_matches_ordered_segments"],
+        true
+    );
+    assert_eq!(resumed_receipt["timestamps_verified"], true);
+    let master = &resumed_outputs["native/master.mkv"];
+    let observed = ByteIdentity::observe_file(Path::new(master["path"].as_str().unwrap())).unwrap();
+    assert_eq!(observed.sha256, master["sha256"]);
+    assert_eq!(observed.bytes, master["bytes"]);
 
     // Fail after component ownership, before writing outputs, by admitting a
     // valid but insufficient primary-reference staging budget. The runner

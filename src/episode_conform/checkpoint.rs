@@ -15,15 +15,213 @@ fn bounded_bytes(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-fn publish_normalization_progress(work: &Path, bytes: &[u8]) -> Result<()> {
+fn publish_checkpoint(path: &Path, bytes: &[u8]) -> Result<()> {
     if bytes.len() as u64 > CHECKPOINT_LIMIT {
         bail!("episode checkpoint exceeds its bound");
     }
-    let mut staged = tempfile::NamedTempFile::new_in(work)?;
+    let directory = path.parent().context("episode checkpoint has no parent")?;
+    let mut staged = tempfile::NamedTempFile::new_in(directory)?;
     staged.write_all(bytes)?;
     staged.as_file().sync_all()?;
-    staged.persist(work.join("normalization-progress.json"))?;
+    staged.persist(path)?;
     Ok(())
+}
+
+/// An incomplete segment is never included in this checkpoint. Guarded inputs
+/// are represented by their admitted identity from the receipt.
+#[cfg(feature = "tig-publication")]
+#[derive(Serialize, Deserialize)]
+#[serde(
+    deny_unknown_fields,
+    rename_all = "kebab-case",
+    tag = "kind",
+    content = "generated"
+)]
+enum NativeMedia {
+    AdmittedSource,
+    Generated(scene_delivery::FileRef),
+}
+
+#[cfg(feature = "tig-publication")]
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NativeSegment<'a, Receipt> {
+    schema: &'a str,
+    ticket_sha256: &'a str,
+    manifest_sha256: &'a str,
+    ordinal: usize,
+    receipt: Receipt,
+    first: MediaFacts,
+    media: NativeMedia,
+}
+
+#[cfg(feature = "tig-publication")]
+pub(super) struct NativeSegmentBinding<'a> {
+    pub ticket_sha256: &'a str,
+    pub manifest_sha256: &'a str,
+    pub ordinal: usize,
+    pub segment: &'a Segment,
+    pub sample_rate: u32,
+    pub start_frame: u64,
+    pub start_sample: u64,
+}
+
+#[cfg(feature = "tig-publication")]
+pub(super) fn save_native_segment(
+    work: &Path,
+    binding: &NativeSegmentBinding<'_>,
+    receipt: &SegmentReceipt,
+    first: &MediaFacts,
+    selected: &Path,
+    source: &Path,
+) -> Result<()> {
+    let media = if selected == source {
+        NativeMedia::AdmittedSource
+    } else {
+        let canonical = selected.canonicalize()?;
+        let root = work.canonicalize()?;
+        let relative = canonical
+            .strip_prefix(&root)
+            .context("generated normalization media escaped its owned workspace")?;
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&canonical)?
+            .sync_all()?;
+        NativeMedia::Generated(capture_relative_file(&canonical, relative)?)
+    };
+    let segment = NativeSegment {
+        schema: "reel.native-episode-normalization-segment.v1",
+        ticket_sha256: binding.ticket_sha256,
+        manifest_sha256: binding.manifest_sha256,
+        ordinal: binding.ordinal,
+        receipt,
+        first: first.clone(),
+        media,
+    };
+    let path = work.join(format!("normalization-{:05}.json", binding.ordinal));
+    let bytes = serde_json::to_vec(&segment)?;
+    publish_checkpoint(&path, &bytes)?;
+    let reopened = bounded_bytes(&path)?;
+    let record = read_native_segment(&reopened, &sha(&bytes), binding)?;
+    if record.media.reopen(work, source)?.canonicalize()? != selected.canonicalize()? {
+        bail!("native normalization checkpoint reopened a different media path");
+    }
+    Ok(())
+}
+
+#[cfg(feature = "tig-publication")]
+fn read_native_segment<'a>(
+    bytes: &'a [u8],
+    expected_sha256: &str,
+    binding: &NativeSegmentBinding<'_>,
+) -> Result<NativeSegment<'a, SegmentReceipt>> {
+    if bytes.len() as u64 > CHECKPOINT_LIMIT || sha(bytes) != expected_sha256 {
+        bail!("native normalization checkpoint bytes differ from the expected pin");
+    }
+    let record: NativeSegment<'_, SegmentReceipt> = serde_json::from_slice(bytes)?;
+    if record.schema != "reel.native-episode-normalization-segment.v1"
+        || record.ticket_sha256 != binding.ticket_sha256
+        || record.manifest_sha256 != binding.manifest_sha256
+        || record.ordinal != binding.ordinal
+    {
+        bail!("native normalization checkpoint belongs to another ticket, manifest, or segment");
+    }
+    verify_segment_clock(
+        &record.receipt,
+        binding.segment,
+        binding.sample_rate,
+        binding.start_frame,
+        binding.start_sample,
+    )?;
+    Ok(record)
+}
+
+#[cfg(feature = "tig-publication")]
+pub(super) fn replay_native_segment(
+    work: &Path,
+    pin: &scene_delivery::FileRef,
+    binding: &NativeSegmentBinding<'_>,
+    source: &Path,
+) -> Result<(PathBuf, SegmentReceipt, MediaFacts)> {
+    let name = format!("normalization-{:05}.json", binding.ordinal);
+    if pin.path != Path::new(&name) || pin.bytes > CHECKPOINT_LIMIT {
+        bail!("native checkpoint pin differs from its segment slot");
+    }
+    let path = scene_delivery::checked_file(work, pin)?;
+    let bytes = bounded_bytes(&path)?;
+    let record = read_native_segment(&bytes, &pin.sha256, binding)?;
+    let restored = record.media.reopen(work, source)?;
+    Ok((restored, record.receipt, record.first))
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+pub(crate) fn describe_native_prefix(
+    work: &Path,
+    ticket_sha256: &str,
+    completed: usize,
+) -> Result<(
+    Vec<scene_delivery::FileRef>,
+    BTreeMap<PathBuf, scene_delivery::FileRef>,
+)> {
+    if !(1..=2047).contains(&completed) {
+        bail!("native normalization resume requires a bounded nonempty prefix");
+    }
+    let mut prefix = Vec::with_capacity(completed);
+    let mut files = BTreeMap::new();
+    let mut manifest = None;
+    for ordinal in 0..completed {
+        let path = PathBuf::from(format!("normalization-{ordinal:05}.json"));
+        let record_path = work.join(&path);
+        let metadata = fs::symlink_metadata(&record_path)?;
+        if !metadata.is_file() || metadata.is_symlink() {
+            bail!("native normalization checkpoint is not a regular file");
+        }
+        let bytes = bounded_bytes(&record_path)?;
+        let record: NativeSegment<'_, SegmentReceipt> = serde_json::from_slice(&bytes)?;
+        if record.schema != "reel.native-episode-normalization-segment.v1"
+            || record.ticket_sha256 != ticket_sha256
+            || record.ordinal != ordinal
+            || !valid_sha(record.manifest_sha256)
+            || manifest
+                .as_deref()
+                .is_some_and(|expected| expected != record.manifest_sha256)
+        {
+            bail!("native normalization prefix differs from its original ticket or order");
+        }
+        if manifest.is_none() {
+            manifest = Some(record.manifest_sha256.to_owned());
+        }
+        if let NativeMedia::Generated(file) = record.media {
+            scene_delivery::checked_file(work, &file)?;
+            if files.insert(file.path.clone(), file).is_some() {
+                bail!("native normalization generated path is reused");
+            }
+        }
+        prefix.push(scene_delivery::FileRef {
+            path,
+            sha256: sha(&bytes),
+            bytes: bytes.len() as u64,
+        });
+    }
+    for file in &prefix {
+        if files.insert(file.path.clone(), file.clone()).is_some() {
+            bail!("native normalization checkpoint collides with generated media");
+        }
+    }
+    Ok((prefix, files))
+}
+
+/// Resolve only media expressly pinned by a verified checkpoint record.
+/// The source path has already been obtained from the live guarded resolver.
+#[cfg(feature = "tig-publication")]
+impl NativeMedia {
+    fn reopen(&self, work: &Path, admitted_source: &Path) -> Result<PathBuf> {
+        match self {
+            Self::AdmittedSource => Ok(admitted_source.to_path_buf()),
+            Self::Generated(file) => scene_delivery::checked_file(work, file),
+        }
+    }
 }
 
 pub(super) fn verify_preparation(prepared: &Path, assets: &Path) -> Result<()> {
@@ -138,7 +336,10 @@ pub(super) fn save_normalization(
         presentation_cache_misses: state.presentation_cache_misses,
         full_episode_verified: false,
     };
-    publish_normalization_progress(work, &serde_json::to_vec_pretty(&progress)?)
+    publish_checkpoint(
+        &work.join("normalization-progress.json"),
+        &serde_json::to_vec_pretty(&progress)?,
+    )
 }
 
 struct VerifiedNormalization {
@@ -182,26 +383,13 @@ fn verify_normalization(prepared: &Path, assets: &Path) -> Result<VerifiedNormal
     let mut frames = 0u64;
     let mut samples = 0u64;
     for (record, selected) in progress.records.iter().zip(&manifest.segments) {
-        if record.id != selected.id
-            || record.selected_master_sha256 != selected.master.sha256
-            || record.selected_master_bytes != selected.master.bytes
-            || record.source_receipt_sha256 != selected.source_receipt.sha256
-            || record.start_frame != frames
-            || record.start_sample != samples
-            || record.frames == 0
-            || record.samples == 0
-            || record.output_sample_rate != manifest.output_sample_rate
-            || !valid_sha(&record.decoded_picture_sha256)
-            || !valid_sha(&record.decoded_audio_sha256)
-        {
-            bail!("normalization progress differs from source or clock");
-        }
-        frames = frames
-            .checked_add(record.frames)
-            .context("progress frame overflow")?;
-        samples = samples
-            .checked_add(record.samples)
-            .context("progress sample overflow")?;
+        (frames, samples) = verify_segment_clock(
+            record,
+            selected,
+            manifest.output_sample_rate,
+            frames,
+            samples,
+        )?;
     }
     if frames != progress.frame_cursor || samples != progress.sample_cursor {
         bail!("normalization progress clock differs from segments");
@@ -216,6 +404,36 @@ fn verify_normalization(prepared: &Path, assets: &Path) -> Result<VerifiedNormal
         bytes,
         paths: normalized,
     })
+}
+
+fn verify_segment_clock(
+    record: &SegmentReceipt,
+    selected: &Segment,
+    output_sample_rate: u32,
+    frames: u64,
+    samples: u64,
+) -> Result<(u64, u64)> {
+    if record.id != selected.id
+        || record.selected_master_sha256 != selected.master.sha256
+        || record.selected_master_bytes != selected.master.bytes
+        || record.source_receipt_sha256 != selected.source_receipt.sha256
+        || record.start_frame != frames
+        || record.start_sample != samples
+        || record.frames == 0
+        || record.samples == 0
+        || record.output_sample_rate != output_sample_rate
+        || !valid_sha(&record.decoded_picture_sha256)
+        || !valid_sha(&record.decoded_audio_sha256)
+    {
+        bail!("normalization progress differs from source or clock");
+    }
+    let frames = frames
+        .checked_add(record.frames)
+        .context("progress frame overflow")?;
+    let samples = samples
+        .checked_add(record.samples)
+        .context("progress sample overflow")?;
+    Ok((frames, samples))
 }
 
 pub(super) fn load_normalization(prepared: &Path, assets: &Path) -> Result<NormalizationState> {
@@ -436,15 +654,21 @@ fn capture_file(path: &Path, work: &Path, assets: &Path) -> Result<RootedFile> {
     };
     Ok(RootedFile {
         root: root.into(),
-        file: scene_delivery::FileRef {
-            path: relative
-                .to_str()
-                .context("non-UTF8 prepared path")?
-                .replace('\\', "/")
-                .into(),
-            sha256: file_sha(&path)?,
-            bytes: fs::metadata(path)?.len(),
-        },
+        file: capture_relative_file(&path, relative)?,
+    })
+}
+
+// Pin a file whose containment was established by the caller. The stored
+// relative name is portable across staging workspaces.
+fn capture_relative_file(path: &Path, relative: &Path) -> Result<scene_delivery::FileRef> {
+    Ok(scene_delivery::FileRef {
+        path: relative
+            .to_str()
+            .context("non-UTF8 prepared path")?
+            .replace('\\', "/")
+            .into(),
+        sha256: file_sha(path)?,
+        bytes: fs::metadata(path)?.len(),
     })
 }
 
@@ -675,13 +899,13 @@ mod tests {
     fn normalization_progress_replacement_preserves_previous_checkpoint_on_refusal() {
         let workspace = tempfile::tempdir().unwrap();
         let path = workspace.path().join("normalization-progress.json");
-        publish_normalization_progress(workspace.path(), b"first").unwrap();
+        publish_checkpoint(&path, b"first").unwrap();
         let at_limit = vec![b' '; CHECKPOINT_LIMIT as usize];
-        publish_normalization_progress(workspace.path(), &at_limit).unwrap();
+        publish_checkpoint(&path, &at_limit).unwrap();
         assert_eq!(bounded_bytes(&path).unwrap(), at_limit);
 
         let oversized = vec![b' '; CHECKPOINT_LIMIT as usize + 1];
-        assert!(publish_normalization_progress(workspace.path(), &oversized).is_err());
+        assert!(publish_checkpoint(&path, &oversized).is_err());
         assert_eq!(bounded_bytes(&path).unwrap(), at_limit);
         fs::write(&path, oversized).unwrap();
         assert!(bounded_bytes(&path).is_err());

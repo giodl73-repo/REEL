@@ -85,3 +85,27 @@ accepts no checkpoint or metadata-output seeds. V3 recovery and fresh V2 windows
 can independently request the existing single bounded timeout window; at least
 one explicit extension is required. Neither command starts a daemon, restores an
 old workspace in place, accesses archives, or changes sharing/publication rights.
+
+## Native episode normalization
+
+Set `preserve_workspace_on_failure` to true in the episode profile to save a
+checkpoint after each verified segment. To stop at a known boundary, optionally
+set `pause_after_normalized_segments`. A paused run returns its owned job ID and
+the exact request and ticket pins.
+
+Create an inspection JSON with the absolute staging `workspace`, the
+`request` and `ticket` objects returned by the run, and the number of
+consecutive `completed` segments to reuse. Keep the original episode profile.
+
+1. Run `reel-tig-job describe-episode-resume PROFILE INSPECTION` to inspect
+   the prefix and see its exact object pins.
+2. Run `reel-tig-job retain-episode-resume PROFILE INSPECTION` and save its
+   JSON response as the retention receipt.
+3. Run `reel-tig-job resume-episode PROFILE INSPECTION RETENTION_RECEIPT`.
+   The runner stages verified checkpoint objects in a fresh workspace and
+   continues the original conform from the first unfinished segment.
+
+The original source claim must remain current throughout recovery. The resumed
+job publishes and checks the full episode before retiring its own scratch. The
+interrupted workspace and its checkpoint claim remain available for explicit
+cleanup.

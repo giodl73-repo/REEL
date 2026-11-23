@@ -101,6 +101,28 @@ impl ProtectedComposition<'_, '_> {
         files: CompositionFiles<'_>,
         presentations: PresentationComponents<'_>,
     ) -> Result<RenderedComposition<'_>> {
+        self.assemble_with_checkpoint(
+            source,
+            children,
+            journal,
+            output,
+            files,
+            presentations,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn assemble_with_checkpoint(
+        &self,
+        source: &Source,
+        children: &ProtectedScenes<'_, '_>,
+        journal: &mut SourceJournal,
+        output: &Path,
+        files: CompositionFiles<'_>,
+        presentations: PresentationComponents<'_>,
+        checkpoint: Option<episode_conform::NativeNormalization<'_>>,
+    ) -> Result<RenderedComposition<'_>> {
         let plan = self.plan();
         if plan.current_controls.is_some() {
             if !presentations.files.is_empty() || !presentations.controls.is_empty() {
@@ -169,9 +191,10 @@ impl ProtectedComposition<'_, '_> {
                     &scenes,
                     &plan.presentations,
                     &plan.scene_references,
+                    checkpoint,
                 )?
             } else {
-                episode_conform::build_with_component_controls(
+                episode_conform::build_with_component_checkpoint(
                     reference,
                     output,
                     episode_conform::Files {
@@ -185,6 +208,7 @@ impl ProtectedComposition<'_, '_> {
                         scenes: files.scenes,
                         presentations: presentations.controls,
                     },
+                    checkpoint,
                 )?
             };
             if receipt.manifest_sha256 != plan.conform.sha256.as_str()
