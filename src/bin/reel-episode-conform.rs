@@ -79,7 +79,8 @@ fn run() -> Result<()> {
     #[cfg(feature = "tig-publication")]
     if let [_, command, request, root_flag, root] = args.as_slice() {
         if command == "describe-part-job" && root_flag == "--asset-root" {
-            let job = reel::episode_conform::parts::describe_job(Path::new(request), Path::new(root))?;
+            let job =
+                reel::episode_conform::parts::describe_job(Path::new(request), Path::new(root))?;
             println!("{}", serde_json::to_string_pretty(&job)?);
             return Ok(());
         }

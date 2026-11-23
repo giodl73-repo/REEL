@@ -8,11 +8,11 @@ pub const RECEIPT: &str = "reel.episode-conform-receipt.v2";
 mod composition;
 #[cfg(feature = "tig-publication")]
 mod job;
-#[cfg(feature = "tig-publication")]
-pub use job::describe_job;
 pub use composition::{
     COMPOSED_FINALIZATION, COMPOSED_RECEIPT, ComposedReceipt, CompositionProvenance, compose,
 };
+#[cfg(feature = "tig-publication")]
+pub use job::describe_job;
 
 const PROFILE: &str = "h264-independent-crf-yuv420p-bf0-mp3-continuous.v1";
 
