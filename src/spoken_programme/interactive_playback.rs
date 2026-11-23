@@ -1,6 +1,7 @@
 //! Checked PCM delivery for the local interaction session.
-use super::{Session, checker::CheckedPackage, producer::read_source};
+use super::Session;
 use crate::scene_delivery::InputFiles;
+use crate::spoken_programme::{checker::CheckedPackage, producer::read_source};
 use anyhow::{Result, anyhow, ensure};
 
 const FRAME_BYTES: usize = 6;
