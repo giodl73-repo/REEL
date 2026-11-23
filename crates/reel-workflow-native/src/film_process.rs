@@ -372,6 +372,27 @@ fn collect(workspace: &Path, limits: &Limits) -> Result<Rendered> {
         _directories: directories,
     })
 }
+
+fn collect_recovered_render(workspace: &Path, limits: &Limits) -> Result<Rendered> {
+    let output = workspace.join("delivery");
+    if let Err(err) = fs::symlink_metadata(&output) {
+        return Err(if err.kind() == std::io::ErrorKind::NotFound {
+            error(ErrorKind::NeedsRecovery, "film-process-incomplete-render")
+        } else {
+            io_error(err)
+        });
+    }
+    let _output_directory = directory(&output)?;
+    if let Err(err) = fs::symlink_metadata(output.join("receipt.json")) {
+        return Err(if err.kind() == std::io::ErrorKind::NotFound {
+            error(ErrorKind::NeedsRecovery, "film-process-incomplete-render")
+        } else {
+            io_error(err)
+        });
+    }
+    collect(workspace, limits)
+}
+
 fn launch(request: &Request, name: &str) -> Result<BTreeMap<String, FileRef>> {
     let runtime = &request.runtime;
     let _runtime = crate::hold_tool(runtime)?;
@@ -592,7 +613,7 @@ pub fn recover(
     if actual != expected {
         return Err(error(ErrorKind::Conflict, "film-process-original-request"));
     }
-    let rendered = collect(directory.path(), limits)?;
+    let rendered = collect_recovered_render(directory.path(), limits)?;
     let mut check = original;
     check.action = Action::Check;
     let proof = if directory.path().join("check-request.json").exists() {

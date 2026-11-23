@@ -30,6 +30,28 @@ fn tool(path: PathBuf) -> Tool {
 }
 
 #[test]
+fn recovery_distinguishes_an_incomplete_render_from_corrupt_evidence() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    for partially_written in [false, true] {
+        let output = root.join("delivery");
+        if partially_written {
+            fs::create_dir(&output).unwrap();
+            fs::write(output.join("partial.mp4"), b"partial").unwrap();
+        }
+        let err = collect_recovered_render(&root, &limits()).err().unwrap();
+        assert_eq!(err.kind, ErrorKind::NeedsRecovery);
+        assert_eq!(err.code, "film-process-incomplete-render");
+    }
+    let output = root.join("delivery");
+    assert_eq!(fs::read(output.join("partial.mp4")).unwrap(), b"partial");
+    fs::write(output.join("receipt.json"), b"{").unwrap();
+    let err = collect_recovered_render(&root, &limits()).err().unwrap();
+    assert_eq!(err.kind, ErrorKind::Integrity);
+    assert_eq!(err.code, "film-process-receipt");
+}
+
+#[test]
 fn declared_five_hour_large_master_bounds_are_distinct_from_admission() {
     let mut budget = limits();
     budget.timeout_seconds = 18_000;
