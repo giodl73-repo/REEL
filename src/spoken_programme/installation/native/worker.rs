@@ -41,6 +41,7 @@ pub struct WorkerSession {
     source_fault: bool,
     fault_reported: bool,
     closing: bool,
+    cleanup_deadline_us: u64,
     acknowledgements: VecDeque<DisplayAck>,
 }
 
@@ -51,12 +52,14 @@ pub struct WorkerClosure {
     pub channel: Channel,
     pub report: Output,
     pub generation: u64,
+    clock: OutputClock,
+    cleanup_deadline_us: u64,
     _runtime: Arc<RuntimeBinding>,
 }
 impl WorkerClosure {
-    /// Deliver the actual close observation within the owner's existing
-    /// deadline. Keep the pipe alive until the matching display receipt.
-    pub fn deliver(mut self, parent_pid: u32, deadline: Instant) -> Result<()> {
+    /// Keep IPC alive for the matching display receipt within the cleanup
+    /// budget that started before source and output teardown.
+    pub fn deliver(mut self, parent_pid: u32) -> Result<()> {
         use super::protocol::Input;
         let report_counter = match &self.report {
             Output::Ended {
@@ -71,13 +74,13 @@ impl WorkerClosure {
             _ => anyhow::bail!("installation invalid final report"),
         };
         ensure!(
-            Instant::now() < deadline && self.channel.verify_peer(parent_pid)?,
+            self.cleanup_time_left() && self.channel.verify_peer(parent_pid)?,
             "installation final delivery unavailable"
         );
         self.channel.send(self.generation, &self.report.bytes()?)?;
         loop {
             ensure!(
-                Instant::now() < deadline && self.channel.verify_peer(parent_pid)?,
+                self.cleanup_time_left() && self.channel.verify_peer(parent_pid)?,
                 "installation final delivery deadline or peer failure"
             );
             if let Some(packet) = self.channel.receive() {
@@ -95,10 +98,15 @@ impl WorkerClosure {
         }
         self.channel.shutdown()?;
         ensure!(
-            Instant::now() <= deadline,
+            self.cleanup_time_left(),
             "installation final shutdown deadline"
         );
         Ok(())
+    }
+    fn cleanup_time_left(&self) -> bool {
+        self.clock
+            .now_us()
+            .is_some_and(|now| now < self.cleanup_deadline_us)
     }
 }
 
@@ -131,6 +139,7 @@ impl WorkerSession {
             source_fault: false,
             fault_reported: false,
             closing: false,
+            cleanup_deadline_us: MAX_SESSION_MS * 1000 + 2_000_000,
             acknowledgements: VecDeque::with_capacity(8),
         })
     }
@@ -194,6 +203,9 @@ impl WorkerSession {
         }
         let result = self.tick_inner();
         if result.is_err() {
+            if let Some(now) = self.clock.now_us() {
+                self.limit_cleanup(now);
+            }
             let _ = self.fault();
             self.gate.end();
             self.closing = true;
@@ -406,6 +418,13 @@ impl WorkerSession {
                 received_counter,
                 generation,
             } => {
+                if command == Command::Quit {
+                    let receipt = self
+                        .clock
+                        .elapsed_at(received_counter)
+                        .ok_or_else(|| anyhow::anyhow!("installation quit receipt clock"))?;
+                    self.limit_cleanup(receipt);
+                }
                 self.track(id, received_counter)?;
                 if self.controller.is_some() {
                     self.controller.as_mut().unwrap().command(
@@ -577,8 +596,15 @@ impl WorkerSession {
             channel: self.channel,
             report,
             generation,
+            clock: self.clock,
+            cleanup_deadline_us: self.cleanup_deadline_us,
             _runtime: self.runtime,
         })
+    }
+    fn limit_cleanup(&mut self, started_us: u64) {
+        self.cleanup_deadline_us = self
+            .cleanup_deadline_us
+            .min(started_us.saturating_add(2_000_000));
     }
 }
 
@@ -638,12 +664,7 @@ mod tests {
             }
         ));
         if mode == 0 {
-            closure
-                .deliver(
-                    invitation.server_process_id,
-                    Instant::now() + Duration::from_secs(2),
-                )
-                .unwrap();
+            closure.deliver(invitation.server_process_id).unwrap();
             return;
         }
         closure
@@ -750,6 +771,7 @@ mod tests {
                 let (mut input, mut lines) = input_pool.channel();
                 let (mut fault, mut status, mut status_ack, mut quit) =
                     (false, false, false, false);
+                let mut quit_receipt = 0;
                 while !foreground.final_displayed() {
                     for _ in 0..8 {
                         let Some(line) = lines.receive() else {
@@ -806,7 +828,8 @@ mod tests {
                         && input_pool.occupied() == 0
                         && !quit
                     {
-                        input.line("quit", counter().unwrap()).unwrap();
+                        quit_receipt = counter().unwrap();
+                        input.line("quit", quit_receipt).unwrap();
                         quit = true;
                     }
                     assert!(Instant::now() < deadline);
@@ -822,6 +845,10 @@ mod tests {
                 let result = job.join().unwrap();
                 assert!(result.is_ok(), "{result:?}");
                 foreground.shutdown_channel().unwrap();
+                assert!(
+                    clock.now_us().unwrap() - clock.elapsed_at(quit_receipt).unwrap() < 2_000_000,
+                    "contained worker reaping and IPC shutdown exceeded the Quit budget"
+                );
                 return;
             }
             let deadline = Instant::now() + Duration::from_secs(12);
