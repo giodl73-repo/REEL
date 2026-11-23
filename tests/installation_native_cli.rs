@@ -52,6 +52,7 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
         ],
         10,
         None,
+        &[],
     );
     let error = result.expect_err("a closed source fault must remain visible in the exit status");
     assert!(
@@ -146,6 +147,7 @@ fn actual_station_refuses_changed_endpoint_configuration() {
         &[(b"Fault", b"quit\r")],
         45,
         None,
+        &[],
     );
     let error = result.expect_err("a changed endpoint configuration must fault");
     assert!(
@@ -199,6 +201,27 @@ fn actual_station_start_and_stop_acknowledgements_meet_outer_deadline() {
     assert_acknowledgement_time("Start", elapsed[1]);
     assert_playing_time("Start", elapsed[2], 2);
     assert_acknowledgement_time("Stop", elapsed[3]);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "dedicated Stop capture stimulus; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_stop_leaves_a_quiescence_observation_window() {
+    use std::time::Duration;
+    let elapsed = run_station_with_delays(
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b"stop\r"),
+            (b"Command 2: Stopped", b"quit\r"),
+        ],
+        45,
+        &[
+            Duration::ZERO,
+            Duration::from_millis(300),
+            Duration::from_millis(350),
+        ],
+    );
+    assert_acknowledgement_time("Stop", elapsed[2]);
 }
 
 #[cfg(windows)]
@@ -279,6 +302,15 @@ fn run_station(
     sequence: &[(&[u8], &[u8])],
     command_budget_seconds: u64,
 ) -> Vec<Option<std::time::Duration>> {
+    run_station_with_delays(sequence, command_budget_seconds, &[])
+}
+
+#[cfg(windows)]
+fn run_station_with_delays(
+    sequence: &[(&[u8], &[u8])],
+    command_budget_seconds: u64,
+    command_delays: &[std::time::Duration],
+) -> Vec<Option<std::time::Duration>> {
     let (path, request) = station_request();
     let trace = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE").map(std::path::PathBuf::from);
     let (result, steps, elapsed) = run_console(
@@ -287,6 +319,7 @@ fn run_station(
         sequence,
         command_budget_seconds,
         trace.as_deref(),
+        command_delays,
     );
     assert_eq!(
         steps,
@@ -304,6 +337,7 @@ fn run_console(
     steps: &[(&[u8], &[u8])],
     command_budget_seconds: u64,
     trace_path: Option<&std::path::Path>,
+    command_delays: &[std::time::Duration],
 ) -> (Result<(), String>, usize, Vec<Option<std::time::Duration>>) {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
@@ -426,6 +460,9 @@ fn run_console(
                 let duration = last_command.map(|sent| seen.duration_since(sent));
                 let mut sent_ns = None;
                 if !line.is_empty() {
+                    if let Some(delay) = command_delays.get(index) {
+                        std::thread::sleep(*delay);
+                    }
                     last_command = Some(Instant::now());
                     sent_ns = qpc_ns();
                     if input.write_all(line).is_err() {

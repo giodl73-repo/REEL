@@ -747,6 +747,11 @@ marker before Stop and packet coverage through the next 250 ms. It measures
 from before sending Stop to the first frame of sustained digital silence.
 Missing packets or a recording that ends before that window cannot establish
 quiescence. This is a render-mix measurement.
+For this run, use `actual_station_stop_leaves_a_quiescence_observation_window`
+with the recorder and console trace enabled. The test waits 300 ms after
+visible Playing before sending Stop, and another 350 ms after the numbered
+Stop reply before sending Quit. The Dell playback-only test verified both
+delays in the trace. A capture still has to prove packet coverage.
 
 `actual_station_status_acknowledgement_meets_outer_deadline` times from
 before typing Status into the pseudoconsole to the reader observing its
