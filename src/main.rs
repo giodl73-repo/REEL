@@ -727,6 +727,15 @@ fn run_cli() -> Result<()> {
                 serde_json::to_string_pretty(&reel::spoken_programme::validate(&document)?)?
             );
         }
+        Command::SpokenEditionImpact {
+            previous,
+            current,
+            profile,
+        } => {
+            let report =
+                reel::spoken_programme::compiler::impact_file(&previous, &current, profile)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -3027,6 +3036,13 @@ enum Command {
         edition: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
+        profile: reel::spoken_programme::compiler::CompilationProfile,
+    },
+    /// Identify spoken editions affected by a changed declaration or selected take.
+    SpokenEditionImpact {
+        previous: PathBuf,
+        current: PathBuf,
         #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
         profile: reel::spoken_programme::compiler::CompilationProfile,
     },
