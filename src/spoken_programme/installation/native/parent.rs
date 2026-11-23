@@ -2,7 +2,7 @@
 //! remain separate: display confirmation is an integration boundary, not proof
 //! that any particular console has rendered these observations.
 use super::{
-    console::{ConsoleReader, ConsoleRenderer},
+    console::{ConsoleInterrupt, ConsoleReader, ConsoleRenderer},
     input::{CommandLease, CommandPool, InputReceiver, QueuedCommand},
     output::OutputClock,
     pipe::Channel,
@@ -708,11 +708,7 @@ impl ParentSession {
         if finished {
             match reader.shutdown() {
                 Ok(Some(receipt)) if !self.quit => {
-                    if let Err(error) = self.command(Command::Quit, receipt) {
-                        self.fault();
-                        self.local_command(Command::Quit)?;
-                        return Err(error);
-                    }
+                    self.quit_from_console(receipt)?;
                 }
                 Ok(_) => {}
                 Err(error) => {
@@ -720,6 +716,24 @@ impl ParentSession {
                     return Err(error);
                 }
             }
+        }
+        Ok(())
+    }
+    /// Poll before reader results so an interrupt wins over a native read
+    /// cancellation. The owner still joins the reader off the control loop.
+    pub fn poll_console_interrupt(&mut self, interrupt: &ConsoleInterrupt) -> Result<()> {
+        if !self.quit
+            && let Some(receipt) = interrupt.receipt()
+        {
+            self.quit_from_console(receipt)?;
+        }
+        Ok(())
+    }
+    fn quit_from_console(&mut self, receipt: i64) -> Result<()> {
+        if let Err(error) = self.command(Command::Quit, receipt) {
+            self.fault();
+            self.local_command(Command::Quit)?;
+            return Err(error);
         }
         Ok(())
     }

@@ -11,7 +11,7 @@ use std::{
     os::windows::io::{AsHandle, AsRawHandle},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI64, Ordering},
     },
     thread::JoinHandle,
 };
@@ -22,6 +22,61 @@ use windows::Win32::{
 
 fn handle(file: &File) -> HANDLE {
     HANDLE(file.as_raw_handle())
+}
+
+static INTERRUPT_REGISTERED: AtomicBool = AtomicBool::new(false);
+static INTERRUPT_RECEIPT: AtomicI64 = AtomicI64::new(0);
+
+unsafe extern "system" fn console_interrupt(event: u32) -> windows::core::BOOL {
+    if event != CTRL_C_EVENT {
+        return false.into();
+    }
+    let mut counter = 0;
+    if unsafe { QueryPerformanceCounter(&mut counter) }.is_err() || counter <= 0 {
+        counter = -1;
+    }
+    let _ = INTERRUPT_RECEIPT.compare_exchange(0, counter, Ordering::Release, Ordering::Relaxed);
+    true.into()
+}
+
+/// Owns the process-local Ctrl+C handler for the foreground session.
+pub struct ConsoleInterrupt {
+    registered: bool,
+}
+impl ConsoleInterrupt {
+    pub fn install() -> Result<Self> {
+        ensure!(
+            INTERRUPT_REGISTERED
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok(),
+            "installation console interrupt handler already installed"
+        );
+        INTERRUPT_RECEIPT.store(0, Ordering::Release);
+        if let Err(error) = unsafe { SetConsoleCtrlHandler(Some(console_interrupt), true) } {
+            INTERRUPT_REGISTERED.store(false, Ordering::Release);
+            return Err(error.into());
+        }
+        Ok(Self { registered: true })
+    }
+    pub(super) fn receipt(&self) -> Option<i64> {
+        let counter = INTERRUPT_RECEIPT.load(Ordering::Acquire);
+        (self.registered && counter != 0).then_some(counter)
+    }
+    pub fn shutdown(&mut self) -> Result<()> {
+        if self.registered {
+            unsafe {
+                SetConsoleCtrlHandler(Some(console_interrupt), false)?;
+            }
+            self.registered = false;
+            INTERRUPT_REGISTERED.store(false, Ordering::Release);
+        }
+        Ok(())
+    }
+}
+impl Drop for ConsoleInterrupt {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
 }
 struct Environment {
     input: File,
@@ -746,6 +801,35 @@ mod tests {
             assert!(received_counter >= last_receipt && received_counter > 0);
             last_receipt = received_counter;
         }
+        let mut interrupted = super::super::parent::tests::fixture();
+        let mut interrupt = ConsoleInterrupt::install().unwrap();
+        assert!(ConsoleInterrupt::install().is_err());
+        std::fs::write(
+            "console-interrupt-ready.marker",
+            b"Ctrl+C handler installed",
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !interrupted.parent.quit_requested() {
+            interrupted
+                .parent
+                .poll_console_interrupt(&interrupt)
+                .unwrap();
+            assert!(Instant::now() < deadline, "Ctrl+C deadline");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let packet = super::super::parent::tests::receive(&mut interrupted.peer);
+        assert!(matches!(
+            super::super::protocol::Input::parse(&packet).unwrap(),
+            super::super::protocol::Input::Control { id: 1, command: Command::Quit, received_counter }
+                if Some(received_counter) == interrupt.receipt()
+        ));
+        interrupted
+            .parent
+            .poll_console_interrupt(&interrupt)
+            .unwrap();
+        assert_eq!(interrupted.parent.outstanding(), 1);
+        interrupt.shutdown().unwrap();
         let mut renderer = ConsoleRenderer::start(surface).unwrap();
         let display = || DisplayItem {
             ticket: DisplayTicket::fixture(),
@@ -941,6 +1025,15 @@ mod tests {
                 .unwrap()
                 .write_all(b"status\r\x1a\r")
                 .unwrap();
+            while !root.path().join("console-interrupt-ready.marker").is_file() {
+                assert!(!job.is_finished(), "console child exited before Ctrl+C");
+                assert!(
+                    Instant::now() < until,
+                    "console interrupt handshake deadline"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            capture.input.as_mut().unwrap().write_all(&[3]).unwrap();
             while !root.path().join("console-resize-ready.marker").is_file() {
                 assert!(
                     !job.is_finished(),
