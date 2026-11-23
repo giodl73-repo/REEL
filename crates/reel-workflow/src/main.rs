@@ -84,6 +84,7 @@ reel-workflow prepare-film-rebuild REQUEST SHA256 NEW_DIRECTORY\n\
 reel-workflow export-task PLAN TASK NEW_PACKET\n\
 reel-workflow export-work PLAN TASK ATTEMPT DEPENDENCIES_JSON NEW_DIRECTORY\n\
 reel-workflow check-result PACKET RESULT [FILE_BINDINGS_JSON]\n\
+reel-workflow check-speech-handoff PACKET RESULT RECEIPT\n\
 reel-workflow capture-work WORK_DIRECTORY ATTEMPT FILE_BINDINGS_JSON NEW_CANDIDATE_DIRECTORY\n\
 reel-workflow accept-work WORK_DIRECTORY ATTEMPT RESULT FILE_BINDINGS_JSON NEW_CANDIDATE_DIRECTORY\n\
 reel-workflow check-handoff DIRECTORY\n\
