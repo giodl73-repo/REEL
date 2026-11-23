@@ -12,6 +12,33 @@ use super::{
 use std::{collections::VecDeque, sync::Arc};
 use windows::Win32::System::Performance::QueryPerformanceCounter;
 
+/// Private launch context supplied by the foreground process owner.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkerBootstrap {
+    pub invitation: Invitation,
+    pub origin_counter: i64,
+    pub frequency: i64,
+}
+
+/// Run inside the contained child. The channel and runtime binding must
+/// authenticate before WorkerSession starts checking original media.
+pub fn run_worker(raw: &[u8], bootstrap: WorkerBootstrap) -> Result<()> {
+    let clock = OutputClock::from_origin(bootstrap.origin_counter, bootstrap.frequency)?;
+    let runtime = Arc::new(RuntimeBinding::bind(raw)?);
+    let channel = Channel::connect(&bootstrap.invitation)?;
+    let mut worker = WorkerSession::new(runtime, channel, &bootstrap.invitation, clock)?;
+    while !worker.closing() {
+        worker.tick()?;
+        if !worker.closing() {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+    worker
+        .finish()?
+        .deliver(bootstrap.invitation.server_process_id)
+}
+
 struct DisplayAck {
     id: u64,
     received_us: u64,
@@ -629,15 +656,27 @@ mod tests {
     #[ignore = "contained worker fixture; explicitly launched by parent"]
     fn contained_worker_fixture() {
         let raw = std::fs::read("session.json").unwrap();
-        let runtime = Arc::new(RuntimeBinding::bind(&raw).unwrap());
         let invitation: Invitation =
             serde_json::from_slice(&std::fs::read("invitation.json").unwrap()).unwrap();
         let (origin, frequency): (i64, i64) =
             serde_json::from_slice(&std::fs::read("clock.json").unwrap()).unwrap();
+        let mode: u8 = serde_json::from_slice(&std::fs::read("mode.json").unwrap()).unwrap();
+        if mode == 0 {
+            run_worker(
+                &raw,
+                WorkerBootstrap {
+                    invitation,
+                    origin_counter: origin,
+                    frequency,
+                },
+            )
+            .unwrap();
+            return;
+        }
+        let runtime = Arc::new(RuntimeBinding::bind(&raw).unwrap());
         let clock = OutputClock::from_origin(origin, frequency).unwrap();
         let channel = Channel::connect(&invitation).unwrap();
         let mut worker = WorkerSession::new(runtime, channel, &invitation, clock).unwrap();
-        let mode: u8 = serde_json::from_slice(&std::fs::read("mode.json").unwrap()).unwrap();
         let mut rejected = false;
         let deadline = Instant::now() + Duration::from_secs(12);
         while !worker.closing() {
@@ -667,10 +706,6 @@ mod tests {
                 ..
             }
         ));
-        if mode == 0 {
-            closure.deliver(invitation.server_process_id).unwrap();
-            return;
-        }
         closure
             .channel
             .send(closure.generation, &closure.report.bytes().unwrap())

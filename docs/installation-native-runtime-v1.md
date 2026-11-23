@@ -492,6 +492,12 @@ allowance. The contained missing-original fixture measures through child
 reaping and foreground IPC shutdown. Production process ownership still needs
 to enforce that budget if a native operation blocks.
 
+The private Windows `__session-worker` entry point takes the bounded session
+request and bootstrap files. The bootstrap carries the authenticated channel
+invitation and the foreground's performance counter origin. The child binds
+its runtime before entering the authenticated worker loop, then tears down its
+resources and waits for the final display receipt.
+
 The reader and renderer own their blocking operations on separate threads.
 `ParentSession::tick_with_renderer` polls the renderer and acknowledges each
 ticket only after a successful console operation. The headless fixture verifies

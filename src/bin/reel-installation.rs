@@ -29,6 +29,12 @@ enum Action {
     },
     #[command(name = "__probe-worker", hide = true)]
     Worker,
+    #[cfg(windows)]
+    #[command(name = "__session-worker", hide = true)]
+    SessionWorker {
+        request: PathBuf,
+        bootstrap: PathBuf,
+    },
 }
 fn bytes(path: &Path, max: usize) -> Result<Vec<u8>> {
     let file = File::open(path)?;
@@ -95,6 +101,13 @@ fn run() -> Result<()> {
             );
         }
         Action::Worker => native::probe_worker()?,
+        #[cfg(windows)]
+        Action::SessionWorker { request, bootstrap } => {
+            native::worker::run_worker(
+                &bytes(&request, native::MAX_SESSION_REQUEST_BYTES)?,
+                load(&bootstrap)?,
+            )?;
+        }
     }
     Ok(())
 }
