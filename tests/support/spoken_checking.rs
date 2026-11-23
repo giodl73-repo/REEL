@@ -6,6 +6,9 @@ use reel::spoken_programme::{
 };
 use std::time::Duration;
 
+#[path = "interactive_branch_admission.rs"]
+mod interactive_branch_admission;
+
 fn checked(f: &Fixture, policy: &ProcessingPolicy) -> Result<CheckedPackage> {
     checker::check(
         CheckRequest {
@@ -221,6 +224,19 @@ fn four_transcripts_and_chapters_follow_edition_clock() {
         assert!(text.contains("Speaker 1:"));
         assert!(!text.contains("en-opening"));
     }
+}
+
+#[test]
+fn branch_admission_uses_verified_bilingual_records() {
+    let f = lexical_fixture();
+    let policy = ProcessingPolicy::identity();
+    f.produce(&policy).unwrap();
+    let mut result = checked(&f, &policy).unwrap();
+    let root = f.temp.path().join("branch-access");
+    checker::write_access(&mut result, &root, || Ok(())).unwrap();
+    let manifest = fs::read(root.join("access.json")).unwrap();
+    checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
+    interactive_branch_admission::assert_verified_bilingual_selections(&result);
 }
 
 #[test]

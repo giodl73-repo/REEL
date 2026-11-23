@@ -137,5 +137,7 @@ shape, including missing targets, unreachable nodes, ambiguous choices,
 cycles and language coverage. The `interactive_branch_admission` fixture
 uses separate synthetic programme and access identities and unequal EN/ES
 spans. It rejects mismatched identity or span, missing editions and
-ambiguous checked records. The fixture models checked records in memory.
-Final M13 admission tests still need to use actual upstream verifier results.
+ambiguous checked records. The spoken programme media suite also feeds the
+admission fixture the existing checker's results for synthesized fixture PCM
+and verified EN/ES transcripts. Final M13 still needs this binding at the
+branch entry point after its merged dependency is available.

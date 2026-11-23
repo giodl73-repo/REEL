@@ -1,5 +1,6 @@
 //! Preparatory oracles for binding a node to an already checked selection.
 use anyhow::{Result, ensure};
+use reel::spoken_programme::checker::CheckedPackage;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct Selection<'a> {
@@ -37,6 +38,58 @@ fn admit<'a>(requested: Selection<'a>, checked: &[Selection<'a>]) -> Result<Sele
         "checked media span differs"
     );
     Ok(*observed)
+}
+
+pub(super) fn assert_verified_bilingual_selections(package: &CheckedPackage) {
+    assert!(package.summary().access_checked);
+    let checked = ["en-executive", "es-executive"].map(|id| {
+        let edition = package
+            .access()
+            .editions
+            .iter()
+            .find(|edition| edition.edition_id == id)
+            .unwrap();
+        let chapter = &edition.chapters[0];
+        Selection {
+            edition: &edition.edition_id,
+            language: &edition.language,
+            module: &chapter.module_id,
+            programme_sha256: &edition.wave.sha256,
+            access_sha256: &edition.transcript.sha256,
+            first_frame: chapter.start_sample,
+            end_frame: chapter.end_sample,
+        }
+    });
+    let [en, es] = checked;
+    assert_eq!(
+        (en.language, en.first_frame, en.end_frame),
+        ("en", 0, 144_000)
+    );
+    assert_eq!(
+        (es.language, es.first_frame, es.end_frame),
+        ("es", 0, 168_000)
+    );
+    assert_eq!(admit(es, &checked).unwrap(), es);
+    assert!(
+        admit(
+            Selection {
+                end_frame: en.end_frame,
+                ..es
+            },
+            &checked
+        )
+        .is_err()
+    );
+    assert!(
+        admit(
+            Selection {
+                access_sha256: en.access_sha256,
+                ..es
+            },
+            &checked
+        )
+        .is_err()
+    );
 }
 
 const EN: Selection<'static> = Selection {
