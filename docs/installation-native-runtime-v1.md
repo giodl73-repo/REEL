@@ -621,6 +621,25 @@ the configuration fingerprint and bounds it by the pinned CPAL WASAPI
 enumerator's maximum. These are metadata observations. The effective callback
 period, submitted samples and capture timing still require a station run.
 
+### Stage the private station request
+
+1. Build and retain the Windows player. Record its exact file reference, source
+   commit, Cargo.lock file reference and CPAL version. Use that same player for
+   the metadata probe and the session.
+2. Probe the explicitly named candidate endpoint and take the `binding` object
+   from the private observation. Combine it with the exported `original` object
+   and the separately recorded `playback` context in a
+   `reel.installation-session.v1` request. Set `edition_id` to `en-technical`
+   and `passes` to `2`.
+3. Run `validate-session REQUEST` and `check-session REQUEST`. Require two
+   passes of 144,000 source frames, guarded original reads, and the original
+   PCM, access and producer-image checks. These commands leave the endpoint
+   unopened.
+4. Confirm isolation on the selected output and declare the capture point
+   before running the [station measurements](offline-installation-v1.md).
+   Retain exact capture and runtime evidence privately. Metadata for candidate
+   endpoints can be staged in advance of choosing the station output.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 
