@@ -53,6 +53,9 @@ pub struct Request {
     pub workspace: WorkspaceProfile,
     pub retained: crate::retention::Target,
     pub close_operation: tig_store::Key,
+    /// Optional exact still-repair intent. Old requests serialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_derivation: Option<crate::film_controls::Derivation>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +174,14 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
     )?
     .reopen(&request.receipt)?;
     let mut native = NativeInputs::from_claims(&request.packet, &request.source, claims)?;
+    let control_verification = request
+        .control_derivation
+        .as_ref()
+        .map(|spec| crate::film_controls::verify(&request.packet, &mut native, spec))
+        .transpose()?;
+    // End this byte-reading pass before bind reopens the same candidate job.
+    // Keep the exact snapshot and durable child claims; bind rechecks its pins.
+    native.held.clear();
     let bound = film_task::bind(&request.packet, &mut native)?;
     let maximum = bound
         .request()
@@ -213,10 +224,13 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
     fs::create_dir(root.path().join("work")).map_err(io_error)?;
     let work = open_workspace_directory(&root.path().join("work"))
         .map_err(|_| error(ErrorKind::Denied, "film-cli-work-namespace"))?;
-    let intent = admission::encode(
-        &serde_json::json!({"schema":"reel.workflow-film-owned-workspace.v1","request_sha256":request_pin,
-        "operation_identity":operation_identity,"parent_identity":parent.identity(),"root_identity":root.identity(),"work_identity":work.identity()}),
-    )?;
+    let mut intent = serde_json::json!({"schema":"reel.workflow-film-owned-workspace.v1","request_sha256":request_pin,
+        "operation_identity":operation_identity,"parent_identity":parent.identity(),"root_identity":root.identity(),"work_identity":work.identity()});
+    if let Some(verified) = control_verification {
+        intent["control_verification"] = serde_json::to_value(verified)
+            .map_err(|_| error(ErrorKind::Invalid, "film-cli-control-verification-json"))?;
+    }
+    let intent = admission::encode(&intent)?;
     persist_new(&root.path().join("intent.json"), &intent)?;
     let ticket = Ticket {
         schema: "reel.workflow-film-workspace-ticket.v1".into(),
@@ -235,19 +249,19 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
     persist_new(&root.path().join("ticket.json"), &ticket.bytes()?)?;
     Ok(ticket)
 }
-struct Owned {
+pub(crate) struct Owned {
     _parent: WorkspaceDirectory,
     root: WorkspaceDirectory,
     work: WorkspaceDirectory,
     _controls: Vec<File>,
     _lease: capacity::Reservation,
 }
-fn open(
+fn validate_ticket(
     request: &Request,
     request_pin: &str,
     ticket_raw: &[u8],
     ticket_pin: &str,
-) -> Result<Owned> {
+) -> Result<Ticket> {
     if reel_workflow::digest(ticket_raw) != ticket_pin {
         return Err(error(ErrorKind::Integrity, "film-cli-ticket-pin"));
     }
@@ -260,6 +274,16 @@ fn open(
     {
         return Err(error(ErrorKind::Conflict, "film-cli-ticket-binding"));
     }
+    Ok(ticket)
+}
+
+pub(crate) fn open(
+    request: &Request,
+    request_pin: &str,
+    ticket_raw: &[u8],
+    ticket_pin: &str,
+) -> Result<Owned> {
+    let ticket = validate_ticket(request, request_pin, ticket_raw, ticket_pin)?;
     let parent = parent(request)?;
     if parent.path() != ticket.parent || parent.identity() != ticket.parent_identity {
         return Err(error(ErrorKind::Conflict, "film-cli-parent-replaced"));
@@ -323,6 +347,23 @@ pub enum Action {
     Close,
     RecoverClose,
 }
+
+fn retained_scene_evidence(
+    packet: &Packet,
+    result: &reel_workflow::ReturnedResult,
+    acknowledgement: &crate::retention::Acknowledgement,
+) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "task_id": packet.task.id,
+        "task_key": result.task_key,
+        "attempt_id": result.attempt_id,
+        "language": packet.task.language,
+        "artifacts": result.artifacts,
+        "worker_receipt": result.worker_receipt,
+        "retained_acknowledgement": acknowledgement.artifact()?,
+    }))
+}
+
 pub fn execute(
     request: &Request,
     request_pin: &str,
@@ -331,6 +372,14 @@ pub fn execute(
     action: Action,
 ) -> Result<serde_json::Value> {
     let owned = open(request, request_pin, ticket_raw, ticket_pin)?;
+    execute_owned(request, owned, action)
+}
+
+pub(crate) fn execute_owned(
+    request: &Request,
+    owned: Owned,
+    action: Action,
+) -> Result<serde_json::Value> {
     match action {
         Action::Run | Action::Resume => {
             let invocation = film_task::Invocation {
@@ -349,11 +398,14 @@ pub fn execute(
                     &request.receipt.attempt_id,
                 )?
                 .reopen(&request.receipt)?;
-                film_task::run(
-                    &request.packet,
-                    NativeInputs::from_claims(&request.packet, &request.source, claims)?,
-                    invocation,
-                )?
+                let mut native =
+                    NativeInputs::from_claims(&request.packet, &request.source, claims)?;
+                if let Some(spec) = &request.control_derivation {
+                    crate::film_controls::verify(&request.packet, &mut native, spec)?;
+                }
+                // run performs its own control bind and guarded file reopen.
+                native.held.clear();
+                film_task::run(&request.packet, native, invocation)?
             } else {
                 film_task::resume(
                     &request.packet,
@@ -363,9 +415,12 @@ pub fn execute(
                 )?
             };
             generated.ingest(&request.source, &request.admission)?;
-            generated.retain(&request.source, &request.admission, &request.retained)?;
+            let acknowledgement =
+                generated.retain(&request.source, &request.admission, &request.retained)?;
+            let evidence =
+                retained_scene_evidence(&request.packet, generated.result(), &acknowledgement)?;
             Ok(
-                serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false}),
+                serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false,"retained_scene":evidence}),
             )
         }
         _ => {
@@ -381,8 +436,9 @@ pub fn execute(
                     &result,
                     &ack,
                 )?;
+                let evidence = retained_scene_evidence(&request.packet, &result, &ack)?;
                 return Ok(
-                    serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false}),
+                    serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false,"retained_scene":evidence}),
                 );
             }
             let close_action = match action {

@@ -6,9 +6,13 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 pub mod film_inspect;
+pub mod film_rebuild;
+pub mod film_repair;
+pub mod film_review;
 pub mod handoff;
 pub mod input;
 pub mod manual;
+pub mod speech_handoff;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
 pub const SCOPED_PLAN_SCHEMA: &str = "reel.workflow-plan.v3";
@@ -695,3 +699,4 @@ fn portable_source(path: &str) -> bool {
         && !path.contains('\\')
         && path.split('/').all(reel_publication::valid_id)
 }
+pub mod upstream;

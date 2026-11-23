@@ -1,6 +1,7 @@
 //! Qualified SDK inputs, durable claims, private staging and response ingress.
 //! Guarded reads alone do not establish durable job or retained-result ownership.
 use reel_workflow::{Artifact, Error, ErrorKind, Packet, Result};
+mod output_bounds;
 mod pins;
 pub use pins::*;
 /// Bounded metadata/candidate reads. Retaining a file handle does not admit a job.
@@ -22,17 +23,25 @@ pub mod closing;
 #[cfg(all(windows, feature = "film"))]
 pub mod film_cli;
 #[cfg(all(windows, feature = "film"))]
+pub mod film_controls;
+#[cfg(all(windows, feature = "film"))]
 pub mod film_inputs;
 pub mod film_metadata;
 #[cfg(all(windows, feature = "film"))]
 pub mod film_process;
+pub mod film_rebuild;
 #[cfg(all(windows, feature = "film"))]
 pub mod film_task;
 pub mod handoff;
+#[cfg(windows)]
+pub mod image_selection;
 mod qualified;
 pub mod response;
 pub mod retention;
+#[cfg(windows)]
+pub mod selection;
 pub mod staging;
+pub mod upstream;
 use tig_git::{
     annex::workflow::reader,
     source::{
@@ -66,6 +75,8 @@ pub struct SnapshotProfile {
     pub input_streams: BTreeMap<String, Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub budget: Option<SnapshotBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream: Option<upstream::Frozen>,
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +89,7 @@ impl SnapshotProfile {
     /// Portable authored declaration; machine repository/tool locators are not
     /// authored identity. Pin these exact canonical bytes in task.native_inputs.
     pub fn declaration_bytes(&self) -> Result<Vec<u8>> {
+        self.input_limits()?;
         let mut value = serde_json::json!({"schema":"reel.workflow-native-bindings.v1",
             "commit":self.commit,"records":self.records,"definitions":self.definitions,
             "bindings":self.bindings,"input_streams":self.input_streams});
@@ -87,6 +99,10 @@ impl SnapshotProfile {
             value["budget"] = serde_json::to_value(budget)
                 .map_err(|_| error(ErrorKind::Invalid, "native-input-budget-json"))?;
         }
+        if let Some(origins) = &self.upstream {
+            value["schema"] = "reel.workflow-native-bindings.v3".into();
+            value["upstream"] = origins.declaration_pins()?;
+        }
         let bytes = tig_core::identity::canonical_json(&value)
             .map_err(|_| error(ErrorKind::Invalid, "native-binding-canonical-json"))?;
         if bytes.len() > reel_workflow::MAX_CONTROL_BYTES {
@@ -95,9 +111,12 @@ impl SnapshotProfile {
         Ok(bytes)
     }
     fn input_limits(&self) -> Result<(u64, u64)> {
-        match (&self.schema[..], &self.budget) {
-            ("reel.workflow-native-snapshot.v1", None) => Ok((64 * 1024 * 1024, 64 * 1024 * 1024)),
-            ("reel.workflow-native-snapshot.v2", Some(b))
+        match (&self.schema[..], &self.budget, self.upstream.is_some()) {
+            ("reel.workflow-native-snapshot.v1", None, false) => {
+                Ok((64 * 1024 * 1024, 64 * 1024 * 1024))
+            }
+            ("reel.workflow-native-snapshot.v2", Some(b), false)
+            | ("reel.workflow-native-snapshot.v3", Some(b), true)
                 if b.schema == "reel.workflow-native-input-budget.v1"
                     && b.input_object_bytes > 0
                     && b.input_object_bytes <= b.input_bytes
@@ -226,12 +245,11 @@ pub struct SnapshotInputs {
 impl SnapshotInputs {
     pub fn open(packet: &Packet, profile: &SnapshotProfile) -> Result<Self> {
         reel_workflow::check_packet(packet)?;
-        if packet.task.upstream_inputs.is_some() {
-            return Err(error(
-                ErrorKind::Unsupported,
-                "native-composite-input-adapter-not-enabled",
-            ));
-        }
+        let origins = match (&packet.task.upstream_inputs, &profile.upstream) {
+            (None, None) => BTreeMap::new(),
+            (Some(_), Some(frozen)) => frozen.bound(packet)?,
+            _ => return Err(error(ErrorKind::Conflict, "native-origin-declaration")),
+        };
         let (maximum, object_maximum) = profile.input_limits()?;
         if profile.commit != packet.source_commit {
             return Err(error(ErrorKind::Stale, "native-task-commit"));
@@ -255,9 +273,10 @@ impl SnapshotInputs {
             .task
             .inputs
             .iter()
+            .filter(|a| !origins.contains_key(&a.logical_id))
             .map(|a| a.logical_id.clone())
             .collect();
-        if ids.is_empty()
+        if (ids.is_empty() && profile.upstream.is_none())
             || profile.bindings.keys().cloned().collect::<BTreeSet<_>>() != ids
             || profile
                 .input_streams
@@ -285,10 +304,6 @@ impl SnapshotInputs {
                     .chain(b.streams.values().map(|p| p.as_str().to_owned()))
             })
             .collect();
-        let catalogue = Catalogue {
-            scope: scope(paths.into_iter().collect())?,
-            bindings: profile.bindings.clone(),
-        };
         let guard = hold_tool(&profile.git)?;
         let repository = Repository::new(
             profile.git.path.clone(),
@@ -297,6 +312,40 @@ impl SnapshotInputs {
         )
         .map_err(git_error)?;
         let snapshot = repository.commit(commit).map_err(git_error)?;
+        if ids.is_empty() {
+            if !profile.records.is_empty() || !profile.definitions.is_empty() {
+                return Err(error(ErrorKind::Conflict, "native-empty-git-scope"));
+            }
+            use tig_core::tree::NodeStore;
+            let mut metadata = tig_core::tree::MemoryNodes::default();
+            let raw = admission::encode(
+                &serde_json::json!({"schema":"reel.workflow-empty-git-inputs.v1","commit":profile.commit}),
+            )?;
+            let git = metadata
+                .put(&raw)
+                .map_err(|_| error(ErrorKind::Integrity, "native-empty-git-archive"))?;
+            let (archive, objects, declared_objects) = profile.upstream.as_ref().unwrap().archive(
+                packet,
+                &git,
+                &mut metadata,
+                BTreeMap::new(),
+                BTreeSet::new(),
+            )?;
+            return Ok(Self {
+                packet: packet.clone(),
+                objects,
+                checkpoint: archive.sha256.as_str().into(),
+                git: profile.git.clone(),
+                _git_guard: guard,
+                archive,
+                metadata,
+                declared_objects,
+            });
+        }
+        let catalogue = Catalogue {
+            scope: scope(paths.into_iter().collect())?,
+            bindings: profile.bindings.clone(),
+        };
         let bound = repository
             .native_annex(
                 &snapshot,
@@ -312,6 +361,9 @@ impl SnapshotInputs {
             .map_err(git_error)?;
         let mut objects = BTreeMap::new();
         for asset in &packet.task.inputs {
+            if origins.contains_key(&asset.logical_id) {
+                continue;
+            }
             let resolved = bound
                 .assets
                 .resolve_id(&asset.logical_id)
@@ -331,20 +383,31 @@ impl SnapshotInputs {
             .assets
             .archive_metadata(&mut metadata, tig_core::tree::TreeLimits::default())
             .map_err(git_error)?;
+        let declared = bound
+            .payloads
+            .bindings()
+            .iter()
+            .map(|b| b.object.clone())
+            .collect();
+        let (archive, objects, declared_objects) = if let Some(frozen) = &profile.upstream {
+            frozen.archive(packet, &archive, &mut metadata, objects, declared)?
+        } else {
+            (archive, objects, declared)
+        };
+        let checkpoint = if profile.upstream.is_some() {
+            archive.sha256.as_str().into()
+        } else {
+            bound.assets.checkpoint().as_str().into()
+        };
         Ok(Self {
             packet: packet.clone(),
             objects,
-            checkpoint: bound.assets.checkpoint().as_str().into(),
+            checkpoint,
             git: profile.git.clone(),
             _git_guard: guard,
             archive,
             metadata,
-            declared_objects: bound
-                .payloads
-                .bindings()
-                .iter()
-                .map(|b| b.object.clone())
-                .collect(),
+            declared_objects,
         })
     }
     pub fn input_count(&self) -> usize {

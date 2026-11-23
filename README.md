@@ -260,6 +260,7 @@ records the applied lenses, findings, corrections and remaining review limits.
 | [`crates/reel-workflow/`](crates/reel-workflow/README.md) | Task contracts, manual exchange and [film metadata sidecars](docs/workflow-film-inspection.md); no production admission |
 | [`crates/reel-publication/`](crates/reel-publication/README.md) | Shared artifact identities and named output contracts |
 | [`crates/reel-workflow-native/`](crates/reel-workflow-native/README.md) | Exact native inputs, protected manual handoffs and retained-result recovery |
+| [`crates/reel-workflow-http/`](crates/reel-workflow-http/README.md) | Bounded API/proxy POSTs, owned private evidence and common-contract candidates; native retention remains explicit |
 | `browser/assembly/` | Browser/WASM semantic workbench |
 | `manifests/` | Contracts, templates and synthetic fixtures |
 | `docs/` | [Task guides and reference index](docs/README.md) |

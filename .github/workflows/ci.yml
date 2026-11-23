@@ -24,7 +24,7 @@ jobs:
   # classifier or failed qualification cannot turn into a successful skipped job.
   rust:
     if: always()
-    needs: [changes, rust-tests]
+    needs: [changes, rust-tests, workflow-http-tests, workflow-ui-tests]
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest]
@@ -35,14 +35,20 @@ jobs:
           CLASSIFICATION: ${{ needs.changes.result }}
           DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
           QUALIFICATION: ${{ needs.rust-tests.result }}
+          HTTP_QUALIFICATION: ${{ needs.workflow-http-tests.result }}
+          UI_QUALIFICATION: ${{ needs.workflow-ui-tests.result }}
         run: |
           test "$CLASSIFICATION" = success
           if [ "$DOCS_ONLY" = true ]; then
             test "$QUALIFICATION" = skipped
+            test "$HTTP_QUALIFICATION" = skipped
+            test "$UI_QUALIFICATION" = skipped
             echo 'Documentation-only change: Rust compilation and media tests skipped.'
           else
             test "$DOCS_ONLY" = false
             test "$QUALIFICATION" = success
+            test "$HTTP_QUALIFICATION" = success
+            test "$UI_QUALIFICATION" = success
           fi
 
   ffmpeg-linux:
@@ -369,7 +375,14 @@ jobs:
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::scene_reference::retained_scene_matches_without_history_and_with_independent_owners --locked -- --ignored --exact
       - name: Verify retained scene proofs assemble a current owned parent with old jobs offline
         if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
-        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::verified_scene_owners_assemble_current_parent_and_survive_independent_withdrawal --locked -- --ignored --exact
+        run: |
+          cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent:: --locked -- --ignored --test-threads=1
+      - name: Verify English episode uses its own cue and conform
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::english_episode_assembles_with_its_own_take_and_alignment --locked -- --ignored --exact
+      - name: Verify one cel repair preserves both cue clocks
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::one_shared_cel_repairs_both_language_renders_with_exact_audio --locked -- --ignored --exact
       - name: Verify bounded episode CLI and complete temporary-owner handoff
         if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_movie --locked -- --ignored --exact
@@ -546,3 +559,56 @@ jobs:
             target/ci-motion/smooth-receipt-check.json
             target/ci-motion/smooth-caption-check.json
             target/render-environment.json
+
+  workflow-http-tests:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_TARGET_DIR: target/workflow-http
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: workflow-http-v1
+          workspaces: crates/reel-workflow-http -> ../../target/workflow-http
+      - name: Check bounded HTTP and proxy contracts without provider accounts
+        run: |
+          cargo fmt --manifest-path crates/reel-workflow-http/Cargo.toml -- --check
+          cargo clippy --manifest-path crates/reel-workflow-http/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path crates/reel-workflow-http/Cargo.toml --all-targets --locked
+
+  workflow-ui-tests:
+    needs: changes
+    if: needs.changes.outputs.docs_only == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    env:
+      CARGO_TARGET_DIR: target/workflow-ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: workflow-ui-v1
+          workspaces: crates/reel-workflow-ui -> ../../target/workflow-ui
+      - name: Check read-only board contracts and qualified Windows host
+        run: |
+          cargo fmt --manifest-path crates/reel-workflow-ui/Cargo.toml -- --check
+          cargo clippy --manifest-path crates/reel-workflow-ui/Cargo.toml --all-targets --locked -- -D warnings
+          cargo test --manifest-path crates/reel-workflow-ui/Cargo.toml --all-targets --locked
+          node --check crates/reel-workflow-ui/src/board.js

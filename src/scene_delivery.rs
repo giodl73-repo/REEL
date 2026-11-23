@@ -12,6 +12,7 @@ use std::{
 };
 mod master_proof;
 mod outputs;
+pub mod repair;
 pub use master_proof::{
     MasterProof, MasterProofFiles, prove_master, recheck_master_proof,
     recheck_master_proof_with_all_files, recheck_master_proof_with_output_files,

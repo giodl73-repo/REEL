@@ -179,6 +179,7 @@ struct WorkerReceipt {
 }
 /// Constructible only after exact task binding and actual contained production.
 pub struct Generated {
+    allowance: crate::output_bounds::Allowance,
     packet: Packet,
     source: String,
     receipt: admission::Receipt,
@@ -220,6 +221,7 @@ impl Generated {
                 returns: &self.returns,
                 root: self._workspace.path(),
                 worker_receipt: Some("worker-receipt.json"),
+                allowance: self.allowance,
             },
         )
     }
@@ -241,21 +243,23 @@ impl Generated {
         target: &crate::retention::Target,
     ) -> Result<crate::retention::Acknowledgement> {
         self.context(source)?;
-        let ack = crate::retention::retain_verified(
+        let ack = crate::retention::retain_bounded(
             &self.packet,
             source,
             profile,
             &self.receipt,
             &self.result,
             target,
+            self.allowance,
         )?;
-        let _proof = crate::retention::verify_qualified(
+        let _proof = crate::retention::verify_bounded(
             &self.packet,
             source,
             profile,
             &self.receipt,
             &self.result,
             &ack,
+            self.allowance,
         )?;
         let raw = ack.canonical_bytes()?;
         let path = self._workspace.path().join("retained.json");
@@ -280,10 +284,28 @@ pub fn verify_retained(
     result: &ReturnedResult,
     acknowledgement: &crate::retention::Acknowledgement,
 ) -> Result<crate::retention::RetainedGuard> {
+    let allowance = retained_allowance(packet, source, receipt, result)?;
+    crate::retention::verify_bounded(
+        packet,
+        source,
+        profile,
+        receipt,
+        result,
+        acknowledgement,
+        allowance,
+    )
+}
+pub(crate) fn retained_allowance(
+    packet: &Packet,
+    source: &NativeProfile,
+    receipt: &admission::Receipt,
+    result: &ReturnedResult,
+) -> Result<crate::output_bounds::Allowance> {
     use std::io::Read;
     reel_workflow::check_result(packet, result)?;
     let mut inputs = NativeInputs::open(packet, source)?;
     let bound = bind(packet, &mut inputs)?;
+    let allowance = crate::output_bounds::Allowance::film(bound.request.limits.output_bytes)?;
     let tool = packet.task.tool.as_ref().unwrap();
     let worker = result
         .worker_receipt
@@ -325,7 +347,7 @@ pub fn verify_retained(
         ));
     }
     drop(inputs);
-    crate::retention::verify_qualified(packet, source, profile, receipt, result, acknowledgement)
+    Ok(allowance)
 }
 /// Explicit close of the original job slot into retained coverage. Persist the
 /// operation key before staging; recovery must reuse it. No workspace is retired.
@@ -379,6 +401,10 @@ pub fn close(
         request.operation,
         action,
         request.source,
+        // Recovery reconciles original native work before reopening outputs in
+        // the qualified close callback. This read ceiling admits no new output;
+        // generation/publication used the checked original request allowance.
+        crate::output_bounds::Allowance::film(16 * 1024 * 1024 * 1024)?,
     )
 }
 /// Explicit, metadata-only preparation for an older retained layout. Preview
@@ -475,13 +501,23 @@ pub fn resume(
     if let (Some(result), Some(target)) = (&original, target)
         && prepared.has_retention_work(invocation.receipt, result, target)?
     {
-        crate::retention::retain_verified(
+        // Pending original retention must settle before acquiring new claim
+        // fences. Decode only exact, guarded original controls here, and drop
+        // their object gates before the native retention transaction.
+        let allowance = {
+            let mut controls = NativeInputs::open(packet, invocation.source)?;
+            crate::output_bounds::Allowance::film(
+                bind(packet, &mut controls)?.request.limits.output_bytes,
+            )?
+        };
+        crate::retention::retain_bounded(
             packet,
             invocation.source,
             profile,
             invocation.receipt,
             result,
             target,
+            allowance,
         )?;
     }
     let claims = if let Some(result) = &original {
@@ -678,6 +714,7 @@ fn run_expected(
     // that actor. Positive durable claims are not released by this drop.
     drop(inputs);
     Ok(Generated {
+        allowance: crate::output_bounds::Allowance::film(bound.request.limits.output_bytes)?,
         packet: packet.clone(),
         source: reel_workflow::canonical_digest(invocation.source)?,
         receipt: invocation.receipt.clone(),

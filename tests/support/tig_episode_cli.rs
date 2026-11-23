@@ -271,6 +271,14 @@ fn exercise_variant_mode(
     let mut inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
         "record_outputs":record_fixture.specs,"git_handoff":record_fixture.handoff(&p, &git_base),
         "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("{id}:master:es"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
+    let scene_b = inputs["scenes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|scene| scene["id"] == "scene-b")
+        .unwrap();
+    scene_b["expected_master"] =
+        read(p.repo.path().join("records/output-scene-b.tig"))["selected"].clone();
     if verification_only {
         inputs["purpose"] = json!("verify-components");
         inputs["record_outputs"] = json!([]);
@@ -288,10 +296,75 @@ fn exercise_variant_mode(
         profile["budget_bytes"] = json!(512 * 1024 * 1024);
         profile["scratch_bytes"] = json!(256 * 1024 * 1024);
         profile["reference_staging_bytes"] = json!(128 * 1024 * 1024);
-        profile["timeout_seconds"] = json!(480);
+        profile["timeout_seconds"] = json!(5 * 60 * 60);
     }
     let profile_path = p.data.path().join("bounded-episode-profile.json");
     write(p.data.path(), "bounded-episode-profile.json", &profile);
+    if !mixed && !verification_only {
+        let master = &profile["inputs"]["scenes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|scene| scene["id"] == "scene-b")
+            .unwrap()["expected_master"];
+        let report = json!({"ok":true,"editions":{"repair-es":{
+            "ok":true,"retained_verified":true,"retained_scene":{
+                "task_id":"repair-es","task_key":"repair-test","language":"es","worker_receipt":master,
+                "retained_acknowledgement":master,"artifacts":{"master-mkv":{
+                    "logical_id":"workflow/film/repair-test/master-mkv",
+                    "sha256":master["sha256"],"bytes":master["bytes"],"media_type":"video/x-matroska",
+                }},
+            }
+        }}});
+        let dispatch = p.data.path().join("dispatch-repair.json");
+        let binding = p.data.path().join("bind-repair.json");
+        let bound = p.data.path().join("bound-episode-profile.json");
+        let mut unbound = profile.clone();
+        unbound["inputs"]["scenes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|scene| scene["id"] == "scene-b")
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .remove("expected_master");
+        let baseline = p.data.path().join("unbound-episode-profile.json");
+        let baseline_bytes = serde_json::to_vec(&unbound).unwrap();
+        fs::write(&baseline, &baseline_bytes).unwrap();
+        let bind = |report: &Value| {
+            let bytes = serde_json::to_vec(report).unwrap();
+            fs::write(&dispatch, &bytes).unwrap();
+            fs::write(&binding, serde_json::to_vec(&json!({
+                "schema":"reel.tig-episode-repair-binding.v1",
+                "profile":baseline,"profile_pin":Object::from_bytes(&baseline_bytes),
+                "dispatch":dispatch,"dispatch_pin":Object::from_bytes(&bytes),
+                "replacements":{"scene-b":{"task_id":"repair-es","master_artifact":"master-mkv"}},
+            })).unwrap()).unwrap();
+            Command::new(&binary)
+                .arg("bind-episode-repair")
+                .arg(&binding)
+                .arg(&bound)
+                .output()
+                .unwrap()
+        };
+        let mut wrong_language = report.clone();
+        wrong_language["editions"]["repair-es"]["retained_scene"]["language"] = json!("en");
+        assert!(!bind(&wrong_language).status.success());
+        assert!(!bound.exists());
+        let mut wrong_type = report.clone();
+        wrong_type["editions"]["repair-es"]["retained_scene"]["artifacts"]["master-mkv"]["media_type"] =
+            json!("audio/wav");
+        assert!(!bind(&wrong_type).status.success());
+        assert!(!bound.exists());
+        let result = bind(&report);
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert_eq!(read(&bound), profile);
+    }
     for name in [".git", "records", "definitions"] {
         fs::rename(
             p.repo.path().join(name),
@@ -347,6 +420,27 @@ fn exercise_variant_mode(
         .unwrap();
     assert!(!refused.status.success());
     assert!(!stream_path.exists());
+    if !mixed && !verification_only {
+        let mut stale = preparation.clone();
+        let scene_b = stale["inputs"]["scenes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|scene| scene["id"] == "scene-b")
+            .unwrap();
+        scene_b["expected_master"] = json!(Object::from_bytes(b"stale master"));
+        let stale_path = p.data.path().join("stale-episode-preparation.json");
+        fs::write(&stale_path, serde_json::to_vec(&stale).unwrap()).unwrap();
+        let refused = Command::new(&binary)
+            .arg("prepare-episode")
+            .arg(stale_path)
+            .arg(&report_path)
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("selected master differs"));
+        assert!(!report_path.exists());
+    }
     let prepared = Command::new(&binary)
         .arg("prepare-episode")
         .arg(&preparation_profile)

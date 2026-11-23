@@ -31,20 +31,35 @@ remain later slices.
 
 ## Workflow orchestration
 
-As observed on 2026-11-20, workflow development is active in a separate local
-lane on `feat/workflow-handoff`.
-It explores explicit task/result contracts, production handoffs, composition,
-review and repair, retained history and native recovery across film/comic work.
-The branch contains additions beyond the main checkout; this page does not
-claim that those additions are merged, released or adopted by every producer.
+The [workflow source entry](workflow-entry.md) links the landed manual, film
+inspection, protected native lifecycle, owned film CLI and bounded API/proxy
+paths. The [film-first PR plan](workflow-pr-plan.md) defines their qualification
+and the remaining work. These public source entries supersede the earlier
+local-branch-only navigation checkpoint.
 
-Within that lane, `docs/workflow-orchestration.md` describes the architecture and
-`docs/workflow-completion.md` records implementation and qualification scopes.
-The inspected committed checkpoint was `cb67043`, with further uncommitted work.
-No matching remote branch was advertised when checked, so these documents have
-no verified public links here. Add public references after the owning lane
-publishes them. This presentation cleanup leaves that work in its own lane and
-does not copy draft contracts into main documentation.
+Source landings include [manual exchange #386](https://github.com/giodl73-repo/REEL/pull/386),
+[film metadata #388](https://github.com/giodl73-repo/REEL/pull/388),
+[native handoffs #392](https://github.com/giodl73-repo/REEL/pull/392),
+[retained film tasks #397](https://github.com/giodl73-repo/REEL/pull/397),
+[owned film CLI #399](https://github.com/giodl73-repo/REEL/pull/399) and
+[API/proxy execution #402](https://github.com/giodl73-repo/REEL/pull/402).
+Complete film review/issue/fix/rebuild, dedicated service/speech integration, automatic
+native provider orchestration, packaged project adoption/rollback and episode-scale
+qualification retain their separate gates. A source merge does not install or
+adopt a production profile, approve a candidate or qualify all of Season 5.
+
+The first W4 [cel-ID review-copy producer](film-cel-review-v1.md) annotates an
+existing scene-delivery review on actual delivered frame ranges, preserves its
+audio/timestamps and emits an exact target map. It leaves issue/fix integration,
+affected rebuilds and native workflow dispatch open.
+
+The [visual production workspace requirements](workflow-ux-requirements.md)
+audit existing REEL editors and current git-asset catalogue extension gaps.
+They propose a live cel/cue/page board and a generic tool/preview handoff, keeping
+production semantics in REEL. The first [read-only board](../crates/reel-workflow-ui/README.md)
+implements pinned local cels/versions/cues and explicit journal observations.
+Browser visual acceptance, project projection and native preview integration
+remain open; this is not an adopted Season 5 production dashboard.
 
 The existing main-branch managed scene, presentation and episode jobs remain
 documented under [use cases](use-cases.md) and [architecture](architecture.md).

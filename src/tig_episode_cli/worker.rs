@@ -173,13 +173,15 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .zip(&mut scene_sources)
         .enumerate()
         .map(|(i, ((spec, native), source))| {
-            ReferencePlan::compile(
+            let reference = ReferencePlan::compile(
                 source,
                 native,
                 &spec.output_id,
                 &spec.output_definition,
                 &preparation.join(format!("owned-scene-{i}")),
-            )
+            )?;
+            spec.check_master(&reference)?;
+            Ok(reference)
         })
         .collect::<Result<Vec<_>>>()?;
     let scene_resources = references
@@ -296,7 +298,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     drop(reader);
     let reference_budget = crate::scene_primary_reference::Budget {
         max_staged_bytes: t.reference_staging_bytes,
-        timeout_seconds: t.timeout_seconds.min(3600),
+        timeout_seconds: t.timeout_seconds,
         max_picture_processes: t.reference_picture_processes,
     };
     let stage = Path::new("reference-stage");

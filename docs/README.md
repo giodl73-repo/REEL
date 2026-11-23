@@ -34,6 +34,7 @@ spoken-content modules and audience/language editions. Its
 | Native scene or music video | [Illustrated episode model](guides/episodes-and-languages.md) → [scene authoring](scene-authoring-v1.md) → [scene delivery](scene-delivery-v0.1.md) |
 | Asset-backed production | [git-asset and revisions](guides/assets-and-revisions.md) → [native integration](tig-public-integration.md) → [managed jobs](tig-job-runner.md) |
 | Episode composition | [Episode planning](tig-episode-planning.md) → [bounded episode execution](tig-episode-jobs.md) → [retained presentations](tig-retained-presentation.md) |
+| Programmatic film workflow | [Workflow source entry](workflow-entry.md) → [film-first PR plan](workflow-pr-plan.md) → exact crate commands and qualification limits |
 | Visual authoring | [Cel sorter](cel-sorter-v1.md) / [note workshop](music-note-editor-v1.md) / [underlay workshop](music-underlay-editor-v1.md) → [editor host](editor-host-v1.md) |
 | Music/print delivery | [Album mastering](NATIVE-ALBUM-MASTER.md) / [album video](NATIVE-ALBUM-VIDEO.md) / [native print collections](native-print-collections.md) |
 | Storage operations | [Architecture boundary](architecture.md#reel-and-git-asset) → [accounting workflow](asset-manager-workflow-v1.md) → [tier review](asset-tier-review-v1.md) |
