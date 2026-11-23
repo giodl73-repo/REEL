@@ -701,6 +701,16 @@ displayed Fault and exited with status 2 after Quit. No Start was sent and
 the system's endpoint settings were untouched. Actual disconnect remains a
 separate station check.
 
+For the physical disconnect check, use an enrolled removable endpoint and a
+checked synthetic session. Start playback and confirm the Playing state before
+removing the endpoint. Keep the session running until the fault is visible or
+the observation deadline passes. Record the endpoint-removal observation and
+the visible fault in the same monotonic clock, along with the worker and
+stream closure observations. Check that no other endpoint starts playing, then
+Quit and confirm process exit. Record whether endpoint removal was observed
+by the OS or timestamped by the operator, since those observations have
+different precision. An endpoint absent at startup covers admission only.
+
 The opt-in test `actual_station_exits_while_terminal_output_is_undrained`
 starts the pinned synthetic playback under ConPTY, stops reading terminal output
 after observing `Playing p1`, and sends EOF. It checks for successful process
