@@ -126,8 +126,24 @@ fn actual_station_expiry_closes_paused_playback_without_quit() {
 #[test]
 #[ignore = "explicit station interruption; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_closes_live_playback_on_interrupt_and_eof() {
-    for (label, input) in [("Ctrl+C", b"\x03".as_slice()), ("EOF", b"\x1a\r")] {
-        let timings = run_station(&[(b"Ready p", b"start\r"), (b"Playing p1", input)], 45);
+    let (path, request) = station_request();
+    let trace = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE").map(std::path::PathBuf::from);
+    for (label, suffix, input) in [
+        ("Ctrl+C", "interrupt.json", b"\x03".as_slice()),
+        ("EOF", "eof.json", b"\x1a\r"),
+    ] {
+        let trace = trace.as_ref().map(|path| path.with_extension(suffix));
+        let (result, steps, timings) = run_console(
+            &request.playback.runtime.path,
+            &path,
+            &[(b"Ready p", b"start\r"), (b"Playing p1", input)],
+            45,
+            trace.as_deref(),
+            &[],
+            ConsoleObservation::Ordinary,
+        );
+        assert_eq!(steps, 2, "{label} did not reach playback: {result:?}");
+        result.unwrap();
         let exit = timings
             .last()
             .copied()

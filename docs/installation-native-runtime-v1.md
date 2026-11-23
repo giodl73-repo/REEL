@@ -800,6 +800,8 @@ For the opt-in station console tests, set `REEL_INSTALLATION_CONSOLE_TRACE`
 to a new absolute JSON path to retain command send, visible status and
 process-exit timestamps. The private trace includes the session-request hash.
 Its Windows QPC nanosecond timestamps share the WASAPI packet clock domain.
+The combined Ctrl+C and EOF test replaces the path's extension with
+`.interrupt.json` and `.eof.json` so each run retains its own trace.
 The command send timestamp precedes the application's cooked-line receipt,
 and the console observation comes after rendering. Use these as outer bounds
 when comparing them with capture.
