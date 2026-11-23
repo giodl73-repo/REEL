@@ -188,7 +188,7 @@ pub struct CompilationSummary {
     pub authority_verified: bool,
 }
 
-fn digest(bytes: &[u8]) -> String {
+pub(super) fn digest(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|b| format!("{b:02x}"))
