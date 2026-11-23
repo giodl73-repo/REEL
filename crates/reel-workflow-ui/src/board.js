@@ -47,13 +47,14 @@
     }highlight();
   }
   function renderInspector() {
-    const unit=state.data.units.find(u=>u.id===state.unit),root=$("inspector");root.replaceChildren();if(!unit){root.append(node("p","muted","Choose a cel to inspect its versions and cue."));return;}
+    const name=state.data.format==="comic"?"page":"cel";
+    const unit=state.data.units.find(u=>u.id===state.unit),root=$("inspector");root.replaceChildren();if(!unit){root.append(node("p","muted",`Choose a ${name} to inspect its versions and cue.`));return;}
     const version=chosen(unit);root.append(node("h2","",unit.display_id),node("p","muted",unit.title));
     const preview=image(version,"preview-button detail-image");root.append(preview);
     if(version)root.append(node("span",`pill ${version.designation}`,designation(version)));
     root.append(versionButtons(unit));
     const span=unit.spans.find(s=>s.language===state.language),cue=state.data.cues.find(c=>c.id===span?.cue_id&&c.language===state.language);
-    if(cue){root.append(node("h3","","CUE · "+cue.id),node("p","transcript",cue.text),node("p","muted",`Cel starts at ${clock(span.start_sample/cue.sample_rate)} on this cue’s clock.`));}
+    if(cue){root.append(node("h3","","CUE · "+cue.id),node("p","transcript",cue.text),node("p","muted",`${name[0].toUpperCase()+name.slice(1)} starts at ${clock(span.start_sample/cue.sample_rate)} on this cue’s clock.`));}
     const details=node("details");details.append(node("summary","","Source & lineage"));const list=node("dl");
     const approvals=(state.data.approvals||[]).filter(a=>a.subject.logical_id===version?.asset.logical_id);
     const recorded=version?.approval_reference || approvals.some(a=>exactSubject(a.subject,version?.asset));
