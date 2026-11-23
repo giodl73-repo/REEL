@@ -120,6 +120,13 @@ recordings. It prepares affected render bindings and withholds stale downstream
 assemblies. Native orchestration and project adoption remain open; see its
 [scoped review](reviews/workflow-film-rebuild-review.md).
 
+An explicit [protected repair qualification](reviews/workflow-protected-film-repair-review.md)
+reused a completed synthetic film's selected inputs and renderer, retained new
+image/control parents and rebuilt their consumer through the native binder.
+Original-operation continuation, unchanged actual audio/clocks and retained
+historical readback passed. This is one Spanish scene, not full bilingual
+assembly, project adoption or episode-scale acceptance.
+
 The [native film rebuild binder](workflow-native-film-rebuild.md) connects those
 plans to exact original Git declarations and new per-consumer retained origins.
 The owned film CLI can verify actual still-control derivation under child claims
