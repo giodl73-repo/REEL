@@ -27,8 +27,11 @@ Other languages' control origins are excluded. Original snapshots, runtime pins,
 requests and the producing project's selection remain unchanged.
 
 The package contains `bound.json` and per-render `*-packet.json`,
-`*-source.json`, `*-parents.json`. Each file is at most 1 MiB; the complete
-metadata export is at most 16 MiB. Partial/existing packages are preserved.
+`*-source.json`, and `*-parents.json`. The command writes `export.json` last
+and returns its SHA-256 as `export_sha256`. Check that digest, the original
+request digest, and each listed file's length and SHA-256 before using the
+package for dispatch. Each file is at most 1 MiB and the complete metadata
+export is at most 16 MiB. Partial and existing packages are preserved.
 These are private machine controls, not shareable reports.
 
 Use the existing `preview-upstream-admission` and explicit

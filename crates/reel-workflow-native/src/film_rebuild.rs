@@ -184,7 +184,7 @@ pub fn bind(request: &Request) -> Result<Bound> {
 
 /// Private, create-only metadata package. Every file is prepared before the
 /// destination is created; interrupted writes remain preserved for recovery.
-pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) -> Result<()> {
+pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) -> Result<String> {
     use std::{
         fs::{self, OpenOptions},
         io::Write,
@@ -223,10 +223,26 @@ pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) ->
             )?,
         );
     }
-    if files
-        .values()
-        .any(|v| v.len() > reel_workflow::MAX_CONTROL_BYTES)
-        || files.values().map(Vec::len).sum::<usize>() > 16 * 1024 * 1024
+    let inventory: BTreeMap<_, _> = files
+        .iter()
+        .map(|(name, raw)| {
+            (
+                name,
+                serde_json::json!({"sha256": digest(raw), "bytes": raw.len()}),
+            )
+        })
+        .collect();
+    let manifest = crate::admission::encode(&serde_json::json!({
+        "schema": "reel.workflow-native-film-rebuild-export.v1",
+        "request_sha256": pin,
+        "render_tasks": bound.prepared.render_tasks,
+        "files": inventory,
+    }))?;
+    if manifest.len() > reel_workflow::MAX_CONTROL_BYTES
+        || files
+            .values()
+            .any(|v| v.len() > reel_workflow::MAX_CONTROL_BYTES)
+        || files.values().map(Vec::len).sum::<usize>() + manifest.len() > 16 * 1024 * 1024
     {
         return Err(error(
             ErrorKind::Budget,
@@ -234,7 +250,8 @@ pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) ->
         ));
     }
     fs::create_dir(directory).map_err(crate::io_error)?;
-    for (name, raw) in files {
+    let manifest_pin = digest(&manifest);
+    for (name, raw) in files.into_iter().chain([("export.json".into(), manifest)]) {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -244,5 +261,5 @@ pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) ->
             .and_then(|_| file.sync_all())
             .map_err(crate::io_error)?;
     }
-    Ok(())
+    Ok(manifest_pin)
 }

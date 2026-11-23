@@ -374,7 +374,22 @@ fn cli_exports_exact_per_consumer_parents_without_native_effects_or_overwrite() 
         "{}",
         String::from_utf8_lossy(&status.stdout)
     );
+    let summary: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    let manifest = fs::read(output.join("export.json")).unwrap();
+    assert_eq!(summary["export_sha256"], digest(&manifest));
+    let export: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+    assert_eq!(export["request_sha256"], digest(&raw));
+    let tasks = export["render_tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 2);
+    let files = export["files"].as_object().unwrap();
+    assert_eq!(files.len(), 7);
+    for (name, pin) in files {
+        let bytes = fs::read(output.join(name)).unwrap();
+        assert_eq!(pin["sha256"], digest(&bytes));
+        assert_eq!(pin["bytes"], bytes.len());
+    }
     for lang in ["es", "en"] {
+        assert!(tasks.contains(&serde_json::json!(format!("scene-{lang}"))));
         let parents: upstream::Parents = serde_json::from_slice(
             &fs::read(output.join(format!("scene-{lang}-parents.json"))).unwrap(),
         )

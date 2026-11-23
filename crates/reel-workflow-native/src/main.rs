@@ -64,13 +64,13 @@ fn new_receipt(
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
         [command, request, pin, directory] if command == "prepare-film-rebuild" => {
-            reel_workflow_native::film_rebuild::export(
+            let export_sha256 = reel_workflow_native::film_rebuild::export(
                 Path::new(request),
                 pin,
                 Path::new(directory),
             )?;
             Ok(
-                serde_json::json!({"ok":true,"native_metadata_verified":true,"child_admitted":false,"consumers_rebuilt":false,"selection_verified":false}),
+                serde_json::json!({"ok":true,"export_sha256":export_sha256,"native_metadata_verified":true,"child_admitted":false,"consumers_rebuilt":false,"selection_verified":false}),
             )
         }
         #[cfg(all(windows, feature = "film"))]
