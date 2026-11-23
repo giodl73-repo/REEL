@@ -682,6 +682,13 @@ The pinned Dell development session passed this test in 120.39 seconds total.
 The test's outer wall clock includes setup. For the independent cleanup gate,
 retain the expiry and process-exit timestamps from a synchronized clock.
 
+`actual_station_closes_live_playback_on_interrupt_and_eof` sends Ctrl+C
+and cooked Ctrl+Z/Enter in separate sessions while the stream is Playing.
+The pinned Dell runs confirmed complete process exit within 402.4 ms
+and 226.8 ms respectively, measured from before sending the input. These
+upper bounds include input delivery and process observation. They do not
+measure how long source audio remained at the physical output.
+
 The opt-in `actual_station_refuses_changed_endpoint_configuration` test
 changes only the configuration fingerprint in a temporary request. On the
 same Dell output whose valid request completed playback, the changed request

@@ -114,6 +114,22 @@ fn actual_station_expiry_closes_paused_playback_without_quit() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "explicit station interruption; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_closes_live_playback_on_interrupt_and_eof() {
+    for (label, input) in [("Ctrl+C", b"\x03".as_slice()), ("EOF", b"\x1a\r")] {
+        let timings = run_station(&[(b"Ready p", b"start\r"), (b"Playing p1", input)], 45);
+        let exit = timings
+            .last()
+            .copied()
+            .flatten()
+            .expect("exit timing missing");
+        println!("{label} sent to confirmed process exit: {exit:?}");
+        assert!(exit <= std::time::Duration::from_secs(2));
+    }
+}
+
+#[cfg(windows)]
+#[test]
 #[ignore = "explicit station metadata mismatch; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_refuses_changed_endpoint_configuration() {
     let (_, mut request) = station_request();
@@ -372,7 +388,12 @@ fn run_console(
                 }
                 elapsed.push(duration);
             }
-            (job.join().unwrap(), elapsed.len(), elapsed)
+            let result = job.join().unwrap();
+            let steps = elapsed.len();
+            // Final entry bounds the time from the last write to observed
+            // process cleanup. The step count covers console markers only.
+            elapsed.push(last_command.map(|sent| sent.elapsed()));
+            (result, steps, elapsed)
         });
         drop(input);
         drop(terminal);
