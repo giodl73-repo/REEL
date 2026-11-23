@@ -1,6 +1,6 @@
 # Replay a bilingual briefing
 
-M14 design draft on stacked commit `c9b2c71`. Execution and final checks follow
+M14 is staged against the branch contract. Final execution checks follow
 the merged [branch contract](interactive-branch-contract-v1.md).
 
 The listener hears the opening, then chooses a worked example or a summary.
@@ -31,3 +31,5 @@ Resume inside the detail, and a late end observation addressed to the opening.
 Changing language should create a fresh opening visit with fresh choices.
 Removing the selected branch or its exact access binding should prevent
 execution. Closing the active session should discard its interaction state.
+
+The local session reducer admits every authored binding through the checked programme API before entering the graph. Its replay test drives both routes with confirmed frame observations, tests the shared choice IDs, and compares exact admitted artifacts across repeated runs. A playback adapter must supply those observations from actual media consumption.

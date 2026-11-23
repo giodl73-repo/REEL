@@ -1,6 +1,9 @@
 //! Admission of exact module spans from verified spoken-programme access.
 #[path = "interactive_graph.rs"]
 mod graph;
+#[path = "interactive_session.rs"]
+mod session;
+pub use session::Session;
 
 pub use graph::{Choice, EditionChoice, Graph, Node, validate};
 
