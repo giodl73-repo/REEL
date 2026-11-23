@@ -609,6 +609,46 @@ fn cli_spoken_impact_rebuilds_only_editions_using_the_changed_english_take() {
     let stdout = String::from_utf8_lossy(&result.stdout);
     assert!(!stdout.contains("take-0.wav"));
     assert!(!stdout.contains("alignment-0.json"));
+    #[cfg(feature = "tig-publication")]
+    {
+        let request = after.temp.path().join("rebuild.json");
+        let run = |previous: &std::path::Path| {
+            let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+                .arg("spoken-edition-plan-rebuild")
+                .arg(&request)
+                .arg("--previous-root")
+                .arg(previous)
+                .arg("--asset-root")
+                .arg(after.temp.path())
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap()
+        };
+        fs::write(
+            &request,
+            serde_json::to_vec(&json!({
+                "schema":"reel.spoken-workflow-rebuild.v1",
+                "previous":"declaration.json","declaration":"declaration.json",
+                "profile":"engineering","budget_bytes":192*1024*1024,"scratch_bytes":16*1024*1024
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let changed = run(before.temp.path());
+        let args = changed["job"]["steps"][0]["args"].as_array().unwrap();
+        let selected: Vec<_> = args
+            .windows(2)
+            .filter(|items| items[0] == "--select-edition")
+            .map(|items| items[1].as_str().unwrap())
+            .collect();
+        assert_eq!(selected, ["en-executive", "en-technical"]);
+        assert!(run(after.temp.path())["job"].is_null());
+    }
 }
 
 #[test]

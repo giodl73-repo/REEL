@@ -118,6 +118,14 @@ compiled plan, production receipt, audio, transcripts and access manifest with
 chapter clocks. An unchanged edition still needs its prior checked output and
 exact custody evidence before reuse.
 
+`reel spoken-edition-plan-rebuild REQUEST --previous-root PREVIOUS
+--asset-root CURRENT` combines impact and recipe export for a take replacement.
+Use schema `reel.spoken-workflow-rebuild.v1` with workspace-relative
+`previous` and `declaration`, optional `processing`, `profile`,
+`budget_bytes` and `scratch_bytes`. The report contains the impact and a
+`job` for new or changed editions. With no such editions, `job` is null.
+The planner leaves runner admission and verified reuse to the caller.
+
 Build a private review board with `reel-workflow-ui project-spoken REQUEST
 SHA256 NEW_BOARD`. The `reel.workflow-spoken-board.v1` request names the
 `project`, `work_id`, `title`, `source_commit` and `bundles` to display.
