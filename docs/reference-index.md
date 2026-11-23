@@ -146,6 +146,7 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 - [Semantic visual companions](semantic-visual-companion-v1.md)
 - [Single-device offline installation contract](offline-installation-v1.md)
 - [Native endpoint metadata and callback ownership](installation-native-foundation-v1.md) — M12b.1 software foundation; playback/operator loop and station qualification remain open.
+- [Native runtime ownership and operator test map](installation-native-runtime-v1.md) — M12b.2 implementation in progress; separate original producer and playback build contexts.
 - [Native short editions](NATIVE-SONG-EDITION.md)
 - [Original-song masked materialization](original-song-masked-repair.md)
 - [Bounded provider execution from original song evidence](original-song-repair-provider.md)
