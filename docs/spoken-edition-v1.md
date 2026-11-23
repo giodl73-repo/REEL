@@ -117,3 +117,16 @@ project's existing runner before admission. On success the runner retains the
 compiled plan, production receipt, audio, transcripts and access manifest with
 chapter clocks. An unchanged edition still needs its prior checked output and
 exact custody evidence before reuse.
+
+Build a private review board with `reel-workflow-ui project-spoken REQUEST
+SHA256 NEW_BOARD`. The `reel.workflow-spoken-board.v1` request names the
+`project`, `work_id`, `title`, `source_commit` and `bundles` to display.
+Each bundle supplies the `path` and `sha256` of its retained access manifest,
+and a `waves` map keyed by the edition IDs to include. Each entry binds
+`compiled_recipe_sha256`, `execution_recipe_sha256` and a normal board
+`media` binding for the exact WAV. Supply separate bundles when new and
+reused editions have different access manifests.
+
+On Windows the existing private viewer plays the WAV and seeks to chapter
+boundaries. It verifies preview bytes when requested. The projection checks
+manifest and recipe pins and records no approval or native retained ownership.
