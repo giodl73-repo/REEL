@@ -27,7 +27,7 @@ fn english_repaired_master_assembles_on_its_own_cue_clock() {
 #[test]
 #[ignore = "requires native FFmpeg and a temporary bilingual scene project"]
 fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
-    let (bootstrap, request) = crate::language_scope::bilingual();
+    let (bootstrap, request) = crate::language_scope::bilingual_with_english_samples(60000);
     let mut p = Project::from_scene_fixture(bootstrap, request);
     let scene_path = "records/scene-scene-b.tig";
     let mut scene_record = read(p.repo.path().join(scene_path));
@@ -61,6 +61,10 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
     assert_ne!(
         baseline[0].1.audio[0].source.sha256,
         baseline[1].1.audio[0].source.sha256
+    );
+    assert_ne!(
+        read(baseline[0].3.join("receipt.json"))["content_samples"],
+        read(baseline[1].3.join("receipt.json"))["content_samples"]
     );
     assert_eq!(
         baseline[0].1.pictures[0].source,
