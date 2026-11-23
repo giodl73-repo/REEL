@@ -43,6 +43,21 @@ on trust at delivery: the finalizer requires complete coverage from zero and
 recomputes every global frame/sample boundary. Build ranges in order when the
 preceding counts are not already known from native evidence.
 
+For a subsequent range, stage the frozen manifest, the exact part proofs from
+zero through the completed prefix, and their compact video and PCM. Declare
+the prefix set in the staged job. Choose the next exclusive segment index,
+then write the resulting range JSON into the next job's declared controls.
+
+```
+reel-episode-conform next-part-range PREFIX-SET.json --asset-root PREFIX-WORKSPACE --end NEXT-EXCLUSIVE-INDEX
+```
+
+The command verifies the prefix against the current producer and media tools,
+checks its frame and sample clock, and prints the next range to standard
+output. A gap, a changed proof or part, or an end outside the existing range
+limits is refused. This command plans a range without rendering or changing
+assets. Finalization still requires complete coverage.
+
 Each producer emits `lossless-NNNNN.mkv`, video-only `video-NNNNN.mp4`, raw stereo
 PCM24 `audio-NNNNN.pcm`, and `part-proof.json`. The proof is distinct from a
 same-workspace preparation checkpoint. It binds the exact parent manifest,
