@@ -7,6 +7,7 @@ mod callback;
 pub mod console;
 #[cfg(windows)]
 pub mod controller;
+#[cfg(windows)]
 pub mod input;
 pub use callback::{
     Callback, CallbackCommandError, CallbackControl, CallbackDelivery, CallbackEmission,

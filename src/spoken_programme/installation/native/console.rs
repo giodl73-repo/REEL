@@ -997,7 +997,7 @@ mod tests {
         while !owner.quit_requested() {
             owner.tick().unwrap();
             assert!(Instant::now() < deadline, "Ctrl+C deadline");
-            std::thread::sleep(Duration::from_millis(2));
+            std::thread::park_timeout(Duration::from_millis(2));
         }
         let packet = super::super::parent::tests::receive(&mut peer);
         assert!(matches!(
@@ -1020,7 +1020,7 @@ mod tests {
                 Instant::now() < deadline,
                 "foreground final display deadline"
             );
-            std::thread::sleep(Duration::from_millis(2));
+            std::thread::park_timeout(Duration::from_millis(2));
         }
         let packet = super::super::parent::tests::receive(&mut peer);
         assert!(matches!(
