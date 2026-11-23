@@ -498,6 +498,12 @@ invitation and the foreground's performance counter origin. The child binds
 its runtime before entering the authenticated worker loop, then tears down its
 resources and waits for the final display receipt.
 
+On Windows, `reel-installation run REQUEST` starts that worker under the
+existing Job Object runner and drives the attached console. The foreground
+uses the runner's held PID to authenticate the channel and shares the Quit
+deadline with the runner. The runtime binding and private bootstrap files stay
+owned until the runner returns from reaping the child.
+
 The reader and renderer own their blocking operations on separate threads.
 `ParentSession::tick_with_renderer` polls the renderer and acknowledges each
 ticket only after a successful console operation. The headless fixture verifies

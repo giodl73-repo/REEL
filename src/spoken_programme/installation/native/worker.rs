@@ -39,6 +39,116 @@ pub fn run_worker(raw: &[u8], bootstrap: WorkerBootstrap) -> Result<()> {
         .deliver(bootstrap.invitation.server_process_id)
 }
 
+/// Launch the pinned worker and drive the attached foreground console.
+pub fn run_foreground(raw: &[u8]) -> Result<()> {
+    use super::{
+        console::ConsoleForeground,
+        parent::{CleanupWatch, ParentEvent, ParentSession},
+    };
+    use reel_assets::jobs::{QuietEvent, QuietLimits, run_quiet_observed};
+    use std::sync::{
+        OnceLock,
+        atomic::{AtomicBool, AtomicU32, Ordering},
+    };
+
+    let clock = OutputClock::start()?;
+    let runtime = Arc::new(RuntimeBinding::bind(raw)?);
+    let workspace = tempfile::tempdir()?;
+    let (invitation, channel) = Channel::server()?;
+    let nonce = invitation.nonce;
+    let (origin_counter, frequency) = clock.origin();
+    std::fs::write(workspace.path().join("session.json"), raw)?;
+    std::fs::write(
+        workspace.path().join("bootstrap.json"),
+        serde_json::to_vec(&WorkerBootstrap {
+            invitation,
+            origin_counter,
+            frequency,
+        })?,
+    )?;
+    let pid = AtomicU32::new(0);
+    let cleanup = OnceLock::<CleanupWatch>::new();
+    let cancel = AtomicBool::new(false);
+    struct Cancel<'a>(&'a AtomicBool);
+    impl Drop for Cancel<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    std::thread::scope(|scope| {
+        let program = runtime.runtime_path();
+        let directory = workspace.path();
+        let job = scope.spawn(|| {
+            run_quiet_observed(
+                program,
+                &[
+                    "__session-worker".into(),
+                    "session.json".into(),
+                    "bootstrap.json".into(),
+                ],
+                directory,
+                Duration::from_millis(MAX_SESSION_MS + 2000),
+                QuietLimits {
+                    memory_bytes: 256 * 1024 * 1024,
+                    processes: 1,
+                },
+                |event| {
+                    if cancel.load(Ordering::Acquire) {
+                        return Err("installation foreground cancelled".into());
+                    }
+                    if let Some(watch) = cleanup.get() {
+                        watch.check().map_err(|error| error.to_string())?;
+                    }
+                    if let QuietEvent::Process(info) = event {
+                        pid.store(info.process_id, Ordering::Release);
+                    }
+                    Ok(())
+                },
+            )
+            .map_err(|error| error.to_string())
+        });
+        let _cancel = Cancel(&cancel);
+        let worker_pid = loop {
+            let worker_pid = pid.load(Ordering::Acquire);
+            if worker_pid != 0 {
+                break worker_pid;
+            }
+            ensure!(
+                !job.is_finished() && clock.now_us().is_some_and(|now| now < 30_000_000),
+                "installation worker startup failed"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        };
+        let parent = ParentSession::new(runtime.clone(), channel, nonce, worker_pid, clock)?;
+        ensure!(
+            cleanup.set(parent.cleanup_watch()).is_ok(),
+            "installation cleanup watch already assigned"
+        );
+        let mut foreground = ConsoleForeground::open(parent)?;
+        // Signal the job before dropping console owners on an error path.
+        let _cancel_before_console_drop = Cancel(&cancel);
+        while !foreground.final_displayed() {
+            foreground.tick()?;
+            while let Some(event) = foreground.local_event() {
+                if matches!(event, ParentEvent::Fault | ParentEvent::QuitRequested) {
+                    anyhow::bail!("installation foreground stopped before final display");
+                }
+            }
+            ensure!(
+                !job.is_finished(),
+                "installation worker exited before final display"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        job.join()
+            .map_err(|_| anyhow::anyhow!("installation process owner panicked"))?
+            .map_err(anyhow::Error::msg)?;
+        foreground.shutdown()?;
+        cleanup.get().unwrap().check()
+    })
+}
+
 struct DisplayAck {
     id: u64,
     received_us: u64,

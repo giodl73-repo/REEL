@@ -15,6 +15,9 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Action {
+    /// Open an explicit Windows console session for the pinned programme.
+    #[cfg(windows)]
+    Run { request: PathBuf },
     /// Check a private endpoint binding's declared shape, without probing.
     ValidateBinding { binding: PathBuf },
     /// Check private session shape, without reading originals or devices.
@@ -55,6 +58,10 @@ fn session(path: &Path) -> Result<native::SessionRequest> {
 }
 fn run() -> Result<()> {
     match Args::parse().command {
+        #[cfg(windows)]
+        Action::Run { request } => {
+            native::worker::run_foreground(&bytes(&request, native::MAX_SESSION_REQUEST_BYTES)?)?
+        }
         Action::ValidateSession { request } => {
             session(&request)?;
             println!(
