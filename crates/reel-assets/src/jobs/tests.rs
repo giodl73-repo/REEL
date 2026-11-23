@@ -221,13 +221,19 @@ fn recovery_policy_preserves_failed_workspace_but_retires_success() {
         fs::write(&manifest, job.to_string()).unwrap();
         let result = run(f.root(), &manifest);
         if preserves_workspace {
-            let error = result.unwrap_err().to_string();
-            assert!(error.contains("exited 23"), "{error}");
+            let error = result
+                .unwrap_err()
+                .downcast::<WorkspacePreserved>()
+                .unwrap();
+            assert!(error.to_string().contains("exited 23"), "{error}");
             let staging = f.root().join("fast/staging/caminos");
             let workspaces = fs::read_dir(staging).unwrap().collect::<Vec<_>>();
             assert_eq!(workspaces.len(), 1);
             let workspace = workspaces.into_iter().next().unwrap().unwrap().path();
-            assert!(error.contains(workspace.file_name().unwrap().to_str().unwrap()));
+            assert_eq!(
+                error.job_id(),
+                workspace.file_name().unwrap().to_str().unwrap()
+            );
             assert_eq!(
                 fs::metadata(workspace.join("intermediate.bin"))
                     .unwrap()

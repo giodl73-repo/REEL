@@ -148,6 +148,8 @@ struct Profile {
     operation: String,
     budget_bytes: u64,
     scratch_bytes: u64,
+    #[serde(default)]
+    preserve_workspace_on_failure: bool,
     timeout_seconds: u64,
     reference_staging_bytes: u64,
     reference_picture_processes: u16,
@@ -479,12 +481,14 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     for (name, max) in records::limits(&p.inputs)? {
         outputs.insert(name.clone(), json!({"path":name,"max_bytes":max}));
     }
-    let request = identity::canonical_json(
-        &json!({"output_count_limit":256,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
+    let mut request = json!({"output_count_limit":256,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
         "inputs":{},"tools":{},"installed_tools":{"worker":{"path":std::env::current_exe()?.canonicalize()?,"sha256":p.inputs.runtime.host.sha256,"bytes":p.inputs.runtime.host.bytes}},
         "files":{"episode-ticket.json":std::str::from_utf8(&ticket)?},"prepare_output_parents":false,
-        "steps":[{"tool":"worker","args":["episode-worker","episode-ticket.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":p.timeout_seconds}],"outputs":outputs}),
-    )?;
+        "steps":[{"tool":"worker","args":["episode-worker","episode-ticket.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":p.timeout_seconds}],"outputs":outputs});
+    if p.preserve_workspace_on_failure && purpose == Purpose::Assemble {
+        request["preserve_workspace_on_failure"] = json!(true);
+    }
+    let request = identity::canonical_json(&request)?;
     runner::check_request(&request)
         .map_err(|error| anyhow::anyhow!("episode runner admission: {error}"))?;
     // Explicit request validation precedes source-journal adoption.
@@ -532,6 +536,32 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
             tree_limits: TreeLimits::default(),
         },
     );
+    if let Some(preserved) = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<runner::WorkspacePreserved>())
+    {
+        // Retention has not moved the source selection. Preserve the original
+        // root and temporary component owners for explicit recovery.
+        return Ok(json!({
+            "schema":"reel.tig-episode-job-result.experimental-1",
+            "succeeded":false,
+            "result":{
+                "schema":"reel.failed-job-result.v1",
+                "error":preserved.to_string(),
+                "job_id":preserved.job_id(),
+                "workspace_retained":true,
+                "outputs":{},
+                "production_claim":null
+            },
+            "journal_checkpoint":journal.checkpoint(),
+            "production_claim":null,
+            "approval":false,
+            "bindings_changed":false,
+            "handoff":null,
+            "temporary_owner_cleanup_required":true
+        }));
+    }
     // A contained worker failure still returns an error after its diagnostic
     // result was durably retained. Cleanup follows that authoritative retained
     // outcome, never the presence/absence of a success report or error wording.
