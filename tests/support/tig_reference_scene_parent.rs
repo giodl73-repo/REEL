@@ -65,7 +65,8 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
                 &output,
             )
             .unwrap();
-            scenes.push((path, output));
+            let semantic = path.with_file_name("semantic-delivery.json");
+            scenes.push((path, output, semantic));
         }
         baseline.insert(language, shared_edition(&p, language, "baseline", &scenes));
         editions.insert(language, scenes);
@@ -89,7 +90,7 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
     write(p.repo.path(), file, &selected);
     p.commit("select one shared repair");
     for (language, mut scenes) in editions {
-        let (original_job, original) = &scenes[2];
+        let (original_job, original, _) = &scenes[2];
         let job = reel::tig_inputs::read_job(original_job).unwrap();
         let candidate = reel::scene_delivery::repair::derive(
             &job,
@@ -105,10 +106,19 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
             },
         )
         .unwrap();
-        let path = original_job.with_file_name("job-repaired.json");
-        fs::write(&path, serde_json::to_vec(&candidate.job).unwrap()).unwrap();
-        let output = original.with_file_name("repaired");
+        let mut request: tig_scene::Request =
+            serde_json::from_value(serde_json::to_value(&p.requests[2]).unwrap()).unwrap();
+        request.language = language.into();
+        let current = p.data.path().join(format!("current-{language}"));
         let mut source = p.source();
+        tig_scene::compile(&mut source, &request, &current).unwrap();
+        let path = current.join("delivery/job-repaired.json");
+        fs::write(&path, serde_json::to_vec(&candidate.job).unwrap()).unwrap();
+        let semantic = current.join("delivery/semantic-delivery-repaired.json");
+        let mut declaration = read(current.join("delivery/semantic-delivery.json"));
+        declaration["scene_delivery_job"] = pin(path.parent().unwrap(), &path);
+        fs::write(&semantic, serde_json::to_vec(&declaration).unwrap()).unwrap();
+        let output = original.with_file_name("repaired");
         let inputs = source.prepare(&candidate.job).unwrap();
         reel::scene_delivery::render_with_inputs(&path, &p.programs.with_inputs(&inputs), &output)
             .unwrap();
@@ -131,7 +141,7 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
             "{language}: repair did not change the master"
         );
         drop(inputs);
-        scenes[2] = (path, output);
+        scenes[2] = (path, output, semantic);
         let revised = shared_edition(&p, language, "repaired", &scenes);
         let original = &baseline[language];
         assert_eq!(original.total_frames, revised.total_frames);
@@ -152,13 +162,13 @@ fn shared_edition(
     project: &Project,
     language: &str,
     version: &str,
-    scenes: &[(PathBuf, PathBuf)],
+    scenes: &[(PathBuf, PathBuf, PathBuf)],
 ) -> episode_conform::Receipt {
     let root = project.data.path();
     let controls = root.join("controls");
     let mut owners = Vec::new();
     let mut segments = Vec::new();
-    for ((job, output), unit) in scenes.iter().zip(UNITS) {
+    for ((job, output, semantic), unit) in scenes.iter().zip(UNITS) {
         let delivery_receipt = pin(root, &output.join("receipt.json"));
         segments.push(json!({
             "kind": "scene",
@@ -167,7 +177,7 @@ fn shared_edition(
             "source_receipt": delivery_receipt,
             "delivery_job": pin(root, job),
             "delivery_receipt": delivery_receipt,
-            "semantic_delivery": pin(root, &job.with_file_name("semantic-delivery.json")),
+            "semantic_delivery": pin(root, semantic),
         }));
         let job = reel::tig_inputs::read_job(job).unwrap();
         owners.push(project.source().prepare(&job).unwrap());
@@ -207,7 +217,7 @@ fn shared_edition(
         &root.join(name),
         &inputs,
     )
-    .unwrap();
+    .unwrap_or_else(|error| panic!("{language} {version} conform: {error:#}"));
     assert!(receipt.decoded_master_matches_ordered_segments);
     assert!(receipt.timestamps_verified);
     assert_eq!(receipt.language, language);
