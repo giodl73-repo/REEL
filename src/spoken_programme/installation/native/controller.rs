@@ -632,12 +632,19 @@ impl Controller {
         }
         // The console needs the latest cursor, not one display per audio
         // callback. State, generation, pass and command changes stay immediate.
-        let cursor_only = snapshot
-            == (Snapshot {
-                source_frame: snapshot.source_frame,
-                interval_frame: snapshot.interval_frame,
-                ..previous
-            });
+        let with_current_cursor = |state: Snapshot| Snapshot {
+            source_frame: snapshot.source_frame,
+            interval_frame: snapshot.interval_frame,
+            ..state
+        };
+        if matches!(
+            self.events.back(),
+            Some(Event::Ack { record, .. }) if with_current_cursor(record.snapshot) == snapshot
+        ) {
+            self.last_cursor_report_us = now;
+            return;
+        }
+        let cursor_only = snapshot == with_current_cursor(previous);
         if !cursor_only || now.saturating_sub(self.last_cursor_report_us) >= 100_000 {
             self.last_cursor_report_us = now;
             self.emit(Event::State(snapshot));

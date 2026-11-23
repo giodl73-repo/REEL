@@ -156,6 +156,31 @@ fn actual_station_status_acknowledgement_meets_outer_deadline() {
 }
 
 #[cfg(windows)]
+#[test]
+#[ignore = "explicit live command timing; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_pause_and_resume_acknowledgements_meet_outer_deadline() {
+    let (path, request) = station_request();
+    let (result, steps, elapsed) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b"pause\r"),
+            (b"Command 2: Paused", b"resume\r"),
+            (b"Command 3: Playing", b"quit\r"),
+        ],
+        45,
+    );
+    assert_eq!(steps, 4, "{result:?}");
+    result.unwrap();
+    for (command, duration) in [("Pause", elapsed[2]), ("Resume", elapsed[3])] {
+        let duration = duration.expect("command timing missing");
+        println!("{command} sent to console acknowledgement: {duration:?}");
+        assert!(duration <= std::time::Duration::from_millis(100));
+    }
+}
+
+#[cfg(windows)]
 fn station_request() -> (
     std::path::PathBuf,
     reel::spoken_programme::installation::native::SessionRequest,
