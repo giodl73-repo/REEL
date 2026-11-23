@@ -107,7 +107,7 @@ fn read_control(
     let bytes = producer::bounded(&root.join(path), limit)?;
     let item = FileRef {
         path: path.into(),
-        sha256: reel_workflow::digest(&bytes),
+        sha256: compiler::digest(&bytes),
         bytes: bytes.len() as u64,
     };
     crate::scene_delivery::checked_file(root, &item)?;
