@@ -8,7 +8,7 @@ use tig_core::{
     Object,
     tree::{NodeStore, TreeError, TreeResult},
 };
-use tig_store::metadata;
+use tig_store::{Key, metadata, source_claims};
 
 pub(crate) struct MetadataWait {
     spent: Cell<Duration>,
@@ -32,6 +32,21 @@ impl MetadataWait {
         action: impl FnMut() -> metadata::Result<T>,
     ) -> metadata::Result<T> {
         self.retry(action, |error| *error == metadata::Error::Busy)
+    }
+    pub(crate) fn run_source<T>(
+        &self,
+        action: impl FnMut() -> source_claims::Result<T>,
+    ) -> source_claims::Result<T> {
+        self.retry(action, |error| *error == source_claims::Error::Busy)
+    }
+
+    pub(crate) fn apply_source(
+        &self,
+        journal: &mut source_claims::SourceJournal,
+        operation: Key,
+        command: source_claims::Command,
+    ) -> source_claims::Result<source_claims::Receipt> {
+        self.run_source(|| journal.apply(operation.clone(), command.clone()))
     }
     fn retry<T, E>(
         &self,
@@ -83,6 +98,79 @@ impl<T: NodeStore> NodeStore for Waiting<'_, T> {
 mod tests {
     use super::*;
     use tig_store::metadata::{Limits, MetadataReader, MetadataStore, Stage};
+    #[test]
+    fn source_journal_retries_busy_and_stops_on_uncertain_outcome() {
+        let wait = MetadataWait::default();
+        let mut attempts = 0;
+        let result = wait.run_source(|| {
+            attempts += 1;
+            if attempts == 1 {
+                Err(source_claims::Error::Busy)
+            } else {
+                Err::<(), _>(source_claims::Error::NeedsRecovery)
+            }
+        });
+        assert_eq!(result, Err(source_claims::Error::NeedsRecovery));
+        assert_eq!(attempts, 2);
+    }
+    #[test]
+    fn source_prepare_retries_same_operation_under_writer_contention() {
+        use source_claims::{Command, Selection, SourceJournal, Stage};
+        use std::sync::mpsc;
+
+        let root = tempfile::tempdir().unwrap();
+        let journal_path = root.path().canonicalize().unwrap().join("claims");
+        let key = |name| Key::parse(name).unwrap();
+        let mut writer =
+            SourceJournal::create(&journal_path, key("project"), key("epoch")).unwrap();
+        let mut reader = SourceJournal::open(&journal_path, &writer.checkpoint()).unwrap();
+        let prepare = |name| Command::Prepare {
+            source: key(name),
+            owner: key("owner"),
+            expected_revision: 0,
+            selection: Selection {
+                root: Object::from_bytes(b"fixture root"),
+                context: tig_core::Digest::blob(b"fixture context"),
+            },
+        };
+        let other = prepare("other");
+        let (locked_tx, locked_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let writer_thread = std::thread::spawn(move || {
+            writer
+                .apply_hook(key("other-prepare"), other, |stage| {
+                    if stage == Stage::BeforeCommit {
+                        locked_tx.send(()).unwrap();
+                        release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                    }
+                    Ok(())
+                })
+                .unwrap()
+        });
+        locked_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        let wait = MetadataWait::default();
+        let operation = key("episode-prepare");
+        let command = prepare("episode");
+        let mut release = Some(release_tx);
+        let receipt = wait
+            .run_source(|| {
+                let result = reader.apply(operation.clone(), command.clone());
+                if let Some(release) = release.take() {
+                    assert_eq!(result, Err(source_claims::Error::Busy));
+                    release.send(()).unwrap();
+                }
+                result
+            })
+            .unwrap();
+        writer_thread.join().unwrap();
+        assert_eq!(receipt.source_revision, 1);
+        let checkpoint = reader.checkpoint();
+        let replay = wait.apply_source(&mut reader, operation, command).unwrap();
+        assert!(replay.replayed);
+        assert_eq!(replay.reference, receipt.reference);
+        assert_eq!(reader.checkpoint(), checkpoint);
+    }
     fn stores() -> (
         tempfile::TempDir,
         metadata::Checkpoint,
