@@ -47,6 +47,44 @@
       }container.append(grid);
     }highlight();
   }
+  function reviewReference(unit, version, span, review) {
+    const language = state.language;
+    const reference = {
+      project: state.data.project,
+      work_id: state.data.work_id,
+      source_commit: state.data.source_commit,
+      scene_id: unit.scene_id,
+      story_id: unit.story_id,
+      display_id: unit.display_id,
+      semantic_id: unit.semantic_id,
+      language,
+      version: {id: version.id, designation: version.designation, asset: version.asset},
+      ...(span && {cue_span: span}),
+      ...(review && {scene_review_span: review}),
+    };
+    const text = JSON.stringify(reference, null, 2);
+    const control = node("div", "review-reference");
+    const button = node("button", "marker", "Copy review reference");
+    const status = node("p", "muted");
+    status.setAttribute("role", "status");
+    button.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(text);
+        status.textContent = "Review reference copied.";
+      } catch {
+        const fallback = node("textarea");
+        fallback.setAttribute("aria-label", "Review reference");
+        fallback.readOnly = true;
+        fallback.value = text;
+        control.append(fallback);
+        fallback.select();
+        button.disabled = true;
+        status.textContent = "Clipboard unavailable. Copy the selected reference.";
+      }
+    });
+    control.append(button, status);
+    return control;
+  }
   function renderInspector() {
     const name=state.data.format==="comic"?"page":"cel";
     const unit=state.data.units.find(u=>u.id===state.unit),root=$("inspector");root.replaceChildren();if(!unit){root.append(node("p","muted",`Choose a ${name} to inspect its versions and cue.`));return;}
@@ -62,6 +100,7 @@
       const end=clock(review.end_sample/review.sample_rate);
       root.append(node("h3","","Scene review timing"),node("p","",`${start}–${end}`));
     }
+    if(version)root.append(reviewReference(unit, version, span, review));
     const details=node("details");details.append(node("summary","","Source & lineage"));const list=node("dl");
     const approvals=(state.data.approvals||[]).filter(a=>a.subject.logical_id===version?.asset.logical_id);
     const recorded=version?.approval_reference || approvals.some(a=>exactSubject(a.subject,version?.asset));
