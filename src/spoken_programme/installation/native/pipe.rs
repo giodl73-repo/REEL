@@ -267,6 +267,7 @@ impl Channel {
         };
         let expected = invitation.server_process_id;
         let facts = channel.facts.clone();
+        let owner = std::thread::current();
         channel.threads.push(
             std::thread::Builder::new()
                 .name("reel-installation-pipe-reader".into())
@@ -283,10 +284,12 @@ impl Channel {
                                 received.push(packet).is_ok(),
                                 "installation pipe incoming queue full"
                             );
+                            owner.unpark();
                         }
                         Ok(())
                     })();
                     facts.finish(result);
+                    owner.unpark();
                 })?,
         );
         let facts = channel.facts.clone();

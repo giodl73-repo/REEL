@@ -31,7 +31,7 @@ pub fn run_worker(raw: &[u8], bootstrap: WorkerBootstrap) -> Result<()> {
     while !worker.closing() {
         worker.tick()?;
         if !worker.closing() {
-            std::thread::sleep(Duration::from_millis(2));
+            std::thread::park_timeout(Duration::from_millis(2));
         }
     }
     worker
@@ -158,7 +158,7 @@ pub fn run_foreground(raw: &[u8]) -> Result<ForegroundOutcome> {
                 !job.is_finished(),
                 "installation worker exited before final display"
             );
-            std::thread::sleep(Duration::from_millis(2));
+            std::thread::park_timeout(Duration::from_millis(2));
         }
         job.join()
             .map_err(|_| anyhow::anyhow!("installation process owner panicked"))?

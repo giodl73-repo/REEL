@@ -154,6 +154,7 @@ impl ConsoleSurface {
         let requested = stop.clone();
         let invalid = Arc::new(AtomicBool::new(false));
         let invalid_line = invalid.clone();
+        let owner = std::thread::current();
         let thread = std::thread::Builder::new()
             .name("reel-console-input".into())
             .spawn(move || {
@@ -166,6 +167,7 @@ impl ConsoleSurface {
                     if outcome == ConsoleRead::Invalid {
                         invalid_line.store(true, Ordering::Release);
                     }
+                    owner.unpark();
                     if outcome == ConsoleRead::Eof {
                         // Cooked input can return zero before Windows schedules
                         // the Ctrl+C handler. Keep the read receipt and allow
@@ -630,6 +632,7 @@ impl ConsoleRenderer {
     pub fn start(mut surface: ConsoleSurface) -> Result<Self> {
         let (requests, input) = std::sync::mpsc::sync_channel(1);
         let (output, rendered) = std::sync::mpsc::sync_channel(1);
+        let owner = std::thread::current();
         let thread = std::thread::Builder::new()
             .name("reel-console-output".into())
             .spawn(move || {
@@ -639,7 +642,9 @@ impl ConsoleRenderer {
                         RenderRequest::Status(status) => surface.status(status).map(|()| None),
                     };
                     let failed = result.is_err();
-                    if output.send(result).is_err() || failed {
+                    let sent = output.send(result);
+                    owner.unpark();
+                    if sent.is_err() || failed {
                         break;
                     }
                 }
