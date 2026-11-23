@@ -131,7 +131,42 @@
     for(const card of document.querySelectorAll(".unit-card")){const unit=state.data.units.find(u=>u.id===card.dataset.unit);card.classList.toggle("is-playing",!audio.paused&&unit.spans.some(s=>s.language===state.language&&s.cue_id===cue.id&&sample>=s.start_sample&&sample<s.end_sample));}
     const active=cue.markers.filter(m=>m.sample<=sample).at(-1);for(const button of $("markers").children)button.classList.toggle("active",Number(button.dataset.sample)===active?.sample);
   }
-  function renderCues(){const root=$("cue-sheet");root.replaceChildren();for(const cue of state.data.cues.filter(c=>c.language===state.language)){const row=node("button","cue-row");row.append(node("strong","",cue.title),node("small","",` · ${clock(cue.samples/cue.sample_rate)}`),node("p","",cue.text));row.addEventListener("click",()=>{setCue(cue.id);$("audio").scrollIntoView({block:"center",behavior:"smooth"});});root.append(row);}}
+  function renderCues() {
+    const root = $("cue-sheet");
+    root.replaceChildren();
+    for (const cue of state.data.cues.filter(c => c.language === state.language)) {
+      const row = node("button", "cue-row");
+      row.append(node("strong", "", cue.title), node("small", "", ` · ${clock(cue.samples/cue.sample_rate)}`), node("p", "", cue.text));
+      row.addEventListener("click", () => {
+        setCue(cue.id);
+        $("audio").scrollIntoView({block:"center", behavior:"smooth"});
+      });
+      root.append(row);
+
+      const candidates = state.data.cue_candidates.filter(c => c.cue.id === cue.id && c.cue.language === cue.language);
+      for (const candidate of candidates) {
+        const audition = node("div", "cue-candidate");
+        audition.append(node("strong", "", candidate.label), node("p", "muted", "Unselected recording"));
+        if (candidate.preview) {
+          const player = node("audio", "");
+          player.controls = true;
+          player.preload = "none";
+          player.src = candidate.preview;
+          player.setAttribute("aria-label", candidate.label);
+          player.addEventListener("play", () => {
+            audio.pause();
+            for (const other of root.querySelectorAll("audio")) {
+              if (other !== player) other.pause();
+            }
+          });
+          audition.append(player);
+        } else {
+          audition.append(node("p", "muted", "Recording preview unavailable."));
+        }
+        root.append(audition);
+      }
+    }
+  }
   function renderTasks(){const root=$("tasks");root.replaceChildren();for(const [id,task] of Object.entries(state.data.tasks)){const row=node("div","task");row.append(node("span","task-icon",task.state==="retained-recorded"?"◇":"◷"));const text=node("div");text.append(node("strong","",id),node("small","",task.attempt_id||task.code||"Waiting for a journal observation"));row.append(text,node("span",`pill ${task.state==="waiting"?"waiting":""}`,task.label));root.append(row);}if(!root.children.length)root.append(node("p","muted","No workflow journals are attached to this view."));}
   function render(){const data=state.data;document.title=`${data.title} · REEL`;$("title").textContent=data.title;$("work-id").textContent=data.work_id;$("workspace").replaceChildren(document.createTextNode(data.project),node("small","",data.work_id));$("synthetic").hidden=!data.synthetic;$("source").textContent=`Source ${data.source_commit.slice(0,10)}`;
     $("unit-label").textContent=data.format==="comic"?"PAGES":"CELS";$("story-tab").textContent=data.format==="comic"?"Pages":"Storyboard";$("unit-count").textContent=data.units.length;$("cue-count").textContent=data.cues.filter(c=>c.language===state.language).length;$("candidate-count").textContent=data.units.flatMap(versions).filter(v=>v.designation==="candidate").length;$("waiting-count").textContent=Object.values(data.tasks).filter(t=>["waiting","publishing","updating"].includes(t.state)).length;$("workflow-note").textContent="Tasks awaiting a completed observation";
@@ -147,6 +182,9 @@
   $("story-tab").addEventListener("click",()=>{ $("storyboard").hidden=false;$("cue-sheet").hidden=true;$("story-tab").setAttribute("aria-selected","true");$("cue-tab").setAttribute("aria-selected","false");});
   $("cue-tab").addEventListener("click",()=>{$("storyboard").hidden=true;$("cue-sheet").hidden=false;$("story-tab").setAttribute("aria-selected","false");$("cue-tab").setAttribute("aria-selected","true");});
   for(const event of ["timeupdate","play","pause","ended"])audio.addEventListener(event,highlight);
+  audio.addEventListener("play", () => {
+    for (const player of $("cue-sheet").querySelectorAll("audio")) player.pause();
+  });
   audio.addEventListener("loadedmetadata",()=>{applyPendingSeek();const cue=activeCue();if(cue&&Math.abs(audio.duration-cue.samples/cue.sample_rate)>.1)$("audio-status").textContent="Preview duration differs from the declared take clock. No timing was changed.";});audio.addEventListener("error",()=>{pendingSeek=null;$("audio-status").textContent="Recording preview unavailable. The selected take and its clock are preserved.";});
   refresh();state.poll=setInterval(()=>refresh(),2000);
 })();

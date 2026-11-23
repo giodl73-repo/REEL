@@ -144,10 +144,21 @@ pub struct Watch {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputPreview {
-    pub unit_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cue: Option<CueOutput>,
     pub path: PathBuf,
     pub label: String,
 }
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CueOutput {
+    pub id: String,
+    pub language: String,
+}
+
 fn text(value: &str, max: usize) -> bool {
     !value.is_empty()
         && value.len() <= max
@@ -395,16 +406,24 @@ impl Board {
                 return Err(error(ErrorKind::Invalid, "board-watch"));
             }
             for (output, preview) in &watch.outputs {
+                let valid_target = match (&preview.unit_id, &preview.cue) {
+                    (Some(id), None) => {
+                        self.units
+                            .iter()
+                            .find(|unit| &unit.id == id)
+                            .and_then(|unit| unit.task.as_ref())
+                            == Some(key)
+                    }
+                    (None, Some(target)) => self
+                        .cues
+                        .iter()
+                        .any(|cue| cue.id == target.id && cue.language == target.language),
+                    _ => false,
+                };
                 if !id(output)
-                    || !units.contains(&preview.unit_id)
                     || !absolute(&preview.path)
                     || !text(&preview.label, 128)
-                    || self
-                        .units
-                        .iter()
-                        .find(|u| u.id == preview.unit_id)
-                        .and_then(|u| u.task.as_ref())
-                        != Some(key)
+                    || !valid_target
                 {
                     return Err(error(ErrorKind::Invalid, "board-output-preview"));
                 }
