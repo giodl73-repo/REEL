@@ -312,6 +312,32 @@ fn actual_station_restart_acknowledges_and_returns_to_pass_one() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "dedicated Restart capture stimulus; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_restart_leaves_a_fresh_onset_observation_window() {
+    use std::time::Duration;
+    let elapsed = run_station_with_delays(
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b"stop\r"),
+            (b"Command 2: Stopped", b"restart\r"),
+            (b"Command 3: Restarting", b""),
+            (b"Playing p1", b"quit\r"),
+        ],
+        45,
+        &[
+            Duration::ZERO,
+            Duration::from_millis(300),
+            Duration::from_millis(350),
+            Duration::ZERO,
+            Duration::from_millis(350),
+        ],
+    );
+    assert_acknowledgement_time("Restart", elapsed[3]);
+    assert_playing_time("Restart", elapsed[4], 35);
+}
+
+#[cfg(windows)]
+#[test]
 #[ignore = "explicit native quit timing; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_quit_acknowledges_and_closes_playback() {
     let elapsed = run_station(

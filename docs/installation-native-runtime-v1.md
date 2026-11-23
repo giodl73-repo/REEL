@@ -797,6 +797,12 @@ variable. It verifies that the trace and recording came from the same
 session request. The Start-to-first-marker check gives a conservative
 onset bound at the render mix because the marker follows the source's
 initial silence. It allows up to two seconds and needs both clock files.
+For Restart, use `actual_station_restart_leaves_a_fresh_onset_observation_window`
+in a separate capture. The fixture holds the original and restarted playback
+long enough for each head marker, then quits before the tail marker. The
+analyzer requires exactly two head markers, one before Restart and one after.
+The CA-2890 playback-only rehearsal reached visible Playing after Restart in
+507.99 ms. The render-mix measurement still needs an isolated recording.
 For a dedicated Pause or Stop capture, the same analyzer requires the first
 source marker before the command and packet coverage through the next 250 ms.
 It measures from before sending the command to the first frame of sustained

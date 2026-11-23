@@ -268,6 +268,44 @@ fn capture_passes(gap: usize, spans: [usize; 2]) -> bool {
             .all(|span| span.abs_diff(LAST_MARKER - FIRST_MARKER) <= RATE * 20 / 1000)
 }
 
+fn restart_to_marker_bound(
+    trace: &ConsoleTrace,
+    clock: &CaptureClock,
+    frames: &[[f32; 2]],
+) -> Result<u64> {
+    let mut restarts = trace
+        .steps
+        .iter()
+        .filter(|step| step.command == "restart\r");
+    let sent = restarts
+        .next()
+        .and_then(|step| step.sent_qpc_ns)
+        .ok_or_else(|| anyhow::anyhow!("console trace lacks Restart time"))?;
+    ensure!(
+        sent > 0 && restarts.next().is_none(),
+        "ambiguous Restart observation"
+    );
+    let markers: Vec<_> = frames
+        .windows(MARKER_FRAMES)
+        .enumerate()
+        .filter_map(|(offset, window)| marker_at(window).map(|marker| (offset, marker)))
+        .take(3)
+        .collect();
+    let [(first, Marker::First), (restarted, Marker::First)] = markers.as_slice() else {
+        anyhow::bail!("expected the original and restarted head markers only");
+    };
+    let first_ns = frame_qpc(clock, *first)?;
+    start_to_marker_bound(trace, clock, first_ns)?;
+    let next_ns = frame_qpc(clock, *restarted)?;
+    ensure!(
+        first_ns < sent && next_ns < trace.process_observed_exit_qpc_ns,
+        "capture markers are outside the Restart observation window"
+    );
+    next_ns
+        .checked_sub(sent)
+        .ok_or_else(|| anyhow::anyhow!("restarted marker precedes Restart"))
+}
+
 #[test]
 fn station_capture_measurement_detects_markers_and_applies_both_limits() {
     let mut frames = vec![[0.0; 2]; SOURCE_FRAMES * 2 + TRANSPORT_GAP];
@@ -352,6 +390,17 @@ fn station_capture_measurement_detects_markers_and_applies_both_limits() {
         command_to_quiet_bound(&trace, &clock, &frames, "pause\r").unwrap(),
         30_000_000
     );
+    trace.steps.last_mut().unwrap().command = "stop\r".into();
+    trace.steps.push(ConsoleStep {
+        command: "restart\r".into(),
+        sent_qpc_ns: Some(1 + frame_ns(24_000)),
+    });
+    assert!(restart_to_marker_bound(&trace, &clock, &frames).is_err());
+    frames.copy_within(FIRST_MARKER..FIRST_MARKER + MARKER_FRAMES, 28_800);
+    assert_eq!(
+        restart_to_marker_bound(&trace, &clock, &frames).unwrap(),
+        100_000_000
+    );
     clock.packets[10].capture_qpc_ns += 3_000_000;
     clock.packets[10].callback_qpc_ns += 3_000_000;
     assert!(measure_capture_clock(&clock, &bytes, offsets).is_err());
@@ -401,6 +450,13 @@ fn measure_retained_station_capture() {
         "console alignment requires a capture clock sidecar"
     );
     if let (Some(clock), Some(trace)) = (&clock, &trace) {
+        if trace.steps.iter().any(|step| step.command == "restart\r") {
+            validate_capture_clock(clock, &bytes).unwrap();
+            let onset = restart_to_marker_bound(trace, clock, &frames).unwrap();
+            println!("Restart sent to fresh captured source marker: {onset} ns");
+            assert!(onset <= 2_000_000_000);
+            return;
+        }
         let mut commands = trace
             .steps
             .iter()
