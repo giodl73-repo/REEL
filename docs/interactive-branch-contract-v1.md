@@ -31,6 +31,14 @@ Each language's selection remains exact. Missing Spanish source or access
 fails Spanish admission. The runtime never translates choice labels, falls back
 to another edition or interpolates timing across languages.
 
+Use the existing [spoken programme checker](../src/spoken_programme/checker.rs)
+for edition and module evidence. Its `verify_access` checks both the access
+manifest and the exact source transcript before setting `access_checked`.
+For retained input, use the [reopened history evidence](../src/spoken_programme/history/retained.rs)
+and keep its verified object guards live for media consumption. A summary
+counts verified items. The admission fixture must compare the selected edition,
+module, bounds and access binding with the checked records themselves.
+
 ## Entry, exit and loops
 
 | Node | Enter | Leave |
