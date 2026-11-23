@@ -28,6 +28,9 @@ mod film_control_cases;
 #[cfg(all(windows, feature = "film"))]
 #[path = "support/film_job.rs"]
 mod film_job;
+#[cfg(all(windows, feature = "film"))]
+#[path = "support/protected_film_repair.rs"]
+mod protected_film_repair;
 
 #[cfg(all(windows, feature = "film"))]
 #[test]
