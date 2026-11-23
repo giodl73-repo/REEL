@@ -516,9 +516,10 @@ The reader and renderer own their blocking operations on separate threads.
 `ParentSession::tick_with_renderer` polls the renderer and acknowledges each
 ticket only after a successful console operation. The headless fixture verifies
 that this sends `TextShown` over the channel and that a resize error leaves the
-command credit outstanding. The complete foreground owner must still coordinate
-input and shutdown, including Ctrl+C, blocked output cancellation, restoration
-errors and shared cleanup deadlines.
+command credit outstanding. The foreground owner coordinates Ctrl+C and joins
+both console threads before restoring the saved modes and code pages. Explicit
+shutdown reports restoration errors. Blocked output cancellation and shared
+cleanup deadlines still need verification on the target station.
 
 ### Existing runner and output ports
 

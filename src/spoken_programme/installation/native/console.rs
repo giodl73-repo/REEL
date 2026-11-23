@@ -85,15 +85,29 @@ struct Environment {
     output_mode: CONSOLE_MODE,
     input_cp: u32,
     output_cp: u32,
+    restored: bool,
+}
+impl Environment {
+    fn restore(&mut self) -> Result<()> {
+        if self.restored {
+            return Ok(());
+        }
+        // Attempt every setting even when one restoration fails.
+        let result = unsafe {
+            let input_mode = SetConsoleMode(handle(&self.input), self.input_mode);
+            let output_mode = SetConsoleMode(handle(&self.output), self.output_mode);
+            let input_cp = SetConsoleCP(self.input_cp);
+            let output_cp = SetConsoleOutputCP(self.output_cp);
+            input_mode.and(output_mode).and(input_cp).and(output_cp)
+        };
+        result.map_err(|error| anyhow::anyhow!("installation console restoration: {error}"))?;
+        self.restored = true;
+        Ok(())
+    }
 }
 impl Drop for Environment {
     fn drop(&mut self) {
-        unsafe {
-            let _ = SetConsoleMode(handle(&self.input), self.input_mode);
-            let _ = SetConsoleMode(handle(&self.output), self.output_mode);
-            let _ = SetConsoleCP(self.input_cp);
-            let _ = SetConsoleOutputCP(self.output_cp);
-        }
+        let _ = self.restore();
     }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +200,7 @@ impl ConsoleSurface {
             output_mode,
             input_cp: unsafe { GetConsoleCP() },
             output_cp: unsafe { GetConsoleOutputCP() },
+            restored: false,
         };
         ensure!(
             environment.input_cp != 0 && environment.output_cp != 0,
@@ -496,6 +511,7 @@ type Rendered = (DisplayTicket, Option<LayoutObservation>);
 pub struct ConsoleForeground {
     reader: ConsoleReader,
     renderer: ConsoleRenderer,
+    environment: Arc<Environment>,
     interrupt: ConsoleInterrupt,
     input: InputReceiver,
     parent: ParentSession,
@@ -504,12 +520,14 @@ impl ConsoleForeground {
     pub fn open(parent: ParentSession) -> Result<Self> {
         let interrupt = ConsoleInterrupt::install()?;
         let mut surface = ConsoleSurface::open()?;
+        let environment = surface.environment.clone();
         let (sender, input) = parent.command_pool().channel();
         let reader = surface.start_reader(sender)?;
         let renderer = ConsoleRenderer::start(surface)?;
         Ok(Self {
             reader,
             renderer,
+            environment,
             interrupt,
             input,
             parent,
@@ -538,9 +556,16 @@ impl ConsoleForeground {
         self.input.close();
         let reader = self.reader.shutdown();
         let renderer = self.renderer.shutdown();
+        let restoration = Arc::try_unwrap(self.environment)
+            .map_err(|_| anyhow::anyhow!("installation console still owned by an I/O thread"))
+            .and_then(|mut environment| environment.restore());
         let interrupt = self.interrupt.shutdown();
         let channel = self.parent.shutdown_channel();
-        reader.and(renderer).and(interrupt).and(channel)
+        reader
+            .and(renderer)
+            .and(restoration)
+            .and(interrupt)
+            .and(channel)
     }
 }
 
