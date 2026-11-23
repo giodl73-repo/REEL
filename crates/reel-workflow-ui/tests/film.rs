@@ -283,4 +283,21 @@ fn cli_pins_request_exports_once_and_never_overwrites_or_emits_private_source() 
         error["error"]["kind"],
         serde_json::to_value(ErrorKind::Integrity).unwrap()
     );
+    #[cfg(windows)]
+    {
+        let missing = f.root.path().join("missing-native-control.json");
+        let result = Command::new(env!("CARGO_BIN_EXE_reel-workflow-ui"))
+            .arg("project-native-film")
+            .arg(&path)
+            .arg("f".repeat(64))
+            .arg(&missing)
+            .arg(&missing)
+            .arg(&refused)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!refused.exists());
+        let error: serde_json::Value = serde_json::from_slice(&result.stderr).unwrap();
+        assert_eq!(error["error"]["code"], "film-board-request-pin");
+    }
 }
