@@ -208,6 +208,9 @@ impl Fixture {
         Self::case(true, [2, 2])
     }
     fn case(succeeded: bool, states: [u8; 2]) -> Self {
+        Self::with_resources(succeeded, states, &[])
+    }
+    fn with_resources(succeeded: bool, states: [u8; 2], resources: &[Object]) -> Self {
         let root = tempfile::tempdir().unwrap();
         let base = root.path().canonicalize().unwrap();
         let cache = base.join("cache");
@@ -235,7 +238,7 @@ impl Fixture {
             &mut store,
             "job/identity",
             json!({"component":"scene-a"}),
-            &[],
+            resources,
         );
         let input = tree(
             &mut store,
@@ -357,6 +360,11 @@ impl Fixture {
         let fake_pin = json!({"sha256":Digest::blob(b"never-open-this-tool"),"bytes":20});
         let mut fake_file = fake_pin.clone();
         fake_file["path"] = json!(base.join("tool-does-not-exist"));
+        let max_logical_bytes = if resources.is_empty() {
+            1024 * 1024
+        } else {
+            8_u64 * 1024 * 1024 * 1024
+        };
         let profile:Profile=serde_json::from_value(json!({"schema":SCHEMA,"inputs":{
             "source":{},"context":context,"request":{"schema":tig_episode::SCHEMA,"assembly_id":"assembly","assembly_definition":"assembly-type",
             "episode_definition":"episode-type","scene_definitions":["scene-type"],"component_definitions":[]},
@@ -369,7 +377,7 @@ impl Fixture {
             "metadata_root":metadata,"metadata_minimum":minimum,"journal_root":journal_root,"journal_minimum":journal.checkpoint(),
             "source_id":"episode","owner":"fixture","expected_revision":0,"operation":"run-v1",
             "budget_bytes":1024*1024,"scratch_bytes":65536,"timeout_seconds":10,"reference_staging_bytes":65536,"reference_picture_processes":2,
-            "max_objects":10000,"max_logical_bytes":1024*1024,"outputs":{"receipt.json":65536,"master.mkv":65536}
+            "max_objects":10000,"max_logical_bytes":max_logical_bytes,"outputs":{"receipt.json":65536,"master.mkv":65536}
         })).unwrap();
         validate(&profile).unwrap();
         Self {
@@ -512,7 +520,15 @@ fn legacy_flat_pending_packet_resumes_without_changing_its_selection() {
 
 #[test]
 fn prepared_episode_handoff_reopens_rebuilds_and_resumes_without_runtime_or_media() {
-    let mut f = Fixture::new();
+    // Match the reported 600-resource episode scale with synthetic identities.
+    // Recovery must preserve these references without opening payloads.
+    let resources: Vec<_> = (0_u64..600)
+        .map(|index| Object {
+            sha256: Digest::blob(&index.to_le_bytes()),
+            bytes: if index == 0 { 3_600_000_000 } else { 7_240_000 },
+        })
+        .collect();
+    let mut f = Fixture::with_resources(true, [2, 2], &resources);
     f.interrupt();
     let checkpoint = f.journal.checkpoint();
     let pending = f.state().pending.unwrap();
@@ -532,6 +548,15 @@ fn prepared_episode_handoff_reopens_rebuilds_and_resumes_without_runtime_or_medi
     assert_eq!(state.revision, 6);
     assert!(state.pending.is_none());
     assert_eq!(state.current.unwrap().selection, pending.selection);
+    let mut reader =
+        MetadataReader::open(&f.profile.metadata_root, &f.profile.metadata_minimum).unwrap();
+    let retained = entries(&pending.selection, &mut reader).unwrap();
+    let retained_objects: std::collections::BTreeSet<_> = retained.values().collect();
+    assert!(
+        resources
+            .iter()
+            .all(|object| retained_objects.contains(object))
+    );
     for source in expected(&f.profile).unwrap() {
         let state = f.journal.source(&key(&source).unwrap()).unwrap().unwrap();
         assert_eq!(state.revision, 3);
