@@ -208,6 +208,85 @@ fn live_candidate_preview_cannot_alias_an_authored_media_key() {
 
 #[cfg(windows)]
 #[test]
+fn live_returned_recording_is_bound_to_one_cue_language_and_preserves_the_selected_take() {
+    use reel_workflow::{Mode, Plan, Provenance, ReturnedResult, handoff::Journal};
+    use std::collections::BTreeMap;
+
+    let (_temp, root, mut board) = board();
+    let old = Journal::open(&root.join("journal")).unwrap();
+    let plan: Plan = serde_json::from_value(json!({
+        "schema": reel_workflow::PLAN_SCHEMA, "project": board["project"],
+        "source_commit": board["source_commit"],
+        "tasks": [{ "id": "record-opening-es", "operation": "speech-candidate", "language": "es",
+            "prompt": "Synthetic cue audition.", "inputs": [], "depends_on": [],
+            "outputs": {"voice.wav": {"media_type": "audio/wav", "max_bytes": 500000, "required": true}} }]
+    })).unwrap();
+    let mut ticket = old.ticket().clone();
+    ticket.packet =
+        reel_workflow::make_packet(&plan, "record-opening-es", BTreeMap::new()).unwrap();
+    let path = root.join("new-take.wav");
+    support::tone(&path, 2, 220.0);
+    let take = support::asset(&path, "recording/cue/es/candidate", "audio/wav");
+    let mut journal = Journal::create(
+        &root.join("cue-journal"),
+        ticket.clone(),
+        &mut support::Synthetic { pending: false },
+    )
+    .unwrap();
+    journal
+        .import(
+            ReturnedResult {
+                schema: reel_workflow::RESULT_SCHEMA.into(),
+                task_id: ticket.packet.task.id.clone(),
+                task_key: ticket.packet.task_key.clone(),
+                attempt_id: ticket.attempt_id.clone(),
+                artifacts: BTreeMap::from([("voice.wav".into(), take.clone())]),
+                provenance: Provenance {
+                    mode: Mode::Direct,
+                    provider: Some("synthetic".into()),
+                    model: Some("fixture-v1".into()),
+                    executable: None,
+                },
+                worker_receipt: None,
+            },
+            &mut support::Synthetic { pending: false },
+        )
+        .unwrap();
+    board["tasks"]["record-opening-es"] = json!({
+        "journal": root.join("cue-journal"), "ticket_sha256": reel_workflow::canonical_digest(&ticket).unwrap(),
+        "task_key": ticket.packet.task_key, "attempt_id": ticket.attempt_id,
+        "outputs": {
+            "voice.wav": { "cue": {"id": "cue-1", "language": "es"}, "path": path, "label": "New recording" }
+        }
+    });
+    let mut wrong_language = board["tasks"]["record-opening-es"].clone();
+    wrong_language["outputs"]["voice.wav"]["cue"]["language"] = "en".into();
+    board["tasks"]["incorrect-english-watch"] = wrong_language;
+    let raw = serde_json::to_vec(&board).unwrap();
+    fs::write(root.join("board.json"), &raw).unwrap();
+    let (_child, authority, token) = host(&root, &reel_workflow::digest(&raw));
+    let status = get(&authority, &format!("/{token}/state.json"), "GET", "");
+    assert!(status.starts_with(b"HTTP/1.1 200"));
+    let header = status.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let view: Value = serde_json::from_slice(&status[header + 4..]).unwrap();
+    assert_eq!(view["cue_candidates"].as_array().unwrap().len(), 1);
+    let candidate = &view["cue_candidates"][0];
+    assert_eq!(candidate["cue"], json!({"id": "cue-1", "language": "es"}));
+    assert_eq!(candidate["asset"], serde_json::to_value(take).unwrap());
+    let route = format!("/{token}/{}", candidate["preview"].as_str().unwrap());
+    let audio = get(&authority, &route, "GET", "");
+    assert!(audio.starts_with(b"HTTP/1.1 200"));
+    assert!(audio.ends_with(&fs::read(path).unwrap()));
+    assert_eq!(
+        view["cues"][0]["selected_take"],
+        board["cues"][0]["selected_take"]
+    );
+    assert_eq!(view["cues"][0]["markers"], board["cues"][0]["markers"]);
+    assert_eq!(view["cues"][0]["samples"], board["cues"][0]["samples"]);
+}
+
+#[cfg(windows)]
+#[test]
 fn actual_host_is_lazy_capability_scoped_and_range_reads_verified_bytes() {
     let (_temp, root, _value) = board();
     let pin = reel_workflow::digest(&fs::read(root.join("board.json")).unwrap());
