@@ -6,7 +6,12 @@
   const node = (tag, cls, text) => {const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
   const clock = seconds => `${String(Math.floor(seconds/60)).padStart(2,"0")}:${(seconds%60).toFixed(2).padStart(5,"0")}`;
   const versions = unit => unit.versions.filter(v=>!v.language || v.language===state.language);
-  const chosen = unit => versions(unit).find(v=>v.id===state.versions.get(unit.id)) || versions(unit).at(-1);
+  function chosen(unit) {
+    const visible = versions(unit);
+    return visible.find(version => version.id === state.versions.get(unit.id))
+      ?? visible.findLast(version => version.designation === "selected")
+      ?? visible.at(-1);
+  }
   const activeCue = () => state.data?.cues.find(c=>c.id===state.cue && c.language===state.language);
   const designation = v => v.designation==="candidate"?"Unselected candidate":v.designation==="selected"?"Selected reference":"Historical reference";
   const exactSubject = (a,b) => !!a && !!b && a.logical_id===b.logical_id && a.sha256===b.sha256 && a.bytes===b.bytes && a.media_type===b.media_type;
