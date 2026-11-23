@@ -39,6 +39,7 @@ struct Selection {
 struct Choice {
     id: String,
     target: String,
+    labels: BTreeMap<String, String>,
     traversals: Option<u16>,
 }
 
@@ -127,6 +128,19 @@ fn validate(graph: &Graph) -> Result<()> {
                     choices.iter().all(|choice| choice.traversals != Some(0)),
                     "zero repeat budget at {id}"
                 );
+                for choice in choices {
+                    ensure!(
+                        choice.labels.len() == 2
+                            && ["en", "es"].into_iter().all(|language| {
+                                choice
+                                    .labels
+                                    .get(language)
+                                    .is_some_and(|label| !label.trim().is_empty())
+                            }),
+                        "choice {} at {id} needs one label for each language",
+                        choice.id
+                    );
+                }
                 ensure!(
                     !node.targets(false).is_empty(),
                     "choice {id} has no exit after repeats"
@@ -151,9 +165,10 @@ fn fixture() -> Graph {
         {"kind":"playback","id":"opening","next":"choose","selections":[
           {"language":"en","edition":"opening-en"},{"language":"es","edition":"opening-es"}]},
         {"kind":"choice","id":"choose","choices":[
-          {"id":"repeat-opening","target":"opening","traversals":1},
-          {"id":"example","target":"example"},
-          {"id":"summary","target":"summary"}]},
+          {"id":"repeat-opening","target":"opening","traversals":1,
+           "labels":{"en":"Repeat opening","es":"Repetir la introducción"}},
+          {"id":"example","target":"example","labels":{"en":"Worked example","es":"Ejemplo resuelto"}},
+          {"id":"summary","target":"summary","labels":{"en":"Summary","es":"Resumen"}}]},
         {"kind":"playback","id":"example","next":"end","selections":[
           {"language":"en","edition":"example-en"},{"language":"es","edition":"example-es"}]},
         {"kind":"playback","id":"summary","next":"end","selections":[
@@ -180,6 +195,19 @@ fn graph_requires_an_exit_after_repeat_budget_is_spent() {
     assert_eq!(
         validate(&graph).unwrap_err().to_string(),
         "choice choose has no exit after repeats"
+    );
+}
+
+#[test]
+fn graph_refuses_a_choice_without_its_spanish_label() {
+    let mut graph = fixture();
+    let Node::Choice { choices, .. } = &mut graph.nodes[1] else {
+        panic!("fixture needs a choice node after the opening");
+    };
+    choices[2].labels.remove("es");
+    assert_eq!(
+        validate(&graph).unwrap_err().to_string(),
+        "choice summary at choose needs one label for each language"
     );
 }
 
