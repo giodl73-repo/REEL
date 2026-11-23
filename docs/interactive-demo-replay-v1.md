@@ -63,3 +63,10 @@ Acoustic playback and station qualification require their own evidence.
 | Sound and Vocal Adaptation | Replay compares delivered PCM against the independently checked EN/ES WAVE spans. Seek and stale completion tests use the selected edition's clock. |
 | Animation | Companion placement resolves checked anchors against the exact selected edition and span. The terminal demo exposes audio and text, while the existing browser renderer remains the visual presentation surface. |
 | Rights and Provenance | The CLI checks the original producer identity, audio and transcript. The fixture uses synthetic signals. Human listening, project authority and publication remain separate. |
+
+The opt-in Windows synthetic smoke uses `REEL_INTERACTIVE_SYNTHETIC_ENDPOINT`
+to select a connected output. It runs the Spanish summary and English example
+in the shipped executable, verifies the terminal reaches both authored endings,
+and closes the process within a fixed deadline. The test observes callback
+submission and terminal state. Acoustic listening and physical station
+qualification require separate evidence.
