@@ -645,8 +645,9 @@ opens the selected request in a pseudoconsole and follows the visible Start,
 Pause, Resume, loop, completion, Restart, Stop and Quit sequence. Set
 `REEL_INSTALLATION_STATION_SESSION` to the absolute path of the enrolled
 request before invoking the test by its exact name with `--ignored --exact`.
-Keep its player image outside the build directory so recompiling the test
-cannot replace the pinned executable. This test checks the visible control
+Keep its player image and exact build lockfile in retained paths outside the
+build directory and working checkout. Recompiling can replace the executable,
+and updating the checkout can replace the lockfile. This test checks the visible control
 sequence and process exit. M12c also requires independent capture and numeric
 timing evidence.
 
@@ -672,6 +673,14 @@ and ≤20 ms source-span error. Invoke
 This run sends only Start and Quit so the two passes and loop interval are
 continuous. Start the separate recorder before invoking the test and retain its
 state and recording after the test exits.
+
+To exercise the two-minute lifetime with a live paused stream, invoke
+`actual_station_expiry_closes_paused_playback_without_quit` by exact name
+with `--ignored --exact` and the same station request. It starts and pauses
+the fixture, sends no further command, and checks for Stopped and clean exit.
+The pinned Dell development session passed this test in 120.39 seconds total.
+The test's outer wall clock includes setup. For the independent cleanup gate,
+retain the expiry and process-exit timestamps from a synchronized clock.
 
 The opt-in test `capture::record_isolated_station_loopback` records the pinned
 render endpoint's WASAPI loopback. On an isolated synthetic test output, set
