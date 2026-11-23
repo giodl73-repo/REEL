@@ -153,6 +153,19 @@ fn shared_quiet_programme() -> InstallationFixture {
     let mut f = Fixture::new();
     for (language, index) in [("en", 0), ("es", 3)] {
         f.signals[index][..4800 * 2].fill(0);
+        let (first, second) = if language == "en" {
+            (48_000, 96_000)
+        } else {
+            (60_000, 120_000)
+        };
+        f.document.performances[index].markers = [("first", first), ("second", second)]
+            .map(|(id, start_sample)| reel::cue_relative::CueMarker {
+                id: id.into(),
+                kind: reel::cue_relative::MarkerKind::Phrase,
+                start_sample,
+                end_sample: start_sample + 2_000,
+            })
+            .to_vec();
         let mut edition = f
             .document
             .editions
@@ -250,6 +263,8 @@ fn reading_lesson_and_installation_use_the_same_checked_programme() {
     }
     let receipt = hash(&shared.receipt);
     let access = hash(&shared.access_manifest);
+    #[cfg(feature = "tig-publication")]
+    super::companion::check_shared_opening_companion(shared.inputs(), &shared.root);
     let reading = super::reading::ReadingFixture::from_fixture(shared.f);
     let prepared = reading.prepare().unwrap();
     let output = reading.f.temp.path().join("shared-reading");
