@@ -29,46 +29,57 @@ fn english_repaired_master_assembles_on_its_own_cue_clock() {
 fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
     let (bootstrap, request) = crate::language_scope::bilingual_with_english_samples(60000);
     let mut p = Project::from_scene_fixture(bootstrap, request);
-    let scene_path = "records/scene-scene-b.tig";
-    let mut scene_record = read(p.repo.path().join(scene_path));
-    let scene_pin: Object = serde_json::from_value(scene_record["selected"].clone()).unwrap();
-    let mut scene = read(object_file(&p.hot(), &scene_pin));
-    scene["languages"]["es"]["events"]
-        .as_array_mut()
-        .unwrap()
-        .truncate(1);
-    scene_record["selected"] = json!(p.publish("hot", &serde_json::to_vec(&scene).unwrap()));
-    write(p.repo.path(), scene_path, &scene_record);
-    p.commit("complete both language controls for the same scene");
-
-    let mut baseline = Vec::new();
-    for language in ["es", "en"] {
-        let mut request: tig_scene::Request =
-            serde_json::from_value(serde_json::to_value(&p.requests[2]).unwrap()).unwrap();
-        request.language = language.into();
-        let controls = p.data.path().join(format!("baseline-{language}"));
-        let mut source = p.source();
-        tig_scene::compile(&mut source, &request, &controls).unwrap();
-        let path = controls.join("delivery/job.json");
-        let job = reel::tig_inputs::read_job(&path).unwrap();
-        assert_eq!(job.pictures.len(), 1);
-        let output = controls.join("render");
-        let inputs = source.prepare(&job).unwrap();
-        reel::scene_delivery::render_with_inputs(&path, &p.programs.with_inputs(&inputs), &output)
-            .unwrap();
-        baseline.push((language, job, controls, output));
+    for unit in UNITS {
+        let scene_path = format!("records/scene-{unit}.tig");
+        let mut scene_record = read(p.repo.path().join(&scene_path));
+        let scene_pin: Object = serde_json::from_value(scene_record["selected"].clone()).unwrap();
+        let mut scene = read(object_file(&p.hot(), &scene_pin));
+        scene["languages"]["es"]["events"]
+            .as_array_mut()
+            .unwrap()
+            .truncate(1);
+        scene_record["selected"] = json!(p.publish("hot", &serde_json::to_vec(&scene).unwrap()));
+        write(p.repo.path(), &scene_path, &scene_record);
     }
+    p.commit("complete both language controls for each scene");
+
+    let mut baseline = BTreeMap::new();
+    let mut editions = BTreeMap::new();
+    for language in ["es", "en"] {
+        let mut scenes = Vec::new();
+        for (index, unit) in UNITS.iter().enumerate() {
+            let mut request: tig_scene::Request =
+                serde_json::from_value(serde_json::to_value(&p.requests[index]).unwrap()).unwrap();
+            request.language = language.into();
+            let controls = p.data.path().join(format!("baseline-{language}-{unit}"));
+            let mut source = p.source();
+            tig_scene::compile(&mut source, &request, &controls).unwrap();
+            let path = controls.join("delivery/job.json");
+            let job = reel::tig_inputs::read_job(&path).unwrap();
+            assert_eq!(job.pictures.len(), 1);
+            let output = controls.join("render");
+            let inputs = source.prepare(&job).unwrap();
+            reel::scene_delivery::render_with_inputs(
+                &path,
+                &p.programs.with_inputs(&inputs),
+                &output,
+            )
+            .unwrap();
+            scenes.push((path, output));
+        }
+        baseline.insert(language, shared_edition(&p, language, "baseline", &scenes));
+        editions.insert(language, scenes);
+    }
+    let scene_jobs =
+        ["es", "en"].map(|lang| reel::tig_inputs::read_job(&editions[lang][2].0).unwrap());
     assert_ne!(
-        baseline[0].1.audio[0].source.sha256,
-        baseline[1].1.audio[0].source.sha256
+        scene_jobs[0].audio[0].source.sha256,
+        scene_jobs[1].audio[0].source.sha256
     );
-    assert_ne!(
-        read(baseline[0].3.join("receipt.json"))["content_samples"],
-        read(baseline[1].3.join("receipt.json"))["content_samples"]
-    );
+    assert_ne!(baseline["es"].total_samples, baseline["en"].total_samples);
     assert_eq!(
-        baseline[0].1.pictures[0].source,
-        baseline[1].1.pictures[0].source
+        scene_jobs[0].pictures[0].source,
+        scene_jobs[1].pictures[0].source
     );
 
     let new_picture = p.publish("hot", &picture([0, 255, 0]));
@@ -77,7 +88,9 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
     selected["selected"] = json!(new_picture);
     write(p.repo.path(), file, &selected);
     p.commit("select one shared repair");
-    for (language, job, controls, original) in baseline {
+    for (language, mut scenes) in editions {
+        let (original_job, original) = &scenes[2];
+        let job = reel::tig_inputs::read_job(original_job).unwrap();
         let candidate = reel::scene_delivery::repair::derive(
             &job,
             &reel::scene_delivery::repair::StillReplacement {
@@ -92,9 +105,9 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
             },
         )
         .unwrap();
-        let path = controls.join("delivery/job-repaired.json");
+        let path = original_job.with_file_name("job-repaired.json");
         fs::write(&path, serde_json::to_vec(&candidate.job).unwrap()).unwrap();
-        let output = controls.join("repaired");
+        let output = original.with_file_name("repaired");
         let mut source = p.source();
         let inputs = source.prepare(&candidate.job).unwrap();
         reel::scene_delivery::render_with_inputs(&path, &p.programs.with_inputs(&inputs), &output)
@@ -117,7 +130,96 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
             Object::from_bytes(&fs::read(output.join("master.mkv")).unwrap()),
             "{language}: repair did not change the master"
         );
+        drop(inputs);
+        scenes[2] = (path, output);
+        let revised = shared_edition(&p, language, "repaired", &scenes);
+        let original = &baseline[language];
+        assert_eq!(original.total_frames, revised.total_frames);
+        assert_eq!(original.total_samples, revised.total_samples);
+        assert_ne!(original.master_sha256, revised.master_sha256);
+        let changes: Vec<_> = original
+            .segments
+            .iter()
+            .zip(&revised.segments)
+            .filter(|(before, after)| before.selected_master_sha256 != after.selected_master_sha256)
+            .map(|(_, segment)| segment.id.as_str())
+            .collect();
+        assert_eq!(changes, [UNITS[2]]);
     }
+}
+
+fn shared_edition(
+    project: &Project,
+    language: &str,
+    version: &str,
+    scenes: &[(PathBuf, PathBuf)],
+) -> episode_conform::Receipt {
+    let root = project.data.path();
+    let controls = root.join("controls");
+    let mut owners = Vec::new();
+    let mut segments = Vec::new();
+    for ((job, output), unit) in scenes.iter().zip(UNITS) {
+        let delivery_receipt = pin(root, &output.join("receipt.json"));
+        segments.push(json!({
+            "kind": "scene",
+            "id": unit,
+            "master": pin(root, &output.join("master.mkv")),
+            "source_receipt": delivery_receipt,
+            "delivery_job": pin(root, job),
+            "delivery_receipt": delivery_receipt,
+            "semantic_delivery": pin(root, &job.with_file_name("semantic-delivery.json")),
+        }));
+        let job = reel::tig_inputs::read_job(job).unwrap();
+        owners.push(project.source().prepare(&job).unwrap());
+    }
+    let runtimes: Vec<_> = owners
+        .iter()
+        .map(|owner| project.programs.with_inputs(owner))
+        .collect();
+    let inputs = UNITS
+        .iter()
+        .zip(&runtimes)
+        .map(|(unit, runtime)| {
+            (
+                (*unit).to_owned(),
+                runtime as &dyn reel::scene_delivery::InputFiles,
+            )
+        })
+        .collect();
+    let manifest = json!({
+        "schema": "reel.episode-conform.v1",
+        "episode_id": "episode-1",
+        "language": language,
+        "output_sample_rate": 48000,
+        "catalog": pin(root, &controls.join("catalog.json")),
+        "master_template_definition": pin(root, &controls.join("master.json")),
+        "episode": pin(root, &controls.join("episode.json")),
+        "season_bindings": pin(root, &controls.join("season.json")),
+        "episode_bindings": pin(root, &controls.join("episode-bindings.json")),
+        "segments": segments,
+    });
+    let name = format!("episode-{language}-{version}");
+    write(root, &format!("{name}.json"), &manifest);
+    let receipt = episode_conform::build_with_scene_inputs(
+        &root.join(format!("{name}.json")),
+        root,
+        root,
+        &root.join(name),
+        &inputs,
+    )
+    .unwrap();
+    assert!(receipt.decoded_master_matches_ordered_segments);
+    assert!(receipt.timestamps_verified);
+    assert_eq!(receipt.language, language);
+    assert_eq!(
+        receipt
+            .segments
+            .iter()
+            .map(|segment| segment.id.as_str())
+            .collect::<Vec<_>>(),
+        UNITS
+    );
+    receipt
 }
 
 fn exercise_repaired_master(mut p: Project) {
