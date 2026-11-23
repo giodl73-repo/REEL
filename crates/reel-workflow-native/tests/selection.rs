@@ -125,23 +125,38 @@ fn changed_operation_conflicts_and_historical_replay_never_reselects() {
         ErrorKind::Conflict
     );
     request.changes[0].bytes = b"new cel".to_vec();
-    // A subsequent explicit operation can choose a different snapshot. The old
-    // operation's marker remains, but recovery must never roll the lane back.
-    git(
-        root.path(),
-        &[
-            "update-ref",
-            &request.selection,
-            &request.base,
-            &first.proposal,
-        ],
+    // Restore the prior bytes through a new owned operation, preserving both
+    // commits and leaving the active branch untouched.
+    let mut rollback: Request =
+        serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+    rollback.operation = "restore-prior".into();
+    rollback.base = first.proposal.clone();
+    rollback.expected = Some(first.proposal.clone());
+    rollback.changes[0].expected = Object::from_bytes(b"new cel");
+    rollback.changes[0].bytes = b"old cel".to_vec();
+    let restored = selection::run(&rollback, true).unwrap();
+    assert!(restored.applied && restored.currently_selected);
+    assert_eq!(
+        git(
+            root.path(),
+            &["rev-parse", &format!("{}^", restored.proposal)]
+        ),
+        first.proposal
+    );
+    assert_eq!(
+        git(
+            root.path(),
+            &["show", &format!("{}:cel.txt", restored.proposal)]
+        ),
+        "old cel"
     );
     let replay = selection::run(&request, true).unwrap();
     assert!(replay.applied && !replay.currently_selected);
     assert_eq!(
         git(root.path(), &["rev-parse", &request.selection]),
-        request.base
+        restored.proposal
     );
+    assert_eq!(git(root.path(), &["rev-parse", "HEAD"]), request.base);
 }
 
 #[test]
