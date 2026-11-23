@@ -609,7 +609,11 @@ fn main() -> ExitCode {
     match run(&args) {
         Ok(value) => {
             println!("{value}");
-            ExitCode::SUCCESS
+            if value["ok"] == false {
+                ExitCode::FAILURE
+            } else {
+                ExitCode::SUCCESS
+            }
         }
         Err(error) => {
             println!("{}", serde_json::json!({"ok":false,"error":error}));
