@@ -2328,6 +2328,20 @@ fn build_internal_with_inputs(
             controls.context("parent manifest requires explicit controls")?,
             reference,
         )?
+    } else if part_range.is_some() {
+        let reference = parts::declared_control(
+            manifest_path,
+            asset_root,
+            preparation_scope.as_deref().context("part scope missing")?,
+        )?;
+        let mut bytes = Vec::new();
+        fs::File::open(manifest_path)?
+            .take(reference.bytes + 1)
+            .read_to_end(&mut bytes)?;
+        if bytes.len() as u64 != reference.bytes || sha(&bytes) != reference.sha256 {
+            bail!("programme manifest differs from declared control");
+        }
+        bytes
     } else {
         fs::read(manifest_path)?
     };
