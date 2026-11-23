@@ -62,6 +62,14 @@ cannot traverse the graph. For a simultaneous completion and input, the
 runtime orders confirmed media completion first and then evaluates the input
 against its original node instance. No timer guesses a media boundary.
 
+For the local demo, the choice surface presents the authored labels in order
+and exposes the same stable IDs to text entry. Keyboard focus moves through
+enabled choices in authored order, and activating a focused choice submits its
+ID with the current node instance. For example, `summary` selects the same edge
+whether the listener activates “Summary” in EN, activates “Resumen” in ES, or
+enters the ID as text. An exhausted repeat stays visible as disabled. Invalid
+or stale input leaves the active choice available and produces visible feedback.
+
 Each playback node uses the checked edition's local media clock. Pause holds
 the cursor. Resume continues from that cursor. Seek, when admitted by the
 selected runtime, stays inside the node and moves associated text or companion
