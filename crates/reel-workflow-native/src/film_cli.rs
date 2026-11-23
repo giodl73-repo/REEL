@@ -249,14 +249,14 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
     persist_new(&root.path().join("ticket.json"), &ticket.bytes()?)?;
     Ok(ticket)
 }
-struct Owned {
+pub(crate) struct Owned {
     _parent: WorkspaceDirectory,
     root: WorkspaceDirectory,
     work: WorkspaceDirectory,
     _controls: Vec<File>,
     _lease: capacity::Reservation,
 }
-pub(crate) fn validate_ticket(
+fn validate_ticket(
     request: &Request,
     request_pin: &str,
     ticket_raw: &[u8],
@@ -277,7 +277,7 @@ pub(crate) fn validate_ticket(
     Ok(ticket)
 }
 
-fn open(
+pub(crate) fn open(
     request: &Request,
     request_pin: &str,
     ticket_raw: &[u8],
@@ -372,6 +372,14 @@ pub fn execute(
     action: Action,
 ) -> Result<serde_json::Value> {
     let owned = open(request, request_pin, ticket_raw, ticket_pin)?;
+    execute_owned(request, owned, action)
+}
+
+pub(crate) fn execute_owned(
+    request: &Request,
+    owned: Owned,
+    action: Action,
+) -> Result<serde_json::Value> {
     match action {
         Action::Run | Action::Resume => {
             let invocation = film_task::Invocation {
