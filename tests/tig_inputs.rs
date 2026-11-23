@@ -108,7 +108,10 @@ fn picture(rgb: [u8; 3]) -> Vec<u8> {
     [b"P6\n8 8\n255\n".as_slice(), &rgb.repeat(64)].concat()
 }
 fn wav() -> Vec<u8> {
-    let size = 48000u32 * 6;
+    wav_samples(48000)
+}
+fn wav_samples(samples: u32) -> Vec<u8> {
+    let size = samples * 6;
     let mut b = Vec::new();
     b.extend(b"RIFF");
     b.extend((36 + size).to_le_bytes());
@@ -122,7 +125,7 @@ fn wav() -> Vec<u8> {
     b.extend(24u16.to_le_bytes());
     b.extend(b"data");
     b.extend(size.to_le_bytes());
-    b.extend([0x10, 0, 0, 0x10, 0, 0].repeat(48000));
+    b.extend([0x10, 0, 0, 0x10, 0, 0].repeat(samples as usize));
     b
 }
 struct Fixture {

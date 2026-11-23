@@ -751,6 +751,38 @@ mod tests {
         assert!(controller.event().is_none(), "duplicate Ready report");
     }
     #[test]
+    fn callback_cursor_does_not_overwrite_resume_acknowledgement() {
+        let (mut controller, _, _) = fixture();
+        let acknowledged = Snapshot {
+            state: State::Playing,
+            command_sequence: 1,
+            ..controller.observed()
+        };
+        controller.emit(Event::Ack {
+            id: 1,
+            record: Trace {
+                at_ms: 1,
+                snapshot: acknowledged,
+                refusal: None,
+            },
+        });
+        let advanced = Snapshot {
+            source_frame: 480,
+            ..acknowledged
+        };
+        controller.observe_callback(advanced, 1_000);
+        assert_eq!(controller.observed(), advanced);
+        assert!(matches!(controller.event(), Some(Event::Ack { id: 1, .. })));
+        assert!(controller.event().is_none(), "duplicate playback report");
+        let next_pass = Snapshot {
+            pass: 2,
+            source_frame: 0,
+            ..advanced
+        };
+        controller.observe_callback(next_pass, 2_000);
+        assert!(matches!(controller.event(), Some(Event::State(state)) if state == next_pass));
+    }
+    #[test]
     fn expiry_reclaims_a_paused_callback_and_reports_the_real_stopped_core() {
         let (origin, frequency) = OutputClock::start().unwrap().origin();
         let clock = OutputClock::from_origin(origin - frequency * 119, frequency).unwrap();
