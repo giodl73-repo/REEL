@@ -38,6 +38,8 @@ enum Operation {
     VerifyEpisode { profile: PathBuf },
     /// Freeze/read back complete episode resources without adopting or rendering.
     PrepareEpisode { profile: PathBuf, output: PathBuf },
+    /// Bind dispatched repair outputs into a new episode profile.
+    BindEpisodeRepair { request: PathBuf, output: PathBuf },
     /// Resume a completed episode job's verified metadata/owner handoff only.
     FinishEpisode { profile: PathBuf },
     #[command(hide = true)]
@@ -146,6 +148,9 @@ fn main() -> ExitCode {
         Operation::VerifyEpisode { profile } => reel::tig_episode_cli::verify_components(&profile),
         Operation::PrepareEpisode { profile, output } => {
             reel::tig_episode_cli::prepare(&profile, &output)
+        }
+        Operation::BindEpisodeRepair { request, output } => {
+            reel::tig_episode_cli::bind_repair(&request, &output)
         }
         Operation::FinishEpisode { profile } => reel::tig_episode_cli::finish_episode(&profile),
         Operation::EpisodeWorker {

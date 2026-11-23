@@ -36,10 +36,12 @@ mod planning;
 mod preparation;
 mod presentation;
 mod records;
+mod repair;
 mod source_reuse;
 mod worker;
 pub use handoff::finish_episode;
 pub use preparation::prepare;
+pub use repair::bind as bind_repair;
 pub use worker::worker;
 
 const SCHEMA: &str = "reel.tig-episode-job.experimental-1";
