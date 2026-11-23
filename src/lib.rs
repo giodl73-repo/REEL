@@ -40,6 +40,8 @@ pub mod imported_presentation_overlay;
 pub mod imported_scene_proof;
 pub mod media_parity;
 pub mod media_runtime;
+#[cfg(feature = "tig")]
+pub mod melena_cue_intake;
 pub mod motioncraft_cadence;
 pub mod motioncraft_comparison;
 pub mod motioncraft_layers;

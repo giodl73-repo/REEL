@@ -8,6 +8,12 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Operation {
+    /// Verify a retained Melena cue package and export local workflow inputs.
+    ImportMelenaCues {
+        profile: PathBuf,
+        record_id: String,
+        output: PathBuf,
+    },
     /// Freeze/reopen committed generic job metadata in existing stores; no adoption.
     CaptureFrozen { profile: PathBuf, output: PathBuf },
     /// Replay an already enrolled generic job; no setup, source adoption or media claim.
@@ -155,6 +161,11 @@ fn main() -> ExitCode {
             profile,
             checkpoint,
         } => reel::tig_frozen_job_cli::run_with_checkpoint(&profile, checkpoint.as_deref()),
+        Operation::ImportMelenaCues {
+            profile,
+            record_id,
+            output,
+        } => reel::melena_cue_intake::import(&profile, &record_id, &output),
         Operation::InspectGeneration { profile, output } => {
             reel::tig_generation::inspect(&profile, &output)
         }
