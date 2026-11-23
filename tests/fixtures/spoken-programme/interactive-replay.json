@@ -1,0 +1,21 @@
+{
+  "sample_rate": 48000,
+  "selections": {
+    "en": {
+      "opening": { "edition": "en-executive", "module": "opening", "samples": [0, 144000] },
+      "example": { "edition": "en-technical", "module": "detail", "samples": [158400, 350400] },
+      "example-closing": { "edition": "en-technical", "module": "closing", "samples": [364800, 508800] },
+      "summary": { "edition": "en-executive", "module": "closing", "samples": [156000, 300000] }
+    },
+    "es": {
+      "opening": { "edition": "es-executive", "module": "opening", "samples": [0, 168000] },
+      "example": { "edition": "es-technical", "module": "detail", "samples": [187200, 403200] },
+      "example-closing": { "edition": "es-technical", "module": "closing", "samples": [422400, 590400] },
+      "summary": { "edition": "es-executive", "module": "closing", "samples": [184800, 352800] }
+    }
+  },
+  "expected_visits_by_choice": {
+    "example": ["opening", "choose", "example", "example-closing", "end"],
+    "summary": ["opening", "choose", "summary", "end"]
+  }
+}
