@@ -56,7 +56,7 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
 pub fn read_control<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
     decode(&read_bytes(path)?)
 }
-fn read_bytes(path: &Path) -> Result<Vec<u8>> {
+pub(crate) fn read_bytes(path: &Path) -> Result<Vec<u8>> {
     let mut raw = Vec::new();
     File::open(path)
         .map_err(io_error)?

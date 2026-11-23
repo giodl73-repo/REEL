@@ -115,6 +115,24 @@ timed-out attempt was unbilled or never reached the provider.
 
 ## Candidate outputs and qualification
 
+For a manual REEL workflow cue, declare a `speech-candidate` task with the cue's
+language and output slots `recording` for `recording.wav` (`audio/wav`),
+`alignment` for `alignment.json`, and `receipt` for `receipt.json` (both
+`application/json`). Bind the exact request and
+authorization as task inputs. Run `reel-tig-speech` against that profile and
+pass the three output paths to `reel-workflow capture-work` using the matching
+slot names and original attempt. Use the
+[workflow exchange instructions](../crates/reel-workflow/README.md) for the
+path map and package commands. Preserve the private speech workspace as the
+source of provider and authorization evidence.
+
+Manual capture checks the declared file bounds and hashes. Before native
+retention or downstream timing use, run
+`reel-workflow check-speech-handoff PACKET RESULT RECEIPT` to compare the
+receipt's pins against the captured output metadata and declared task inputs.
+Use the reported timing qualification alongside the original speech evidence.
+Existing selected recordings can be bound directly to cue tasks.
+
 On a successful decode, the attempt contains the raw response, original PCM16
 mono 44100 Hz bytes, a WAV wrapper with unchanged samples, original and normalized
 character alignment, and a receipt pinning the exact inputs and outputs. There
