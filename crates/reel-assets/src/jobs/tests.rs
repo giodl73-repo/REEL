@@ -1021,6 +1021,44 @@ fn recovery_window_rejects_implicit_unbounded_or_unrelated_step_changes() {
 }
 
 #[test]
+fn registered_recovery_window_reuses_the_five_hour_recipe_limit() {
+    let f = Fixture::new();
+    let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+    let mut job = load(&manifest).unwrap();
+    job["step_timeout_limit_seconds"] = json!(5 * 60 * 60);
+    let bytes = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &bytes).unwrap();
+    seed["job_sha256"] = json!(f.put(&bytes, true));
+    seed["schema"] = json!("reel.native-job-resume.v2");
+
+    let register = |timeout: u64| {
+        let mut seed = seed.clone();
+        seed["step_timeout_seconds"] = json!({"1": timeout});
+        let descriptor = serde_json::to_vec(&seed).unwrap();
+        fs::write(&seed_path, &descriptor).unwrap();
+        f.put(&descriptor, true);
+    };
+    register(18_001);
+    let error = resume(f.root(), &manifest, &seed_path).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("scoped recovery execution window")
+    );
+    no_scratch(&f);
+
+    register(18_000);
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(
+        result["checkpoint_resume"]["effective_step_timeout_seconds"]["1"],
+        18_000
+    );
+    assert_eq!(fs::read(&manifest).unwrap(), bytes);
+    no_scratch(&f);
+}
+
+#[test]
 fn fresh_registered_window_runs_all_steps_and_preserves_original_timeout_controls() {
     let f = Fixture::new();
     let (manifest, mut job) = prepare(&f, "hold-copy");
