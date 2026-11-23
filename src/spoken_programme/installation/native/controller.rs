@@ -56,6 +56,7 @@ pub struct Controller {
     pending: VecDeque<Pending>,
     events: VecDeque<Event>,
     observed: Snapshot,
+    last_cursor_report_us: u64,
     seen_sequence: u64,
     last_callback_us: u64,
     last_id: u64,
@@ -87,6 +88,7 @@ impl Controller {
             pending: VecDeque::with_capacity(8),
             events: VecDeque::with_capacity(256),
             observed,
+            last_cursor_report_us: 0,
             seen_sequence: observed.command_sequence,
             last_callback_us: 0,
             last_id: 0,
@@ -480,10 +482,7 @@ impl Controller {
                 for record in report.commands.into_iter().flatten() {
                     self.record(record);
                 }
-                if report.snapshot != self.observed {
-                    self.observed = report.snapshot;
-                    self.emit(Event::State(report.snapshot));
-                }
+                self.observe_callback(report.snapshot, now);
                 self.effects(report.effects);
             }
             let returned = self.callback.as_mut().and_then(CallbackControl::returned);
@@ -619,6 +618,25 @@ impl Controller {
         }
         self.dispatch(now);
         Ok(())
+    }
+
+    fn observe_callback(&mut self, snapshot: Snapshot, now: u64) {
+        let previous = std::mem::replace(&mut self.observed, snapshot);
+        if snapshot == previous {
+            return;
+        }
+        // The console needs the latest cursor, not one display per audio
+        // callback. State, generation, pass and command changes stay immediate.
+        let cursor_only = snapshot
+            == (Snapshot {
+                source_frame: snapshot.source_frame,
+                interval_frame: snapshot.interval_frame,
+                ..previous
+            });
+        if !cursor_only || now.saturating_sub(self.last_cursor_report_us) >= 100_000 {
+            self.last_cursor_report_us = now;
+            self.emit(Event::State(snapshot));
+        }
     }
     fn deliveries(&mut self) {
         while let Some(delivery) = self.callback.as_mut().and_then(CallbackControl::delivery) {
