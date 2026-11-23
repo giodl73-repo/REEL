@@ -69,6 +69,7 @@ fn salvage_with_resources(
         journal_identity,
         completed: false,
         dependencies: true,
+        checkpoint_request: None,
     });
     cell.borrow_mut().check()?;
     let authority = Authority(&cell);
@@ -119,6 +120,7 @@ struct Session<'a> {
     journal_identity: Digest,
     completed: bool,
     dependencies: bool,
+    checkpoint_request: Option<&'a Object>,
 }
 impl Session<'_> {
     fn check(&mut self) -> Result<()> {
@@ -170,6 +172,10 @@ impl ResourceAuthority for Authority<'_, '_> {
             ],
             ResourceRole::Input => &[Role::Primary, Role::Control, Role::Interpretation],
             ResourceRole::Tool | ResourceRole::InstalledTool => &[Role::Runtime],
+            ResourceRole::Checkpoint if session.checkpoint_request == Some(&object) => {
+                return Ok(());
+            }
+            ResourceRole::Checkpoint if session.checkpoint_request.is_some() => &[Role::Evidence],
             ResourceRole::Checkpoint => &[Role::Interpretation],
         };
         if !kinds
@@ -295,7 +301,7 @@ pub fn run(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
-    run_inner(root, manifest, resources, journal, profile, false, false)
+    run_inner(root, manifest, resources, journal, profile, RunMode::Plain)
 }
 /// Retain already replay-checked input evidence without admitting it as an input.
 /// Composition and claimed outputs still refuse; ordinary input roles are unchanged.
@@ -306,7 +312,14 @@ pub fn run_with_retained_evidence(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
-    run_inner(root, manifest, resources, journal, profile, false, true)
+    run_inner(
+        root,
+        manifest,
+        resources,
+        journal,
+        profile,
+        RunMode::RetainedEvidence,
+    )
 }
 /// Explicit generic consumption of already admitted Composition/Evidence bytes.
 /// Roles remain distinct; this is not native episode freshness, primary closure,
@@ -318,17 +331,53 @@ pub fn run_with_dependencies(
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
 ) -> Result<serde_json::Value> {
-    run_inner(root, manifest, resources, journal, profile, true, true)
+    run_inner(
+        root,
+        manifest,
+        resources,
+        journal,
+        profile,
+        RunMode::Dependencies,
+    )
 }
+/// Continue a frozen generic job using checkpoint objects enrolled as evidence.
+/// The admitted manifest is the only runtime object accepted as a checkpoint.
+pub(crate) fn resume_with_dependencies(
+    root: &Path,
+    manifest: &Path,
+    resources: &JobContext,
+    journal: &mut SourceJournal,
+    profile: &Profile<'_>,
+    checkpoint: (&Path, &Object),
+) -> Result<serde_json::Value> {
+    run_inner(
+        root,
+        manifest,
+        resources,
+        journal,
+        profile,
+        RunMode::Checkpoint(checkpoint),
+    )
+}
+
+#[derive(Clone, Copy)]
+enum RunMode<'a> {
+    Plain,
+    RetainedEvidence,
+    Dependencies,
+    Checkpoint((&'a Path, &'a Object)),
+}
+
 fn run_inner(
     root: &Path,
     manifest: &Path,
     resources: &JobContext,
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
-    dependencies: bool,
-    retained_evidence: bool,
+    mode: RunMode<'_>,
 ) -> Result<serde_json::Value> {
+    let dependencies = matches!(mode, RunMode::Dependencies | RunMode::Checkpoint(_));
+    let retained_evidence = !matches!(mode, RunMode::Plain);
     if !resources.of(Role::ClaimedOutput).is_empty()
         || (!retained_evidence && !resources.of(Role::Evidence).is_empty())
         || (!dependencies && !resources.of(Role::Composition).is_empty())
@@ -344,19 +393,23 @@ fn run_inner(
         journal_identity,
         completed: false,
         dependencies,
+        checkpoint_request: match mode {
+            RunMode::Checkpoint((_, request)) => Some(request),
+            _ => None,
+        },
     });
     cell.borrow_mut().check()?;
     let authority = Authority(&cell);
     let mut sink = Sink(&cell);
-    let result = jobs::run_admitted(
-        root,
-        manifest,
-        &mut RunContext {
-            config: profile.config,
-            authority: &authority,
-            retention: &mut sink,
-        },
-    )
+    let mut context = RunContext {
+        config: profile.config,
+        authority: &authority,
+        retention: &mut sink,
+    };
+    let result = match mode {
+        RunMode::Checkpoint((path, _)) => jobs::resume_admitted(root, manifest, path, &mut context),
+        _ => jobs::run_admitted(root, manifest, &mut context),
+    }
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(result)
 }
