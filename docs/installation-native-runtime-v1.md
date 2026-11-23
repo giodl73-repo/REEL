@@ -710,6 +710,11 @@ stream closure observations. Check that no other endpoint starts playing, then
 Quit and confirm process exit. Record whether endpoint removal was observed
 by the OS or timestamped by the operator, since those observations have
 different precision. An endpoint absent at startup covers admission only.
+The opt-in `actual_station_displays_fault_after_operator_disconnect` fixture
+prints the operator cue after observing Playing and writes the private console
+trace. Run it with `--ignored --exact --nocapture` and a fresh absolute trace
+path. The physical removal observation and stream closure need independent
+evidence alongside that trace.
 
 The opt-in test `actual_station_exits_while_terminal_output_is_undrained`
 starts the pinned synthetic playback under ConPTY, stops reading terminal output

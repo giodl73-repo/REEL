@@ -53,7 +53,7 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
         10,
         None,
         &[],
-        false,
+        ConsoleObservation::Ordinary,
     );
     let error = result.expect_err("a closed source fault must remain visible in the exit status");
     assert!(
@@ -143,7 +143,7 @@ fn actual_station_exits_while_terminal_output_is_undrained() {
         45,
         None,
         &[],
-        true,
+        ConsoleObservation::HoldFinalOutput,
     );
     assert_eq!(steps, 2, "station did not reach live playback: {result:?}");
     result.unwrap();
@@ -174,7 +174,7 @@ fn actual_station_refuses_changed_endpoint_configuration() {
         45,
         None,
         &[],
-        false,
+        ConsoleObservation::Ordinary,
     );
     let error = result.expect_err("a changed endpoint configuration must fault");
     assert!(
@@ -196,7 +196,7 @@ fn actual_station_reports_missing_endpoint_before_start() {
         10,
         None,
         &[],
-        false,
+        ConsoleObservation::Ordinary,
     );
     assert_eq!(
         steps, 1,
@@ -595,7 +595,7 @@ fn run_station_with_delays(
         command_budget_seconds,
         trace.as_deref(),
         command_delays,
-        false,
+        ConsoleObservation::Ordinary,
     );
     assert_eq!(
         steps,
@@ -607,6 +607,43 @@ fn run_station_with_delays(
 }
 
 #[cfg(windows)]
+#[derive(Clone, Copy)]
+enum ConsoleObservation {
+    Ordinary,
+    HoldFinalOutput,
+    CuePhysicalDisconnect,
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "requires a station operator to unplug the enrolled endpoint during live playback"]
+fn actual_station_displays_fault_after_operator_disconnect() {
+    let (path, request) = station_request();
+    let trace = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE")
+        .map(std::path::PathBuf::from)
+        .expect("use a fresh private console trace path");
+    let (result, steps, _) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b""),
+            (b"Fault", b"quit\r"),
+        ],
+        15,
+        Some(&trace),
+        &[],
+        ConsoleObservation::CuePhysicalDisconnect,
+    );
+    assert_eq!(
+        steps, 3,
+        "no fault observed after live playback: {result:?}"
+    );
+    let error = result.expect_err("disconnect must remain visible in the exit status");
+    assert!(error.starts_with("Job step exited 2;"), "{error}");
+}
+
+#[cfg(windows)]
 fn run_console(
     program: &std::path::Path,
     request: &std::path::Path,
@@ -614,7 +651,7 @@ fn run_console(
     command_budget_seconds: u64,
     trace_path: Option<&std::path::Path>,
     command_delays: &[std::time::Duration],
-    hold_output_after_final_marker: bool,
+    observation: ConsoleObservation,
 ) -> (Result<(), String>, usize, Vec<Option<std::time::Duration>>) {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
@@ -699,7 +736,9 @@ fn run_console(
                                     .lock()
                                     .unwrap()
                                     .push((Instant::now(), qpc_ns()));
-                                if hold_output_after_final_marker && next == steps.len() {
+                                if matches!(observation, ConsoleObservation::HoldFinalOutput)
+                                    && next == steps.len()
+                                {
                                     // Stop reading until the parent observes child exit.
                                     let _ = held_output.recv();
                                 }
@@ -743,6 +782,10 @@ fn run_console(
                 let Some((seen, observed_ns)) = seen else {
                     break;
                 };
+                if matches!(observation, ConsoleObservation::CuePhysicalDisconnect) && index == 1 {
+                    println!("Playback is active. Unplug the enrolled output now.");
+                    let _ = std::io::stdout().flush();
+                }
                 let duration = last_command.map(|sent| seen.duration_since(sent));
                 let mut sent_ns = None;
                 if !line.is_empty() {
