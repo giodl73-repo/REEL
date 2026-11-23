@@ -166,8 +166,10 @@ fn contained_renderer_recovers_by_checking_without_rerendering_and_preserves_fai
 
     fs::remove_file(&render_result).unwrap();
     preserve_recovered_outcome(&workspace, &render_request, &request, &checked_proof).unwrap();
-    let recovered: serde_json::Value =
-        serde_json::from_slice(&fs::read(&render_result).unwrap()).unwrap();
+    let recovered_bytes = fs::read(&render_result).unwrap();
+    preserve_recovered_outcome(&workspace, &render_request, &request, &checked_proof).unwrap();
+    assert_eq!(fs::read(&render_result).unwrap(), recovered_bytes);
+    let recovered: serde_json::Value = serde_json::from_slice(&recovered_bytes).unwrap();
     assert_eq!(
         recovered["schema"],
         "reel.workflow-film-process-recovered-outcome.v1"
@@ -182,8 +184,13 @@ fn contained_renderer_recovers_by_checking_without_rerendering_and_preserves_fai
     );
     assert_eq!(
         recovered["outputs"],
-        serde_json::to_value(checked_proof).unwrap()
+        serde_json::to_value(&checked_proof).unwrap()
     );
+    fs::write(&render_result, b"{").unwrap();
+    assert!(
+        preserve_recovered_outcome(&workspace, &render_request, &request, &checked_proof).is_err()
+    );
+    assert_eq!(fs::read(&render_result).unwrap(), b"{");
     for (name, output) in &checked.files {
         assert_eq!(before[name].sha256, output.reference().sha256);
     }
