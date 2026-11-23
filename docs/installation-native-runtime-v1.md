@@ -640,6 +640,16 @@ period, submitted samples and capture timing still require a station run.
    Retain exact capture and runtime evidence privately. Metadata for candidate
    endpoints can be staged in advance of choosing the station output.
 
+The opt-in Windows CLI test `actual_station_run_exercises_playback_commands_and_reaps_worker`
+opens the selected request in a pseudoconsole and follows the visible Start,
+Pause, Resume, loop, completion, Restart, Stop and Quit sequence. Set
+`REEL_INSTALLATION_STATION_SESSION` to the absolute path of the enrolled
+request before invoking the test by its exact name with `--ignored --exact`.
+Keep its player image outside the build directory so recompiling the test
+cannot replace the pinned executable. This test checks the visible control
+sequence and process exit. M12c also requires independent capture and numeric
+timing evidence.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 

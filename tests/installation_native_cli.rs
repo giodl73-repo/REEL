@@ -1,4 +1,4 @@
-//! Metadata only. No real endpoint ID or playback/capture enrollment.
+//! Windows CLI coverage. Hardware playback requires an explicit station request.
 #![cfg(feature = "installation-native")]
 use serde_json::json;
 use std::{fs, process::Command};
@@ -23,12 +23,90 @@ fn session_request(root: &std::path::Path) -> serde_json::Value {
 #[cfg(windows)]
 #[test]
 fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
+    let root = tempfile::tempdir().unwrap();
+    let program = std::path::Path::new(env!("CARGO_BIN_EXE_reel-installation"));
+    let lock = include_bytes!("../Cargo.lock");
+    let lock_path = root.path().join("Cargo.lock");
+    fs::write(&lock_path, lock).unwrap();
+    let image = fs::read(program).unwrap();
+    let mut request = session_request(root.path());
+    request["playback"]["runtime"] = json!({
+        "path":program, "sha256":reel::production::sha256_bytes(&image), "bytes":image.len()
+    });
+    request["playback"]["cargo_lock"] = json!({
+        "path":lock_path, "sha256":reel::production::sha256_bytes(lock), "bytes":lock.len()
+    });
+    drop(image);
+    let path = root.path().join("session.json");
+    fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (result, steps) = run_console(
+        program,
+        &path,
+        &[
+            (b"Fault", b"start\r"),
+            (b"Command unavailable", b"status\r"),
+            (b"1: Fault", b"quit\r"),
+        ],
+        10,
+    );
+    let error = result.expect_err("a closed source fault must remain visible in the exit status");
+    assert!(
+        error.starts_with("Job step exited 2;"),
+        "after {steps} steps: {error}"
+    );
+    assert_eq!(steps, 3, "expected Fault, refusal and Status before Quit");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "explicit station playback; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_run_exercises_playback_commands_and_reaps_worker() {
+    use reel::spoken_programme::installation::native::SessionRequest;
+    let path = std::path::PathBuf::from(
+        std::env::var_os("REEL_INSTALLATION_STATION_SESSION")
+            .expect("provide the enrolled station request path"),
+    );
+    assert!(path.is_absolute());
+    let request = SessionRequest::parse(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        (request.edition_id.as_str(), request.passes),
+        ("en-technical", 2)
+    );
+    let (result, steps) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b"pause\r"),
+            (b"Paused p1", b"resume\r"),
+            (b"LoopWait p1", b""),
+            (b"Completed p2", b"restart\r"),
+            (b"Restarting p", b""),
+            (b"Playing p1", b"stop\r"),
+            (b"Stopped p1", b"quit\r"),
+        ],
+        70,
+    );
+    assert_eq!(
+        steps, 8,
+        "station run stopped before the full control sequence: {result:?}"
+    );
+    result.unwrap();
+}
+
+#[cfg(windows)]
+fn run_console(
+    program: &std::path::Path,
+    request: &std::path::Path,
+    steps: &[(&[u8], &[u8])],
+    command_budget_seconds: u64,
+) -> (Result<(), String>, usize) {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
         fs::File,
         io::{Read, Write},
         os::windows::io::{AsRawHandle, FromRawHandle},
-        sync::atomic::{AtomicBool, Ordering},
+        sync::atomic::{AtomicUsize, Ordering},
         time::{Duration, Instant},
     };
     use windows::Win32::{
@@ -55,26 +133,6 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
         }
     }
 
-    let root = tempfile::tempdir().unwrap();
-    let program = std::path::Path::new(env!("CARGO_BIN_EXE_reel-installation"));
-    let lock = include_bytes!("../Cargo.lock");
-    let lock_path = root.path().join("Cargo.lock");
-    fs::write(&lock_path, lock).unwrap();
-    let image = fs::read(program).unwrap();
-    let mut request = session_request(root.path());
-    request["playback"]["runtime"] = json!({
-        "path":program, "sha256":reel::production::sha256_bytes(&image), "bytes":image.len()
-    });
-    request["playback"]["cargo_lock"] = json!({
-        "path":lock_path, "sha256":reel::production::sha256_bytes(lock), "bytes":lock.len()
-    });
-    drop(image);
-    fs::write(
-        root.path().join("session.json"),
-        serde_json::to_vec(&request).unwrap(),
-    )
-    .unwrap();
-
     let (in_read, mut input) = pipe();
     let (mut output, out_write) = pipe();
     let terminal = Terminal(unsafe {
@@ -88,27 +146,27 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
     });
     drop(in_read);
     drop(out_write);
-    let markers: [&[u8]; 3] = [b"Fault", b"Command unavailable", b"1: Fault"];
-    let observed = markers.map(|_| AtomicBool::new(false));
+    let observed = AtomicUsize::new(0);
     std::thread::scope(|scope| {
         let reader = scope.spawn(|| {
             let mut chunk = [0; 4096];
-            let mut matched = [0; 3];
+            let mut next = 0;
+            let mut matched = 0;
             while let Ok(count) = output.read(&mut chunk) {
                 if count == 0 {
                     break;
                 }
                 for &byte in &chunk[..count] {
-                    for (index, marker) in markers.iter().enumerate() {
-                        let offset = &mut matched[index];
-                        if byte == marker[*offset] {
-                            *offset += 1;
-                            if *offset == marker.len() {
-                                observed[index].store(true, Ordering::Release);
-                                *offset = 0;
+                    if let Some((marker, _)) = steps.get(next) {
+                        if byte == marker[matched] {
+                            matched += 1;
+                            if matched == marker.len() {
+                                next += 1;
+                                observed.store(next, Ordering::Release);
+                                matched = 0;
                             }
                         } else {
-                            *offset = usize::from(byte == marker[0]);
+                            matched = usize::from(byte == marker[0]);
                         }
                     }
                 }
@@ -119,9 +177,9 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
             let job = job_scope.spawn(|| {
                 run_pseudoconsole_observed(
                     program,
-                    &["run".into(), "session.json".into()],
-                    root.path(),
-                    Duration::from_secs(15),
+                    &["run".into(), request.to_str().unwrap().into()],
+                    request.parent().unwrap(),
+                    Duration::from_secs(command_budget_seconds + 5),
                     QuietLimits {
                         memory_bytes: 512 * 1024 * 1024,
                         processes: 2,
@@ -129,22 +187,19 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
                     borrowed,
                     |_| Ok(()),
                 )
+                .map(|_| ())
                 .map_err(|error| error.to_string())
             });
-            let deadline = Instant::now() + Duration::from_secs(10);
+            let deadline = Instant::now() + Duration::from_secs(command_budget_seconds);
             let mut sent = 0;
-            for (observed, line) in
-                observed
-                    .iter()
-                    .zip([b"start\r".as_slice(), b"status\r", b"quit\r"])
-            {
-                while !observed.load(Ordering::Acquire)
+            for (index, (_, line)) in steps.iter().enumerate() {
+                while observed.load(Ordering::Acquire) <= index
                     && !job.is_finished()
                     && Instant::now() < deadline
                 {
                     std::thread::sleep(Duration::from_millis(2));
                 }
-                if !observed.load(Ordering::Acquire) || input.write_all(line).is_err() {
+                if observed.load(Ordering::Acquire) <= index || input.write_all(line).is_err() {
                     break;
                 }
                 sent += 1;
@@ -154,19 +209,8 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
         drop(input);
         drop(terminal);
         reader.join().unwrap();
-        let error = result
-            .0
-            .expect_err("a closed source fault must remain visible in the exit status");
-        assert!(
-            error.starts_with("Job step exited 2;"),
-            "after {} lines: {error}",
-            result.1
-        );
-        assert_eq!(
-            result.1, 3,
-            "expected Fault, refusal and Status before Quit"
-        );
-    });
+        result
+    })
 }
 #[test]
 fn private_session_shape_checks_no_originals_or_endpoints_and_rejects_forged_status() {
