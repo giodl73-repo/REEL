@@ -602,26 +602,118 @@ pub fn compile_with_inputs(
     compile(document, &metadata, compiler, profile)
 }
 
+fn current_compiler() -> Result<CompilerIdentity> {
+    let executable = std::env::current_exe()
+        .map_err(|_| anyhow::anyhow!("spoken compiler executable unavailable"))?;
+    Ok(CompilerIdentity {
+        sha256: crate::sha256_file(&executable)
+            .map_err(|_| anyhow::anyhow!("spoken compiler identity unavailable"))?,
+        bytes: std::fs::metadata(&executable)
+            .map_err(|_| anyhow::anyhow!("spoken compiler size unavailable"))?
+            .len(),
+    })
+}
+
+fn compile_local(
+    declaration: &Path,
+    document: &Document,
+    compiler: &CompilerIdentity,
+    profile: CompilationProfile,
+) -> Result<CompiledPlan> {
+    let root = declaration
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    compile_with_inputs(document, root, compiler, profile)
+}
+
+#[derive(Debug, Serialize)]
+pub struct EditionImpact {
+    pub edition_id: String,
+    pub language: String,
+    pub action: &'static str,
+    pub previous_recipe_sha256: Option<String>,
+    pub current_recipe_sha256: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImpactReport {
+    pub schema: &'static str,
+    pub document_id: String,
+    pub previous_declaration_sha256: String,
+    pub current_declaration_sha256: String,
+    pub editions: Vec<EditionImpact>,
+    pub reuse_requires_checked_retained_output: bool,
+}
+
+pub fn impact_file(
+    previous: &Path,
+    current: &Path,
+    profile: CompilationProfile,
+) -> Result<ImpactReport> {
+    let previous_document = load(previous)?;
+    let current_document = load(current)?;
+    require(
+        previous_document.id == current_document.id,
+        "spoken impact declarations must name the same document",
+    )?;
+    let compiler = current_compiler()?;
+    let before = compile_local(previous, &previous_document, &compiler, profile)?;
+    let after = compile_local(current, &current_document, &compiler, profile)?;
+    Ok(edition_impact(current_document.id, before, after))
+}
+
+fn edition_impact(document_id: String, before: CompiledPlan, after: CompiledPlan) -> ImpactReport {
+    let mut editions = BTreeMap::new();
+    for edition in before.editions {
+        let id = edition.recipe.edition_id;
+        editions.insert(
+            id.clone(),
+            EditionImpact {
+                edition_id: id,
+                language: edition.recipe.language,
+                action: "removed",
+                previous_recipe_sha256: Some(edition.recipe_sha256),
+                current_recipe_sha256: None,
+            },
+        );
+    }
+    for edition in after.editions {
+        let id = edition.recipe.edition_id;
+        let impact = editions.entry(id.clone()).or_insert(EditionImpact {
+            edition_id: id,
+            language: edition.recipe.language.clone(),
+            action: "build",
+            previous_recipe_sha256: None,
+            current_recipe_sha256: None,
+        });
+        impact.language = edition.recipe.language;
+        impact.current_recipe_sha256 = Some(edition.recipe_sha256);
+        if impact.previous_recipe_sha256.is_some() {
+            impact.action = if impact.previous_recipe_sha256 == impact.current_recipe_sha256 {
+                "reuse"
+            } else {
+                "rebuild"
+            };
+        }
+    }
+    ImpactReport {
+        schema: "reel.spoken-edition-impact.v1",
+        document_id,
+        previous_declaration_sha256: before.declaration_semantics_sha256,
+        current_declaration_sha256: after.declaration_semantics_sha256,
+        editions: editions.into_values().collect(),
+        reuse_requires_checked_retained_output: true,
+    }
+}
+
 pub fn compile_file(
     declaration: &Path,
     output: &Path,
     profile: CompilationProfile,
 ) -> Result<CompilationSummary> {
     let document = load(declaration)?;
-    let executable = std::env::current_exe()
-        .map_err(|_| anyhow::anyhow!("spoken compiler executable unavailable"))?;
-    let compiler = CompilerIdentity {
-        sha256: crate::sha256_file(&executable)
-            .map_err(|_| anyhow::anyhow!("spoken compiler identity unavailable"))?,
-        bytes: std::fs::metadata(&executable)
-            .map_err(|_| anyhow::anyhow!("spoken compiler size unavailable"))?
-            .len(),
-    };
-    let root = declaration
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let plan = compile_with_inputs(&document, root, &compiler, profile)?;
+    let plan = compile_local(declaration, &document, &current_compiler()?, profile)?;
     let bytes = serde_json::to_vec_pretty(&plan)?;
     require(
         bytes.len() <= MAX_PLAN,
