@@ -6,6 +6,13 @@ use crate::spoken_programme::checker::CheckedPackage;
 use anyhow::{Result, anyhow, ensure};
 use std::collections::BTreeMap;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ChoiceKey {
+    Next,
+    Previous,
+    Activate,
+}
+
 pub struct Session<'a> {
     graph: &'a Graph,
     bindings: BTreeMap<(&'a str, &'a str), Selection<'a>>,
@@ -14,6 +21,7 @@ pub struct Session<'a> {
     visit: u64,
     frame: Option<u64>,
     paused: bool,
+    focus: usize,
     playback: Playback,
     repeats: BTreeMap<(&'a str, &'a str), u16>,
 }
@@ -56,6 +64,7 @@ impl<'a> Session<'a> {
             visit: 0,
             frame: None,
             paused: false,
+            focus: 0,
             playback: Playback::default(),
             repeats: BTreeMap::new(),
         };
@@ -67,6 +76,7 @@ impl<'a> Session<'a> {
         self.node = self.graph.nodes.iter().find(|node| node.id() == id);
         self.visit += 1;
         self.paused = false;
+        self.focus = 0;
         self.frame = self.selection().map(|selection| selection.first_frame);
     }
 
@@ -104,6 +114,27 @@ impl<'a> Session<'a> {
             })
             .map(|choice| (choice.id.as_str(), choice.labels[self.language].as_str()))
             .collect()
+    }
+
+    pub fn focused_choice(&self) -> Option<(&str, &str)> {
+        self.choices().get(self.focus).copied()
+    }
+
+    /// Translate focus navigation into the same authored ID as text input.
+    pub fn choice_key(&mut self, visit: u64, key: ChoiceKey) -> bool {
+        let choices = self.choices();
+        if visit != self.visit || choices.is_empty() {
+            return false;
+        }
+        match key {
+            ChoiceKey::Next => self.focus = (self.focus + 1).min(choices.len() - 1),
+            ChoiceKey::Previous => self.focus = self.focus.saturating_sub(1),
+            ChoiceKey::Activate => {
+                let id = choices[self.focus].0.to_owned();
+                return self.choose(visit, &id);
+            }
+        }
+        true
     }
 
     pub fn choose(&mut self, visit: u64, choice_id: &str) -> bool {
@@ -200,6 +231,7 @@ impl<'a> Session<'a> {
         self.node = None;
         self.frame = None;
         self.paused = false;
+        self.focus = 0;
         self.repeats.clear();
     }
 }

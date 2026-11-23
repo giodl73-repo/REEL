@@ -268,7 +268,7 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
     let manifest = fs::read(root.join("access.json")).unwrap();
     checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
     assert_eq!(result.access().sample_rate, fixture.sample_rate);
-    use reel::spoken_programme::interactive::{Graph, Selection, Session};
+    use reel::spoken_programme::interactive::{ChoiceKey, Graph, Selection, Session};
 
     let graph: Graph = serde_json::from_value(serde_json::json!({
         "entry": "opening",
@@ -348,16 +348,33 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                             assert!((1..=8192).contains(&count));
                         }
                         assert_eq!(pcm.len() as u64, (span.end_frame - span.first_frame) * 6);
+                        let edition = result
+                            .access()
+                            .editions
+                            .iter()
+                            .find(|edition| edition.edition_id == span.edition)
+                            .unwrap();
+                        let original = fs::read(f.output().join(&edition.wave.path)).unwrap();
+                        assert_eq!(&original[36..40], b"data");
+                        let first = 44 + span.first_frame as usize * 6;
+                        let end = 44 + span.end_frame as usize * 6;
+                        assert_eq!(pcm, original[first..end]);
                         delivered.push(hash(&pcm));
                     } else if node == "choose" {
-                        let emitted = if by_position {
-                            session.choices()[usize::from(choice == "summary")]
-                                .0
-                                .to_owned()
+                        if by_position {
+                            assert!(!session.choice_key(opening, ChoiceKey::Activate));
+                            assert_eq!(session.focused_choice().unwrap().0, "example");
+                            if choice == "summary" {
+                                assert!(session.choice_key(visit, ChoiceKey::Next));
+                                assert!(session.choice_key(visit, ChoiceKey::Previous));
+                                assert_eq!(session.focused_choice().unwrap().0, "example");
+                                assert!(session.choice_key(visit, ChoiceKey::Next));
+                            }
+                            assert_eq!(session.focused_choice().unwrap().0, choice);
+                            assert!(session.choice_key(visit, ChoiceKey::Activate));
                         } else {
-                            choice.clone()
-                        };
-                        assert!(session.choose(visit, &emitted));
+                            assert!(session.choose(visit, choice));
+                        }
                     } else {
                         break;
                     }
@@ -383,6 +400,15 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
             );
         }
     }
+    let mut interrupted = Session::start(&graph, &result, bindings.clone(), "en").unwrap();
+    assert!(
+        interrupted
+            .deliver(&result, &f.output(), 8192, |_| {
+                anyhow::bail!("local sink failed")
+            })
+            .is_err()
+    );
+    assert_eq!(interrupted.node(), None);
     let mut missing = bindings.clone();
     missing.remove(&("summary", "es"));
     assert!(Session::start(&graph, &result, missing, "en").is_err());

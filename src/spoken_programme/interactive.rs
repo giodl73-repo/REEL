@@ -5,7 +5,7 @@ mod graph;
 mod playback;
 #[path = "interactive_session.rs"]
 mod session;
-pub use session::Session;
+pub use session::{ChoiceKey, Session};
 
 pub use graph::{Choice, EditionChoice, Graph, Node, validate};
 
