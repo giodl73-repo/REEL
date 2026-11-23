@@ -1142,7 +1142,6 @@ pub(super) mod tests {
             f.parent
                 .command(Command::Status, counter().unwrap())
                 .unwrap();
-            receive(&mut f.peer);
         }
         for _ in 0..4 {
             input.line("status", counter().unwrap()).unwrap();
@@ -1150,8 +1149,15 @@ pub(super) mod tests {
         assert_eq!((pool.occupied(), f.parent.outstanding()), (8, 4));
         for _ in 0..4 {
             f.parent.accept(queued.receive().unwrap()).unwrap();
-            receive(&mut f.peer);
             assert_eq!(pool.occupied(), 8);
+        }
+        // Model one outstanding batch instead of polling the pipe after
+        // each line while the same acknowledgement deadline runs.
+        for id in 1..=8 {
+            assert!(matches!(
+                Input::parse(&receive(&mut f.peer)).unwrap(),
+                Input::Control { id: actual, .. } if actual == id
+            ));
         }
         let display = status_ack(&mut f, 1);
         f.parent.displayed(display.ticket, None).unwrap();
@@ -1446,7 +1452,12 @@ pub(super) mod tests {
             f.parent
                 .command(Command::Status, counter().unwrap())
                 .unwrap();
-            receive(&mut f.peer);
+        }
+        for id in 1..=8 {
+            assert!(matches!(
+                Input::parse(&receive(&mut f.peer)).unwrap(),
+                Input::Control { id: actual, .. } if actual == id
+            ));
         }
         let display = status_ack(&mut f, 1);
         f.parent.displayed(display.ticket, None).unwrap();
