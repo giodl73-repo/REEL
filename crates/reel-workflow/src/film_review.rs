@@ -326,12 +326,17 @@ pub fn draft(report: &Report, reader: &mut impl Reader) -> Result<Vec<IssueDraft
             target,
             &finding.id,
         ))?;
+        let canonical_finding = Finding {
+            target_id: target.attachment_id.clone(),
+            board_reference: None,
+            ..finding.clone()
+        };
         let key = canonical_digest(&(
             &report.review,
             &report.map,
             &report.receipt,
             target,
-            finding,
+            &canonical_finding,
         ))?;
         let title = format!("Review {}: {}", finding.category.label(), target.cel_id);
         let mut body = format!(

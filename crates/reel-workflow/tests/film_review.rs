@@ -43,6 +43,7 @@ fn exact_targets_stable_keys_and_private_drafts_do_not_claim_viewing_or_submissi
 #[test]
 fn board_reference_resolves_target_and_rejects_a_stale_drawing_before_movie_reads() {
     let (mut report, mut reader) = fixture();
+    let explicit = draft(&report, &mut reader).unwrap();
     report.findings[0].target_id.clear();
     report.findings[0].board_reference = Some(serde_json::from_value(json!({
         "project": "synthetic-film",
@@ -59,6 +60,8 @@ fn board_reference_resolves_target_and_rejects_a_stale_drawing_before_movie_read
     })).unwrap());
     let drafts = draft(&report, &mut reader).unwrap();
     assert_eq!(drafts[0].target.attachment_id, "p-a");
+    assert_eq!(drafts[0].finding_identity, explicit[0].finding_identity);
+    assert_eq!(drafts[0].key, explicit[0].key);
     reader.verified.clear();
     report.findings[0]
         .board_reference
