@@ -213,6 +213,42 @@ fn failed_job_salvages_declared_candidate_and_logs_but_retires_intermediates() {
 }
 
 #[test]
+fn recovery_policy_preserves_failed_workspace_but_retires_success() {
+    for (mode, preserves_workspace) in [("fail", true), ("copy", false)] {
+        let f = Fixture::new();
+        let (manifest, mut job) = prepare(&f, mode);
+        job["preserve_workspace_on_failure"] = json!(true);
+        fs::write(&manifest, job.to_string()).unwrap();
+        let result = run(f.root(), &manifest);
+        if preserves_workspace {
+            let error = result
+                .unwrap_err()
+                .downcast::<WorkspacePreserved>()
+                .unwrap();
+            assert!(error.to_string().contains("exited 23"), "{error}");
+            let staging = f.root().join("fast/staging/caminos");
+            let workspaces = fs::read_dir(staging).unwrap().collect::<Vec<_>>();
+            assert_eq!(workspaces.len(), 1);
+            let workspace = workspaces.into_iter().next().unwrap().unwrap().path();
+            assert_eq!(
+                error.job_id(),
+                workspace.file_name().unwrap().to_str().unwrap()
+            );
+            assert_eq!(
+                fs::metadata(workspace.join("intermediate.bin"))
+                    .unwrap()
+                    .len(),
+                1024 * 1024
+            );
+            assert_eq!(fs::read(workspace.join("out.bin")).unwrap(), b"candidate");
+        } else {
+            assert_eq!(result.unwrap()["workspace_retained"], false);
+            no_scratch(&f);
+        }
+    }
+}
+
+#[test]
 fn installed_runtime_is_pinned_and_runs_without_an_executable_workspace_copy() {
     let f = Fixture::new();
     let (manifest, mut job) = prepare(&f, "copy");

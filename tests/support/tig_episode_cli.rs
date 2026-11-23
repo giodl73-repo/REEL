@@ -968,6 +968,32 @@ fn exercise_variant_mode(
         assert!(state.current.is_some() && state.pending.is_none());
     }
 
+    let mut recoverable = profile.clone();
+    recoverable["source_id"] = json!("bounded-episode-cli-recoverable");
+    recoverable["preserve_workspace_on_failure"] = json!(true);
+    recoverable["reference_staging_bytes"] = json!(1);
+    write(p.data.path(), "recoverable-profile.json", &recoverable);
+    let interrupted = Command::new(&binary)
+        .arg("run-episode")
+        .arg(p.data.path().join("recoverable-profile.json"))
+        .output()
+        .unwrap();
+    assert!(!interrupted.status.success());
+    let response: Value = serde_json::from_slice(&interrupted.stdout)
+        .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&interrupted.stderr)));
+    assert_eq!(response["succeeded"], false);
+    assert_eq!(response["result"]["workspace_retained"], true);
+    assert_eq!(response["temporary_owner_cleanup_required"], true);
+    assert!(response["handoff"].is_null());
+    let job = response["result"]["job_id"].as_str().unwrap();
+    assert!(p.hot().join("staging/caminos").join(job).is_dir());
+    let owner = journal
+        .source(&key("bounded-episode-cli-recoverable"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(owner.revision, 2);
+    assert!(owner.current.is_some() && owner.pending.is_none());
+
     // Fail after component ownership, before writing outputs, by admitting a
     // valid but insufficient primary-reference staging budget. The runner
     // retains this failure's diagnostics before returning an error.

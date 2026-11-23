@@ -410,6 +410,9 @@ fn run_inner(
         RunMode::Checkpoint((path, _)) => jobs::resume_admitted(root, manifest, path, &mut context),
         _ => jobs::run_admitted(root, manifest, &mut context),
     }
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
+    .map_err(|error| match error.downcast::<jobs::WorkspacePreserved>() {
+        Ok(preserved) => anyhow::Error::new(*preserved),
+        Err(error) => anyhow::anyhow!("{error}"),
+    })?;
     Ok(result)
 }
