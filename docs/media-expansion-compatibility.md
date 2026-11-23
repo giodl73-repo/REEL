@@ -61,3 +61,9 @@ The run checked local packages. A separate Windows browser test at `825dcb7`
 rendered the same fixture's opening companions as 72 EN frames and 84 ES
 frames. Both outputs preserved the checked PCM hash. Interactive replay and
 station qualification still require their own runs.
+
+At `afe51bc`, an English opening replacement changed the three English WAV
+outputs while all three Spanish WAVs remained byte-for-byte identical. Every
+edition retained its duration. The retained baseline outputs still matched
+their recorded hashes after the replacement was produced in a separate test
+directory. This comparison covers the shared programme's WAV outputs.
