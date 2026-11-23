@@ -78,6 +78,9 @@ struct Job {
     /// Explicit diagnostics exception; normal jobs publish and retire their workspace.
     #[serde(default)]
     retain_workspace: bool,
+    /// Keep interrupted staging available for an explicitly authorized recovery.
+    #[serde(default)]
+    preserve_workspace_on_failure: bool,
     /// Native no-clobber producers create their own new output directories.
     #[serde(default = "prepare_output_parents_default")]
     prepare_output_parents: bool,
@@ -625,6 +628,13 @@ fn run_loaded(
             }
             if job.retain_workspace {
                 return Err(error);
+            }
+            if job.preserve_workspace_on_failure {
+                return Err(format!(
+                    "{error}; staging for job {} preserved for recovery",
+                    reservation.id
+                )
+                .into());
             }
             let mut failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
                 "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"error":error.to_string(),"outputs":{},
