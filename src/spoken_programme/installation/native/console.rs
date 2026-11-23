@@ -713,15 +713,39 @@ mod tests {
         assert!(surface.received_counter() > 0);
         assert_eq!(pool.occupied(), 0);
         surface.verify_transcript().unwrap();
-        let (input, mut commands) = pool.channel();
+        let mut input_foreground = super::super::parent::tests::fixture();
+        let (input, mut commands) = input_foreground.parent.command_pool().channel();
         let mut reader = surface.start_reader(input).unwrap();
         std::thread::sleep(Duration::from_millis(30));
         assert!(!reader.finished());
         surface
             .status("Renderer stays responsive during cooked input")
             .unwrap();
-        assert!(reader.shutdown().unwrap().is_none());
-        assert!(reader.finished() && commands.receive().is_none());
+        std::fs::write("console-reader-ready.marker", b"cooked reader running").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !input_foreground.parent.quit_requested() {
+            input_foreground
+                .parent
+                .poll_console_input(&mut commands, &mut reader)
+                .unwrap();
+            assert!(Instant::now() < deadline, "cooked reader EOF deadline");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut last_receipt = 0;
+        for (expected_id, expected_command) in [(1, Command::Status), (2, Command::Quit)] {
+            let packet = super::super::parent::tests::receive(&mut input_foreground.peer);
+            let super::super::protocol::Input::Control {
+                id,
+                command,
+                received_counter,
+            } = super::super::protocol::Input::parse(&packet).unwrap()
+            else {
+                panic!("expected control");
+            };
+            assert_eq!((id, command), (expected_id, expected_command));
+            assert!(received_counter >= last_receipt && received_counter > 0);
+            last_receipt = received_counter;
+        }
         let mut renderer = ConsoleRenderer::start(surface).unwrap();
         let display = || DisplayItem {
             ticket: DisplayTicket::fixture(),
@@ -902,6 +926,20 @@ mod tests {
                     )
                     .as_bytes(),
                 )
+                .unwrap();
+            while !root.path().join("console-reader-ready.marker").is_file() {
+                assert!(
+                    !job.is_finished(),
+                    "console child exited before cooked reader"
+                );
+                assert!(Instant::now() < until, "console reader handshake deadline");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            capture
+                .input
+                .as_mut()
+                .unwrap()
+                .write_all(b"status\r\x1a\r")
                 .unwrap();
             while !root.path().join("console-resize-ready.marker").is_file() {
                 assert!(

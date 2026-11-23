@@ -2,8 +2,8 @@
 //! remain separate: display confirmation is an integration boundary, not proof
 //! that any particular console has rendered these observations.
 use super::{
-    console::ConsoleRenderer,
-    input::{CommandLease, CommandPool, QueuedCommand},
+    console::{ConsoleReader, ConsoleRenderer},
+    input::{CommandLease, CommandPool, InputReceiver, QueuedCommand},
     output::OutputClock,
     pipe::Channel,
     protocol::{Input, Output, ParentGate, Preparation, RuntimeBinding},
@@ -688,6 +688,40 @@ impl ParentSession {
             self.fault();
         }
         result
+    }
+    /// Drain accepted cooked lines before interpreting reader EOF. Joining a
+    /// still-running reader belongs to the shutdown owner.
+    pub fn poll_console_input(
+        &mut self,
+        input: &mut InputReceiver,
+        reader: &mut ConsoleReader,
+    ) -> Result<()> {
+        // Check termination before draining so all lines published by the
+        // finished thread precede its EOF in this poll.
+        let finished = reader.finished();
+        for _ in 0..8 {
+            let Some(command) = input.receive() else {
+                break;
+            };
+            self.accept(command)?;
+        }
+        if finished {
+            match reader.shutdown() {
+                Ok(Some(receipt)) if !self.quit => {
+                    if let Err(error) = self.command(Command::Quit, receipt) {
+                        self.fault();
+                        self.local_command(Command::Quit)?;
+                        return Err(error);
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    self.fault();
+                    return Err(error);
+                }
+            }
+        }
+        Ok(())
     }
     fn advance_renderer(&mut self, renderer: &mut ConsoleRenderer) -> Result<()> {
         if let Some((ticket, layout)) = renderer.completion()? {
