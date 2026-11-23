@@ -79,6 +79,12 @@ preview bindings.
 | `media` | Explicit preview bindings in the board format above; files need not be available during metadata projection |
 | `tasks` | Optional existing watches; each output's `unit_id` is the source shared event's semantic ID |
 
+A watched output can specify `cue: {id, language}` in place of `unit_id`.
+The cue must exist in that language, and the journal packet must name the same
+language. Returned WAV or MP3 files appear as unselected recordings under the
+cue in the Cue sheet. Audition uses a separate player and leaves the selected
+take, timing, and semantic markers intact.
+
 Unit order comes from shared scene events; story and C IDs come from the existing
 inspection identities. Versions retain each language's exact selected subject.
 Intervals end at the next cel in the same cue or that cue's end, preserving the
