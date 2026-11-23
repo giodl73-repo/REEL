@@ -173,12 +173,33 @@ fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
     }
     let shared = InstallationFixture::from_programme(f);
     assert_eq!(shared.f.document.editions.len(), 6);
-    for (edition_id, expected_frames) in
-        [("en-installation", 144_000), ("es-installation", 168_000)]
-    {
+    let receipt: producer::ProductionReceipt = serde_json::from_slice(&shared.receipt).unwrap();
+    for (language, expected_frames) in [("en", 144_000), ("es", 168_000)] {
+        let edition_id = format!("{language}-installation");
+        let executive_id = format!("{language}-executive");
+        let installation = receipt
+            .editions
+            .iter()
+            .find(|e| e.edition_id == edition_id)
+            .unwrap();
+        let executive = receipt
+            .editions
+            .iter()
+            .find(|e| e.edition_id == executive_id)
+            .unwrap();
+        assert_ne!(installation.wave.sha256, executive.wave.sha256);
+        assert_eq!(installation.takes.len(), 1);
+        assert_eq!(
+            installation.takes[0].source.sha256,
+            executive.takes[0].source.sha256
+        );
+        assert_eq!(
+            installation.takes[0].selected_pcm_sha256,
+            executive.takes[0].selected_pcm_sha256
+        );
         let prepared = api::prepare(
             &api::Selection {
-                edition_id: edition_id.into(),
+                edition_id,
                 passes: 1,
             },
             shared.inputs(),
@@ -189,6 +210,20 @@ fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
         assert!(prepared.summary().original_pcm_and_access_checked);
         assert!(!prepared.transcript().is_empty());
     }
+    let refused = api::prepare(
+        &api::Selection {
+            edition_id: "en-executive".into(),
+            passes: 1,
+        },
+        shared.inputs(),
+        control(),
+    )
+    .err()
+    .expect("the long executive transcript must be refused");
+    assert_eq!(
+        refused.to_string(),
+        "installation transcript terminal line profile"
+    );
 }
 
 #[cfg(all(windows, feature = "installation-native"))]
