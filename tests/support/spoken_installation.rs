@@ -59,6 +59,9 @@ impl InstallationFixture {
             }
         }
         f.signals[0][5000 * 2..5000 * 2 + 5].copy_from_slice(&[-32768, -1, 0, 1, 32767]);
+        Self::from_programme(f)
+    }
+    fn from_programme(mut f: Fixture) -> Self {
         f.sync();
         let root = f.temp.path().to_owned();
         let candidate = f.output();
@@ -143,6 +146,48 @@ fn selection() -> api::Selection {
     api::Selection {
         edition_id: "en-technical".into(),
         passes: 1,
+    }
+}
+
+#[test]
+fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
+    let mut f = Fixture::new();
+    for (language, index) in [("en", 0), ("es", 3)] {
+        f.signals[index][..4800 * 2].fill(0);
+        let mut edition = f
+            .document
+            .editions
+            .iter()
+            .find(|edition| edition.id == format!("{language}-executive"))
+            .unwrap()
+            .clone();
+        edition.id = format!("{language}-installation");
+        edition.required_modules = vec!["opening".into()];
+        edition.selections.truncate(1);
+        edition.joins.clear();
+        f.document.performances[index]
+            .scope
+            .edition_ids
+            .push(edition.id.clone());
+        f.document.editions.push(edition);
+    }
+    let shared = InstallationFixture::from_programme(f);
+    assert_eq!(shared.f.document.editions.len(), 6);
+    for (edition_id, expected_frames) in
+        [("en-installation", 144_000), ("es-installation", 168_000)]
+    {
+        let prepared = api::prepare(
+            &api::Selection {
+                edition_id: edition_id.into(),
+                passes: 1,
+            },
+            shared.inputs(),
+            control(),
+        )
+        .unwrap();
+        assert_eq!(prepared.summary().source_frames, expected_frames);
+        assert!(prepared.summary().original_pcm_and_access_checked);
+        assert!(!prepared.transcript().is_empty());
     }
 }
 
