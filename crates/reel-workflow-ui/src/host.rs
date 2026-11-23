@@ -224,7 +224,7 @@ impl State {
                     let Some(asset) = result.artifacts.get(output) else {
                         continue;
                     };
-                    let media_key = format!("candidate-{index}-{output_index}");
+                    let media_key = format!("candidates/{index}-{output_index}-{}", asset.sha256);
                     let available = mime(&asset.media_type).is_some()
                         && asset.media_type.starts_with("image/")
                         && asset.bytes <= MAX_PREVIEW_BYTES;

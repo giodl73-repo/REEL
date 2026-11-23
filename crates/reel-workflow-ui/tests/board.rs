@@ -169,6 +169,45 @@ fn get(host: &str, path: &str, method: &str, headers: &str) -> Vec<u8> {
 }
 #[cfg(windows)]
 #[test]
+fn live_candidate_preview_cannot_alias_an_authored_media_key() {
+    let (_temp, root, mut value) = board();
+    let selected = value["media"]
+        .as_object_mut()
+        .unwrap()
+        .remove("cel2")
+        .unwrap();
+    value["media"]["candidate-0-0"] = selected;
+    value["units"][1]["versions"][0]["preview"] = "candidate-0-0".into();
+    let raw = serde_json::to_vec(&value).unwrap();
+    fs::write(root.join("board.json"), &raw).unwrap();
+    let (_child, authority, token) = host(&root, &reel_workflow::digest(&raw));
+    let route = |name: &str| format!("/{token}/{name}");
+    support::advance(&root, false);
+
+    fn body(response: &[u8]) -> &[u8] {
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        let index = response.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+        &response[index + 4..]
+    }
+
+    let raw = get(&authority, &route("state.json"), "GET", "");
+    let view: Value = serde_json::from_slice(body(&raw)).unwrap();
+    let versions = &view["units"][1]["versions"];
+    let selected_path = versions[0]["preview"].as_str().unwrap();
+    let candidate_path = versions[1]["preview"].as_str().unwrap();
+    assert_ne!(selected_path, candidate_path);
+    assert_eq!(
+        body(&get(&authority, &route(selected_path), "GET", "")),
+        fs::read(root.join("cel-2.png")).unwrap()
+    );
+    assert_eq!(
+        body(&get(&authority, &route(candidate_path), "GET", "")),
+        fs::read(root.join("candidate.png")).unwrap()
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn actual_host_is_lazy_capability_scoped_and_range_reads_verified_bytes() {
     let (_temp, root, _value) = board();
     let pin = reel_workflow::digest(&fs::read(root.join("board.json")).unwrap());
