@@ -1087,6 +1087,40 @@ mod tests {
         }
     }
     #[test]
+    fn first_source_submission_requires_a_prediction_before_the_startup_deadline() {
+        for reaches_deadline in [false, true] {
+            let clock = OutputClock::start().unwrap();
+            let operation = operation(clock, 1);
+            let deadline = operation.deadline_us;
+            let (mut sink, mut slot) = slot(operation);
+            let (mut control, callback) = callback_pair(engine());
+            let (counter, frequency) = clock.origin();
+            let origin = counter as u128 * 10_000_000 / frequency as u128 * 100;
+            slot.fill(&mut [0.0; 2], Some((origin, origin)));
+            assert!(sink.attach(callback).is_ok());
+
+            let predicted = deadline - u64::from(!reaches_deadline);
+            let mut output = [1.0; 960];
+            slot.fill(
+                &mut output,
+                Some((origin + 1000, origin + u128::from(predicted) * 1000)),
+            );
+            if reaches_deadline {
+                assert!(sink.failed());
+                assert_eq!(output, [0.0; 960]);
+                assert_eq!(sink.stats().submitted_source_frames, 0);
+                assert_eq!(sink.stats().first_source_predicted_us, None);
+                let returned = control.returned().unwrap().snapshot();
+                assert_eq!(returned.state, State::Fault);
+                assert_eq!(returned.source_frame, 0);
+            } else {
+                assert!(!sink.failed());
+                assert_eq!(sink.stats().submitted_source_frames, 480);
+                assert_eq!(sink.stats().first_source_predicted_us, Some(predicted));
+            }
+        }
+    }
+    #[test]
     fn reversed_native_clock_faults_without_an_extra_source_submission() {
         let clock = OutputClock::start().unwrap();
         let (mut sink, mut slot) = slot(operation(clock, 1));
