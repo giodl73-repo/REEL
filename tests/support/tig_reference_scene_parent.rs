@@ -155,6 +155,21 @@ fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
             .map(|(_, segment)| segment.id.as_str())
             .collect();
         assert_eq!(changes, [UNITS[2]]);
+        for name in ["captions.srt", "captions.vtt"] {
+            let before = p
+                .data
+                .path()
+                .join(format!("captions-{language}-baseline/{name}"));
+            let after = p
+                .data
+                .path()
+                .join(format!("captions-{language}-repaired/{name}"));
+            assert_eq!(
+                fs::read(before).unwrap(),
+                fs::read(after).unwrap(),
+                "{language}: {name}"
+            );
+        }
     }
 }
 
@@ -210,14 +225,11 @@ fn shared_edition(
     });
     let name = format!("episode-{language}-{version}");
     write(root, &format!("{name}.json"), &manifest);
-    let receipt = episode_conform::build_with_scene_inputs(
-        &root.join(format!("{name}.json")),
-        root,
-        root,
-        &root.join(name),
-        &inputs,
-    )
-    .unwrap_or_else(|error| panic!("{language} {version} conform: {error:#}"));
+    let conform = root.join(format!("{name}.json"));
+    let rendered = root.join(name);
+    let receipt =
+        episode_conform::build_with_scene_inputs(&conform, root, root, &rendered, &inputs)
+            .unwrap_or_else(|error| panic!("{language} {version} conform: {error:#}"));
     assert!(receipt.decoded_master_matches_ordered_segments);
     assert!(receipt.timestamps_verified);
     assert_eq!(receipt.language, language);
@@ -229,6 +241,50 @@ fn shared_edition(
             .collect::<Vec<_>>(),
         UNITS
     );
+    let mut tracks = Vec::new();
+    for (segment, (_, _, semantic)) in receipt.segments.iter().zip(scenes) {
+        let text = match language {
+            "es" => format!("Señal de {}", segment.id),
+            "en" => format!("Cue for {}", segment.id),
+            _ => unreachable!(),
+        };
+        let srt = root.join(format!("source-{language}-{version}-{}.srt", segment.id));
+        fs::write(
+            &srt,
+            format!("1\n00:00:00,000 --> 00:00:00,500\n{text}\n\n"),
+        )
+        .unwrap();
+        tracks.push(json!({
+            "segment_id": segment.id,
+            "language": language,
+            "selected_master_sha256": segment.selected_master_sha256,
+            "source_caption": pin(root, &srt),
+            "source_words_sha256": Object::from_bytes(&serde_json::to_vec(&[text]).unwrap()).sha256,
+            "selection_evidence": pin(root, semantic),
+            "source_frame_rate": {"numerator":24,"denominator":1,"policy":"repeat-only"},
+        }));
+    }
+    let caption_manifest = format!("captions-{language}-{version}.json");
+    write(
+        root,
+        &caption_manifest,
+        &json!({
+            "schema":"reel.episode-captions.v1",
+            "language": language,
+            "conform_manifest": pin(root, &conform),
+            "conform_receipt": pin(root, &rendered.join("receipt.json")),
+            "tracks": tracks,
+        }),
+    );
+    let captions = root.join(format!("captions-{language}-{version}"));
+    reel::episode_captions::assemble(&root.join(caption_manifest), root, &captions).unwrap();
+    let cues = reel::series::parse_srt(&fs::read_to_string(captions.join("captions.srt")).unwrap())
+        .unwrap();
+    assert_eq!(cues.len(), receipt.segments.len());
+    for (cue, segment) in cues.iter().zip(&receipt.segments) {
+        let start = (segment.start_sample * 1000).div_ceil(u64::from(receipt.output_sample_rate));
+        assert_eq!(cue.start_ms, start);
+    }
     receipt
 }
 
