@@ -268,7 +268,7 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
     let manifest = fs::read(root.join("access.json")).unwrap();
     checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
     assert_eq!(result.access().sample_rate, fixture.sample_rate);
-    use reel::spoken_programme::interactive::{ChoiceKey, Graph, Selection, Session};
+    use reel::spoken_programme::interactive::{Graph, Selection, Session, demo};
 
     let graph: Graph = serde_json::from_value(serde_json::json!({
         "entry": "opening",
@@ -328,6 +328,14 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                     visits.push((node.clone(), selection));
                     if let Some(span) = selection {
                         assert_eq!(session.frame(), Some(span.first_frame));
+                        let transcript = demo::transcript(&session, &result).unwrap();
+                        assert!(transcript.iter().any(|entry| !entry.text.trim().is_empty()));
+                        assert!(
+                            transcript
+                                .iter()
+                                .all(|entry| entry.start_sample < span.end_frame
+                                    && entry.end_sample > span.first_frame)
+                        );
                         if node == "example" {
                             assert!(session.observe(visit, span.first_frame + 1));
                             assert!(session.set_paused(visit, true));
@@ -362,18 +370,21 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                         delivered.push(hash(&pcm));
                     } else if node == "choose" {
                         if by_position {
-                            assert!(!session.choice_key(opening, ChoiceKey::Activate));
+                            assert!(!demo::command(&mut session, opening, "activate").unwrap());
                             assert_eq!(session.focused_choice().unwrap().0, "example");
                             if choice == "summary" {
-                                assert!(session.choice_key(visit, ChoiceKey::Next));
-                                assert!(session.choice_key(visit, ChoiceKey::Previous));
+                                assert!(demo::command(&mut session, visit, "next").unwrap());
+                                assert!(demo::command(&mut session, visit, "previous").unwrap());
                                 assert_eq!(session.focused_choice().unwrap().0, "example");
-                                assert!(session.choice_key(visit, ChoiceKey::Next));
+                                assert!(demo::command(&mut session, visit, "next").unwrap());
                             }
                             assert_eq!(session.focused_choice().unwrap().0, choice);
-                            assert!(session.choice_key(visit, ChoiceKey::Activate));
+                            assert!(demo::command(&mut session, visit, "activate").unwrap());
                         } else {
-                            assert!(session.choose(visit, choice));
+                            assert!(
+                                demo::command(&mut session, visit, &format!("choose {choice}"))
+                                    .unwrap()
+                            );
                         }
                     } else {
                         break;

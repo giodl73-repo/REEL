@@ -1,4 +1,6 @@
 //! Admission of exact module spans from verified spoken-programme access.
+#[path = "interactive_demo.rs"]
+pub mod demo;
 #[path = "interactive_graph.rs"]
 mod graph;
 #[path = "interactive_playback.rs"]

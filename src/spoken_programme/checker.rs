@@ -592,6 +592,11 @@ pub struct FileCheckRequest<'a> {
 }
 
 pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
+    Ok(check_file_package(paths)?.summary)
+}
+
+/// Check the original controls and return the verified records for local consumers.
+pub fn check_file_package(paths: FileCheckRequest<'_>) -> Result<CheckedPackage> {
     require(
         paths.access.is_none() || paths.write_access.is_none(),
         "spoken access modes conflict",
@@ -635,5 +640,5 @@ pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
     if let Some(root) = paths.write_access {
         write_access(&mut checked, root, &mut tick)?;
     }
-    Ok(checked.summary)
+    Ok(checked)
 }
