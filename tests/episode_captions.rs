@@ -131,6 +131,20 @@ fn reading_holds_use_the_original_cue_end_and_stay_inside_source_content() {
         assert!(assemble(&root.join("captions.json"), root, &target).is_err());
         assert!(!target.exists());
     }
+
+    let overlapping =
+        b"1\n00:00:00,000 --> 00:00:00,900\nFirst\n\n2\n00:00:00,950 --> 00:00:01,000\nNext\n";
+    fs::write(root.join("0.srt"), overlapping).unwrap();
+    let track = &mut manifest["tracks"][0];
+    track["source_caption"] =
+        json!({"path":"0.srt","bytes":overlapping.len(),"sha256":sha(overlapping)});
+    track["source_words_sha256"] = json!(sha(br#"["First","Next"]"#));
+    track["reading_holds"] = json!([{"cue_index":1,"expected_end_ms":900,"end_ms":951}]);
+    write(root, "captions.json", &manifest);
+    let target = root.join("overlapping");
+    let error = assemble(&root.join("captions.json"), root, &target).unwrap_err();
+    assert!(error.to_string().contains("overlaps the next source cue"));
+    assert!(!target.exists());
 }
 
 #[test]

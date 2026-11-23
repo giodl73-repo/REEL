@@ -334,6 +334,12 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
             if hold.cue_index <= previous_index || hold.end_ms <= hold.expected_end_ms {
                 bail!("invalid caption reading hold order or duration");
             }
+            if entries
+                .get(hold.cue_index)
+                .is_some_and(|next| hold.end_ms > next.start_ms)
+            {
+                bail!("caption reading hold overlaps the next source cue");
+            }
             let entry = entries
                 .get_mut(hold.cue_index - 1)
                 .filter(|entry| {
