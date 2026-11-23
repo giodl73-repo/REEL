@@ -40,7 +40,7 @@ The local session reducer admits every authored binding through the checked prog
 Build `reel-interactive` with `--features installation-native`. Run it with
 `--demo`, `--declaration`, `--plan`, `--source-root`, `--candidate`, and
 `--access` pointing to the authored manifest and original checked programme.
-Pass `--processing` for a non-identity processing policy. Select an explicit
+Pass `--processing` for a non-identity processing policy and `--compiler-producer` with the absolute path to the exact compiler/producer bytes used for the original programme. To validate the files without opening a device, use `--check` in place of `--endpoint`. Select an explicit
 WASAPI output using `--endpoint` and start in `en` or `es` with `--language`.
 The manifest contains the graph, one exact binding for each playback node and
 language, and an `ending` object with authored `en` and `es` text.
