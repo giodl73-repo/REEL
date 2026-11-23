@@ -55,6 +55,7 @@ impl Method {
 #[serde(deny_unknown_fields)]
 pub struct Finding {
     pub id: String,
+    #[serde(default)]
     pub target_id: String,
     pub frame: u64,
     pub category: Category,
@@ -62,6 +63,23 @@ pub struct Finding {
     pub observation: String,
     #[serde(default)]
     pub evidence: Vec<Artifact>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub board_reference: Option<BoardReference>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BoardReference {
+    pub project: String,
+    pub source_commit: String,
+    pub story_id: String,
+    pub display_id: String,
+    pub semantic_id: String,
+    pub language: String,
+    pub version: BoardVersion,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BoardVersion {
+    pub designation: String,
+    pub asset: Artifact,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -146,7 +164,8 @@ fn descriptors(report: &Report) -> Result<BTreeMap<String, Artifact>> {
     for finding in &report.findings {
         if !token(&finding.id)
             || !ids.insert(&finding.id)
-            || !token(&finding.target_id)
+            || !(token(&finding.target_id)
+                || (finding.target_id.is_empty() && finding.board_reference.is_some()))
             || finding.evidence.len() > 16
             || finding.observation.trim().is_empty()
             || finding.observation.len() > 4096
@@ -156,6 +175,9 @@ fn descriptors(report: &Report) -> Result<BTreeMap<String, Artifact>> {
                 .any(|c| c.is_control() && c != '\n' && c != '\t')
         {
             return fail(ErrorKind::Invalid, "film-findings-observation");
+        }
+        if let Some(reference) = &finding.board_reference {
+            artifact(&reference.version.asset)?;
         }
         for a in &finding.evidence {
             artifact(a)?;
@@ -254,16 +276,35 @@ pub fn draft(report: &Report, reader: &mut impl Reader) -> Result<Vec<IssueDraft
     receipt_binding(report, &map, &receipt)?;
     let mut resolved = Vec::new();
     for finding in &report.findings {
-        let target = map
-            .targets
-            .iter()
-            .find(|t| t.attachment_id == finding.target_id)
-            .ok_or_else(|| Error {
-                kind: ErrorKind::Missing,
-                code: "film-findings-target".into(),
-            })?;
+        let covers_frame = |target: &Target| {
+            target.start_frame <= finding.frame && finding.frame < target.end_frame
+        };
+        let target = if finding.target_id.is_empty() {
+            map.targets.iter().find(|target| covers_frame(target))
+        } else {
+            map.targets
+                .iter()
+                .find(|target| target.attachment_id == finding.target_id)
+        }
+        .ok_or_else(|| Error {
+            kind: ErrorKind::Missing,
+            code: "film-findings-target".into(),
+        })?;
         if finding.frame < target.start_frame || finding.frame >= target.end_frame {
             return fail(ErrorKind::Conflict, "film-findings-target-frame");
+        }
+        if let Some(reference) = &finding.board_reference
+            && (reference.project != map.project
+                || reference.source_commit != map.source_commit
+                || reference.language != map.language
+                || reference.story_id != target.story_id
+                || reference.display_id != target.cel_id
+                || reference.semantic_id != target.semantic_id
+                || reference.version.designation != "selected"
+                || reference.version.asset.sha256 != target.selected_picture.sha256
+                || reference.version.asset.bytes != target.selected_picture.bytes)
+        {
+            return fail(ErrorKind::Conflict, "film-findings-board-reference");
         }
         resolved.push((finding, target));
     }

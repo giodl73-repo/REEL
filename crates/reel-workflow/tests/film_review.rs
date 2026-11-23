@@ -41,6 +41,40 @@ fn exact_targets_stable_keys_and_private_drafts_do_not_claim_viewing_or_submissi
     assert_eq!(drafts[0].finding_identity, revised[0].finding_identity);
 }
 #[test]
+fn board_reference_resolves_target_and_rejects_a_stale_drawing_before_movie_reads() {
+    let (mut report, mut reader) = fixture();
+    report.findings[0].target_id.clear();
+    report.findings[0].board_reference = Some(serde_json::from_value(json!({
+        "project": "synthetic-film",
+        "source_commit": "b".repeat(40),
+        "story_id": "story-1",
+        "display_id": "C100",
+        "semantic_id": "arrival",
+        "language": "es",
+        "version": {
+            "id": "v1",
+            "designation": "selected",
+            "asset": {"logical_id":"picture/arrival/v1","sha256":"7".repeat(64),"bytes":100,"media_type":"image/png"}
+        }
+    })).unwrap());
+    let drafts = draft(&report, &mut reader).unwrap();
+    assert_eq!(drafts[0].target.attachment_id, "p-a");
+    reader.verified.clear();
+    report.findings[0]
+        .board_reference
+        .as_mut()
+        .unwrap()
+        .version
+        .asset
+        .sha256 = "8".repeat(64);
+    assert_eq!(
+        draft(&report, &mut reader).unwrap_err().code,
+        "film-findings-board-reference"
+    );
+    assert!(reader.verified.is_empty());
+}
+
+#[test]
 fn stale_maps_wrong_frames_duplicate_ids_and_false_authority_refuse_before_movie_reads() {
     for case in [
         "frame",

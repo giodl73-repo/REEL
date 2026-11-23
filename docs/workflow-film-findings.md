@@ -59,6 +59,13 @@ tokens. `target_id` is the exact picture attachment ID in the map. `frame` is
 zero-based and must lie within that target's half-open delivered interval. A
 target ending at frame 24 does not accept a finding on frame 24.
 
+Paste the JSON from the board's **Copy review reference** control into the
+finding's optional `board_reference` field. With this field, `target_id` may be
+omitted. The review map supplies the attachment at the reported frame and
+checks the project, commit, language, story, cel, semantic event and selected
+picture bytes against the reference. Use the frame from the review movie.
+The board's cue and scene sample spans are contextual information.
+
 Categories: `picture`, `timing`, `audio`, `captions`, `continuity`, `source-text`,
 `rights`. Methods: `human-report`, `model-report`, `deterministic-check`. These
 describe the submitted report, not authenticated viewing or observation accuracy.
