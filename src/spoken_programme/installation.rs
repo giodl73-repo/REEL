@@ -10,6 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(feature = "installation-native")]
+pub mod native;
 mod transport;
 pub use transport::{Command, Effects, Notice, Snapshot, State, Trace, Transport, TransportError};
 

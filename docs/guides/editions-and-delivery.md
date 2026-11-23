@@ -93,7 +93,7 @@ checkpoint rather than the target's perpetual current state.
 | Bind authored wording, audio chapters and print pages | [Narrated reading editions](../narrated-reading-v1.md) |
 | Connect an explanation, editable pickup and repeated exercise passages | [Lesson and rehearsal package](../lesson-rehearsal-v1.md) |
 | Follow language-local phrases with an existing SVG composition | [Semantic visual companions](../semantic-visual-companion-v1.md) |
-| Plan finite offline playback, operator controls and measured device gates | [Single-device installation contract](../offline-installation-v1.md) (M11 specification; M12 player pending) |
+| Plan finite offline playback, operator controls and measured device gates | [Single-device installation contract](../offline-installation-v1.md), [native foundation](../installation-native-foundation-v1.md) (checked transport merged; playback/operator and station gates remain open) |
 | Export an editorial interchange | [OpenTimelineIO](../otio-export-v0.2.40.md) |
 | Track selected revisions and target evidence | [Delivery use case](../use-cases.md#track-a-delivery-over-time), [history host](../tig-history.md), [delivery observation](../tig-delivery-observation.md) |
 | Recheck retained movie/source correspondence | [Retained delivery checker](../tig-retained-delivery-check.md) |

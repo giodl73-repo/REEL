@@ -138,5 +138,6 @@ pub fn run(request: &Request, action: Action) -> Result<Outcome> {
         &request.operation,
         action,
         &request.source,
+        crate::output_bounds::Allowance::EXTERNAL,
     )
 }

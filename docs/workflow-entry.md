@@ -12,7 +12,14 @@ producing project's profile.
 | Protect manual work and retain external results | [`reel-workflow-native`](../crates/reel-workflow-native/README.md) | Explicit native admission, owned staging, immutable unselected ingress, retained readback and original-operation recovery/close |
 | Run an existing film producer | [Owned film CLI](../crates/reel-workflow-native/README.md#owned-film-cli-optional-windows-film-feature) | Optional Windows `film` feature: pinned prepare/run/resume/verify/close, existing media reuse, capacity and scratch preserved |
 | Call an API or workflow proxy | [`reel-workflow-http`](../crates/reel-workflow-http/README.md) | Pinned JSON POSTs, private original-operation evidence and offline resume; proxy result/returns files feed explicit native handoff/retention |
-| View cels, versions and language cues | [`reel-workflow-ui`](../crates/reel-workflow-ui/README.md) | Existing-film scene projection, read-only pinned local board and explicit journal observations; browser acceptance, native previews and episode adoption remain open |
+| View cels, versions and language cues | [`reel-workflow-ui`](../crates/reel-workflow-ui/README.md) | Existing-film scene projection, read-only pinned local board and explicit journal observations; desktop and narrow playback verified with synthetic media. Native previews and episode adoption remain open. |
+| Put stable cel IDs in a scene review movie | [Private cel-ID copies](film-cel-review-v1.md) | Existing delivery-receipt frame ranges, visible IDs and exact source map; candidate output with native retention and issue/fix dispatch separate |
+| Turn film findings into issue drafts | [Exact-baseline findings](workflow-film-findings.md) | Checked movie/map/receipt bytes and exact target frames; private drafts/API bodies with posting, repair and native retention separate |
+| Submit an explicitly authorized finding | [GitHub issue adapter](workflow-github-issues.md) | Existing owned HTTP operation, exact created-response receipt and offline replay; uncertain remote outcomes, repair and selection remain separate |
+| Prepare an image-candidate repair | [Film image repair](workflow-film-image-repair.md) | Exact report/job/source-map checks against the declared baseline, ordinary image task and consumer/language impact; approved application and rebuild execution remain separate |
+| Prepare affected scene renders after a still repair | [Native film rebuild](workflow-native-film-rebuild.md) | Per-language packet, source and parent files for protected admission. Scene control verification preserves the original recording and clock. |
+| Assemble an episode from checked components | [Bounded episode jobs](tig-episode-jobs.md) | Existing `reel-tig-job` producer for ordered scenes and presentations, with component verification and retained handoff recovery. |
+| Record an authorized speech candidate | [Speech generation](tig-speech-generation.md) | `reel-tig-speech` writes a candidate recording, alignment and receipt under the pinned request and authorization. |
 
 Use each crate's `capabilities` and `--help` commands to check the binary you
 actually built. The native and HTTP crates have separate manifests/lockfiles;
@@ -38,19 +45,22 @@ The [visual production workspace requirements](workflow-ux-requirements.md)
 describe the near-term cel/cue/page board, existing editor reuse and generic
 git-asset tool/preview handoff gaps. This is proposed UX work, not an existing
 complete live production dashboard. The first local board implementation is
-linked above; its visual acceptance and integration gates remain explicit.
+linked above; native previews and live project integration remain open.
 
-Film review copies with stable targets, issue/fix and affected-language rebuilds
-remain W4 work. Dedicated service/speech adapters and automatic native provider
-orchestration remain W3b work. Existing approved recordings are reusable inputs;
-using them does not require new speech generation.
+The [protected repair qualification](reviews/workflow-protected-film-repair-review.md)
+verified image and control retention through one synthetic scene repair.
+Automatic dispatch across affected languages and episode consumers remains open.
+Provider orchestration must connect speech candidates to workflow retention and
+review. Existing approved recordings are reusable as exact cue inputs.
 
 W5 still requires packaged/pinned entry tools, project acceptance, owned-profile
 adoption and rollback. Where episode-scale native composition is required, W6
 must qualify the actual resource closure, large masters, interrupted execution and
 historical outputs first. The current native envelope/response limits do not
-cover the declared Season 5 production scale. Five-hour process ceilings and
-large metadata declarations do not establish that qualification.
+cover the declared Season 5 production scale. Use the existing bounded episode
+producer with the project's accepted profiles for current production. Qualify
+workflow integration against the actual ordered components and retained outputs
+before adopting a replacement profile.
 
 Comics are a separate publication lane and are not a film release gate. Current
 Season 5 production, selected media, recordings, approvals and active profiles

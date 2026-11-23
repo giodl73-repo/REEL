@@ -43,10 +43,15 @@ Source landings include [manual exchange #386](https://github.com/giodl73-repo/R
 [retained film tasks #397](https://github.com/giodl73-repo/REEL/pull/397),
 [owned film CLI #399](https://github.com/giodl73-repo/REEL/pull/399) and
 [API/proxy execution #402](https://github.com/giodl73-repo/REEL/pull/402).
-Film review/issue/fix/rebuild, dedicated service/speech integration, automatic
+Complete film review/issue/fix/rebuild, dedicated service/speech integration, automatic
 native provider orchestration, packaged project adoption/rollback and episode-scale
 qualification retain their separate gates. A source merge does not install or
 adopt a production profile, approve a candidate or qualify all of Season 5.
+
+The first W4 [cel-ID review-copy producer](film-cel-review-v1.md) annotates an
+existing scene-delivery review on actual delivered frame ranges, preserves its
+audio/timestamps and emits an exact target map. It leaves issue/fix integration,
+affected rebuilds and native workflow dispatch open.
 
 The [visual production workspace requirements](workflow-ux-requirements.md)
 audit existing REEL editors and current git-asset catalogue extension gaps.

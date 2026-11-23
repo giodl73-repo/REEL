@@ -6,6 +6,10 @@ REEL's existing ledger and preserves original-operation evidence. Its portable
 library provides transport and the workflow proxy wire contract. Producer and
 native SDK dependencies/lockfiles are unchanged.
 
+The same owned runner supports [explicit film issue submission](../../docs/workflow-github-issues.md)
+with `payload.kind: github-issue`, exact created-response checks and offline
+captured-response recovery. It does not repair or select an asset.
+
 ```text
 reel-workflow-http capabilities
 reel-workflow-http post REQUEST REQUEST_SHA256 --apply

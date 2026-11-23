@@ -1,8 +1,10 @@
 # A checked programme on one offline listening station
 
 **Status: M11 contract merged in [#398](https://github.com/giodl73-repo/REEL/pull/398), `81be1db`.**
-M12a provides the checked transport core; the native output adapter
-and measured station demonstration remain M12b/M12c. See the
+M12a provides the checked transport core (merged [#400](https://github.com/giodl73-repo/REEL/pull/400)).
+The [M12b.1 foundation](installation-native-foundation-v1.md) covers explicit
+endpoint metadata and callback ownership. The actual native/operator loop
+and measured station demonstration remain M12b.2/M12c. See the
 [bounded implementation and test map](reviews/2026-11-21-m12a-checked-transport-review.md).
 M12 implements and measures this profile; this specification is not a device,
 listening, accessibility or unattended-operation pass.

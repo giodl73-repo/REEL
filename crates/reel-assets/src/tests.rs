@@ -1107,14 +1107,46 @@ fn publication_receipt_is_independent_of_another_metadata_operation() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "installed-runtime child fixture; explicitly launched by parent"]
+fn installed_runtime_output_fixture() {
+    println!("synthetic installed-runtime output");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "installed-runtime child fixture; explicitly launched by parent"]
+fn installed_runtime_failure_fixture() {
+    panic!("synthetic installed-runtime failure");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "installed-runtime child fixture; explicitly launched by parent"]
+fn installed_runtime_timeout_fixture() {
+    std::thread::sleep(std::time::Duration::from_secs(10));
+}
+
+#[cfg(windows)]
+#[test]
 fn installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures() {
     let f = Fixture::new();
     let root = f.dir.path();
     for cache in &f.config.cache_roots {
         fs::create_dir_all(cache).unwrap();
     }
-    let tool = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-        .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+    // Exercise an actual installed executable, without depending on .NET/shell
+    // startup under a busy hosted runner. The ignored fixtures run in children;
+    // none is counted as an independently passing ordinary test.
+    let tool = std::env::current_exe().unwrap();
+    let child_args = |name: &str| {
+        json!([
+            "--ignored",
+            "--exact",
+            format!("tests::{name}"),
+            "--nocapture",
+            "--test-threads=1"
+        ])
+    };
     let asset = ingest(root, &tool).unwrap();
     let register = root.join("registration.json");
     let mut row = asset.clone();
@@ -1125,7 +1157,7 @@ fn installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures()
     registry::register(root, &register).unwrap();
     let mut job = json!({"budget_bytes":1048576,"scratch_bytes":65536,
         "inputs":{},"tools":{},"installed_tools":{"runtime":{"path":tool,"sha256":asset["sha256"],"bytes":asset["bytes"]}},
-        "steps":[{"tool":"runtime","args":["-NoProfile","-Command","Write-Output synthetic"],"timeout_seconds":30}],
+        "steps":[{"tool":"runtime","args":child_args("installed_runtime_output_fixture"),"timeout_seconds":30}],
         "outputs":{"log":{"path":"step-0.log","max_bytes":4096}}});
     let manifest = root.join("job.json");
     fs::write(&manifest, job.to_string()).unwrap();
@@ -1141,7 +1173,11 @@ fn installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures()
     }
     let result = jobs::run(root, &manifest).unwrap();
     let log = PathBuf::from(result["outputs"]["log"]["path"].as_str().unwrap());
-    assert!(fs::read_to_string(log).unwrap().contains("synthetic"));
+    assert!(
+        fs::read_to_string(log)
+            .unwrap()
+            .contains("synthetic installed-runtime output")
+    );
     job["installed_tools"]["runtime"]["sha256"] = json!("0".repeat(64));
     fs::write(&manifest, job.to_string()).unwrap();
     assert!(
@@ -1155,10 +1191,15 @@ fn installed_runtime_job_retains_output_and_rejects_changed_tools_and_failures()
     fs::write(&manifest, job.to_string()).unwrap();
     assert!(jobs::run(root, &manifest).is_err());
     job["installed_tools"]["runtime"]["path"] = json!(tool);
-    job["steps"][0]["args"] = json!(["-NoProfile", "-Command", "exit 7"]);
+    job["steps"][0]["args"] = child_args("installed_runtime_failure_fixture");
     fs::write(&manifest, job.to_string()).unwrap();
-    assert!(jobs::run(root, &manifest).is_err());
-    job["steps"][0]["args"] = json!(["-NoProfile", "-Command", "Start-Sleep -Seconds 10"]);
+    assert!(
+        jobs::run(root, &manifest)
+            .unwrap_err()
+            .to_string()
+            .contains("Job step exited 101")
+    );
+    job["steps"][0]["args"] = child_args("installed_runtime_timeout_fixture");
     job["steps"][0]["timeout_seconds"] = json!(1);
     fs::write(&manifest, job.to_string()).unwrap();
     assert!(

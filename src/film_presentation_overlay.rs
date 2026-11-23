@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, io::Read, path::Path, process::Command};
+pub mod review;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -256,6 +257,13 @@ fn number(v: &Value) -> Result<i128> {
 }
 
 fn clocks(path: &Path) -> Result<Clocks> {
+    clocks_using(path, &mut output)
+}
+
+fn clocks_using(
+    path: &Path,
+    output: &mut impl FnMut(&mut Command) -> Result<Vec<u8>>,
+) -> Result<Clocks> {
     let streams: Value = serde_json::from_slice(&output(
         command("ffprobe")
             .args([

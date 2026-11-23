@@ -3,9 +3,88 @@
 This isolated adapter binds exact Git records to explicit annex leaves, admits
 positive input claims, stages owned manual work, registers unselected responses,
 reopens retained outputs and recovers the original operation. It also connects
-W2 film metadata inspection to those native bindings. It calls no model/provider,
-and selects no asset or changes any active profile. The optional Windows film
+W2 film metadata inspection to those native bindings. It calls no model/provider
+and changes no active profile. The optional Windows film
 feature adds bounded owned production, retained candidates and explicit close.
+
+The Windows `selection` Rust module adds an owned-ref CAS primitive using the
+qualified exact-byte proposal API and a pinned local Git executable. Preview is
+read-only. Apply can create/update only `refs/reel-workflow/selections/<lane>`;
+it never updates a branch, index, working file, project profile or remote. Exact
+request identity is bound into the proposal commit. Separate permanent intent
+and confirmed-completion refs support original-operation recovery: an intent
+alone is never success, and an ambiguous interrupted attempt is never reapplied.
+Confirmed historical replay reports whether its commit is still selected.
+Each Git command has a five-second deadline and bounded output; hooks, inherited
+Git redirection and lazy fetch are disabled. Observed symbolic refs are refused;
+CAS compares the expected object ID and uses `--no-deref`. It is not an ABA-proof
+ref-type lock against arbitrary outside writers to the owned namespace.
+
+This primitive has no selection CLI. Its synthetic Git tests do not establish
+candidate custody, annex record/leaf binding, decision authority, production
+adoption or affected-consumer rebuilds. Those checks must precede its future
+film adapter. A decision artifact pin records lineage only; it grants no rights
+or creative approval. No existing approval transfers to replacement bytes.
+
+The Windows `image_selection` Rust adapter checks an actual retained
+`ImageCandidate` result against its original input snapshot. It accepts exactly
+three existing-path replacements: the explicitly enumerated logical record, its
+declared selected annex leaf and an owned `.reel-workflow/decisions/<name>.json`
+control. The record keeps its definition, logical ID, authored values, streams
+and metadata; its selected payload changes and its old status must be cleared.
+The exact prior record/approval remains in Git history. Decision bytes are pinned
+and committed with the replacement, not left only in scratch.
+
+The producing project supplies the `Authority` implementation for that exact
+decision and old/new subjects. No JSON flag, Git identity, inspection report or
+technical check creates this authority. Apply/recovery reopens native retained
+ownership and output bytes, holds the guard through CAS, and resolves the exact
+prospective record/leaf binding before any selection intent. A binding failure
+may leave a detached proposal, but cannot change the owned selection. Inspection
+reads metadata only and explicitly reports no custody or selection. Stream-slot
+selection, new-path registration, active-profile adoption, the project authority
+implementation and protected affected-consumer rebuilds remain separate work.
+There is no image-selection CLI until those producing-project controls are wired.
+
+## Retained inputs for child tasks
+
+`upstream::Frozen::capture` binds each child input to an exact parent packet,
+result and named output (or worker receipt). The portable contract checks the
+project, result digest, logical artifact and explicit source-snapshot rules.
+Snapshot v3 adds a frozen origin declaration and an explicit input budget while
+preserving v1/v2 declaration bytes when origins are absent. Native operation
+witnesses (index/store, actor/owner, activation, work, source archive and retained
+acknowledgement) are archived with the child. They affect its native admission
+identity without replacing its portable logical parent identity.
+
+Frozen JSON is not admission authority. Generic `Prepared::accept` refuses all
+upstream tasks. `upstream::Admission::prepare` checks actual parent retention,
+reopens complete parent results and holds shared retained-owner fences and
+controller namespace guards until child acceptance settles. Temporary byte gates
+drop before the native index transaction. The child gets its own positive input
+claims and may then use the existing manual or guarded film producer paths.
+Parents are not released, reselected or retired. A waiting child keeps its claims
+after process exit; timeout/cancellation does not delete bytes or close a slot.
+
+```text
+preview-upstream-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE PARENTS ATTEMPT
+accept-upstream-admission PACKET NATIVE_PROFILE ADMISSION_PROFILE PARENTS ATTEMPT NEW_RECEIPT --apply
+```
+
+Parent controls use `reel.workflow-native-parents.v1`. All parents and the child
+must share the same existing index, metadata/controller roots and exact enrolled
+reader/store. A different per-object read ceiling is allowed; another pool or
+retained actor reused as the child slot is refused. Shared parent owners acquire
+one session fence per controller/actor, not recursive locks. Reopen/recovery uses
+the original child receipt and frozen witnesses, not a fresh operation identity.
+
+The existing 1 GiB combined admission envelope, 512 objects, 128 changed paths,
+16 total actors and external-response ceiling remain unchanged. Legacy upstream
+v1/v2 buffered bindings have a 64 MiB envelope; explicit streaming v3 bindings
+allow larger authored declarations (16 GiB/object, 64 GiB total). Such declarations
+are not episode-scale admission or streaming-composition qualification. Existing
+`NativeInputs::stream` and the film file bridge provide bounded byte access after
+claims; caller memory/workspace/execution limits still apply.
 
 It builds on [SDK intake PR #389](https://github.com/giodl73-repo/REEL/pull/389).
 The separate workspace/lock preserves the existing producer SDK and root lock.
@@ -92,8 +171,8 @@ metadata reader stays limited to 64 MiB and directs larger reads to streaming.
 The qualified single-store SDK and caller's native-reader bounds still apply.
 
 These input descriptions do not expand executable workflow capacity. This slice
-retains a 1 GiB protected envelope/retained aggregation scope, 128 MiB response
-scope, 512 MiB staging scope, 512 resource objects, 128 changed paths per phase
+retains a 1 GiB protected envelope/retained aggregation scope, 128 MiB external
+response scope, 512 MiB staging scope, 512 resource objects, 128 changed paths per phase
 and 16 total actors. Admission conservatively preflights response/close paths
 before effects, counting unknown output hashes separately. Declared response
 counts/bytes, the native reader's
@@ -218,9 +297,13 @@ added before aliases are removed, all prior objects and tree roots stay covered,
 and original native work is reconciled on retry. This is not payload deletion or
 an automatic workaround for oversized production admission.
 
-The existing native bounds still apply: a 1 GiB protected envelope, at most 32
-response objects including the worker receipt, and 128 MiB aggregate response
-bytes. Admission reserves one 64 KiB worker object for tool tasks and includes it
+The existing native bounds still apply: a 1 GiB protected envelope and at most 32
+response objects including the worker receipt. External responses retain their
+128 MiB aggregate ceiling. Film publication and retention use the checked original
+producer request's media-output allowance, plus one separate 64 KiB worker object.
+Film preview uses the existing 1 GiB envelope as its response ceiling; combined
+inputs, declared output contracts and metadata reserve must still fit that same
+envelope before admission. Admission reserves one 64 KiB worker object for tool tasks and includes it
 in response/close headroom. Byte deduplication does not change logical result
 identity. This is not S5-scale execution or owned-profile adoption; five-hour
 process ceilings do not enlarge these native admission bounds.
@@ -276,7 +359,15 @@ lease refuse. No command discovers or initializes a native pool.
 
 This is the bounded native film path, not full S5/episode-scale qualification,
 API/proxy generation, publication approval or owned project-profile adoption.
-The 1 GiB protection/128 MiB response limits above still apply.
+The 1 GiB protection envelope and the other admission limits above still apply;
+the generic external response ceiling remains 128 MiB. Routing a checked film
+output budget does not qualify multi-GiB native publication or Season 5 scale.
+
+The [native film rebuild binder](../../docs/workflow-native-film-rebuild.md)
+creates exact per-language packet/source/parent files from an affected-film plan.
+Live upstream admission remains separate. Windows film CLI requests can declare
+an exact still-control derivation, checked under child claims before capacity
+reservation and rendering.
 
 ## Validation
 

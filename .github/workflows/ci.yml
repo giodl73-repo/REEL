@@ -375,7 +375,14 @@ jobs:
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::scene_reference::retained_scene_matches_without_history_and_with_independent_owners --locked -- --ignored --exact
       - name: Verify retained scene proofs assemble a current owned parent with old jobs offline
         if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
-        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::verified_scene_owners_assemble_current_parent_and_survive_independent_withdrawal --locked -- --ignored --exact
+        run: |
+          cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent:: --locked -- --ignored --test-threads=1
+      - name: Verify English episode uses its own cue and conform
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::english_episode_assembles_with_its_own_take_and_alignment --locked -- --ignored --exact
+      - name: Verify one cel repair preserves both cue clocks
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::one_shared_cel_repairs_both_language_renders_with_exact_audio --locked -- --ignored --exact
       - name: Verify bounded episode CLI and complete temporary-owner handoff
         if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_movie --locked -- --ignored --exact

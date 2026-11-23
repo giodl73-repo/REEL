@@ -68,6 +68,13 @@ pub struct Receipt {
     pub index_checkpoint: source_claims::Checkpoint,
     pub metadata_checkpoint: metadata::Checkpoint,
 }
+/// One fence per exact retained actor/controller for a parent-read session.
+/// Never reconstructed from serialized acknowledgements.
+#[derive(Default)]
+pub(crate) struct RetainedFences {
+    identities: BTreeSet<(Digest, PathBuf, String)>,
+    held: Vec<reel_assets::admission::MetadataLock>,
+}
 #[derive(Serialize)]
 pub struct Preview {
     pub declared_objects: usize,
@@ -520,13 +527,22 @@ impl Prepared {
             response_objects_upper_bound: self.response_objects(),
             response_object_limit: 32,
             response_bytes_upper_bound: self.response_bytes()?,
-            response_byte_limit: 128 * 1024 * 1024,
+            response_byte_limit: self.response_byte_limit(),
             response_budget_ok: self.response_budget_ok()?,
         })
     }
     /// Explicitly apply original qualified slot work. On uncertainty retry this
     /// exact profile/task/attempt/operation; never choose a replacement identity.
     pub fn accept(&self) -> Result<Receipt> {
+        if self.snapshot.packet.task.upstream_inputs.is_some() {
+            return Err(error(
+                ErrorKind::Denied,
+                "admission-live-parent-proof-required",
+            ));
+        }
+        self.accept_verified_upstream()
+    }
+    pub(crate) fn accept_verified_upstream(&self) -> Result<Receipt> {
         if !self.preview()?.response_close_bound_ok {
             return Err(error(
                 ErrorKind::Budget,
@@ -647,6 +663,9 @@ impl Prepared {
             0
         }
     }
+    fn response_byte_limit(&self) -> u64 {
+        crate::output_bounds::Allowance::admission_ceiling(&self.snapshot.packet.task)
+    }
     fn response_objects(&self) -> usize {
         self.snapshot.packet.task.outputs.len()
             + usize::from(self.snapshot.packet.task.tool.is_some())
@@ -669,7 +688,7 @@ impl Prepared {
                 .outputs
                 .values()
                 .all(|output| output.max_bytes <= self.reader_limit)
-            && outputs <= 128 * 1024 * 1024
+            && outputs <= self.response_byte_limit()
             && inputs
                 .and_then(|n| n.checked_add(outputs))
                 .and_then(|n| n.checked_add(reserve))
