@@ -3,6 +3,17 @@ use std::{env, path::Path};
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--help") {
+        println!(
+            "Usage: reel-episode-conform <command> ...\n\
+             Commands:\n\
+             \x20 produce-parts <manifest> --asset-root <dir> --range <range.json> --output-dir <new-dir>\n\
+             \x20 finalize-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
+             \x20 compose-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
+             \x20 build <manifest> --input-root <dir> --asset-root <dir> --output-dir <new-dir>"
+        );
+        return Ok(());
+    }
     if let [
         _,
         command,
