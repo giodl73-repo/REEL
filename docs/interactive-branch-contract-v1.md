@@ -47,7 +47,8 @@ incompatible edition bindings are validation failures.
 An authored repeat declares an edge traversal limit. Validation removes those
 bounded repeat edges and checks the remaining graph for cycles. It also checks
 that each reachable choice still has an exit after its repeat budget is
-exhausted, and that each reachable path can terminate. An exhausted repeat stays
+exhausted, and that each reachable path can terminate. A repeat edge returns to
+a node that is also reachable through the ordinary route. An exhausted repeat stays
 disabled until a new session. Failure to load, check or play a selection
 stops that session visibly, preserving the failed node and source reference for
 local diagnosis.
@@ -92,3 +93,8 @@ order and endings, Platform/Audience to keyboard and exact text access, Sound
 and Vocal Adaptation to edition clocks and upstream text, and Rights/Provenance
 to exact artifact authority and local custody. Human listening, usage and
 release approval require their own evidence.
+
+The local `interactive_branch_contract` test fixture exercises the graph
+shape, including missing targets, unreachable nodes, ambiguous choices,
+cycles and language coverage. Its edition IDs are test labels. Checked
+edition identity and access spans still require the final M13 admission tests.
