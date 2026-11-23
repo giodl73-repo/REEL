@@ -679,6 +679,9 @@ To exercise the two-minute lifetime with a live paused stream, invoke
 with `--ignored --exact` and the same station request. It starts and pauses
 the fixture, sends no further command, and checks for Stopped and clean exit.
 The pinned Dell development session passed this test in 120.39 seconds total.
+The CA-2890 synthetic session reached Stopped and exited without Quit in
+120.84 seconds with the pinned `f42b864` player. The current test starts its
+outer clock before launch and requires process exit within 122 seconds.
 The test's outer wall clock includes setup. For the independent cleanup gate,
 retain the expiry and process-exit timestamps from a synchronized clock.
 

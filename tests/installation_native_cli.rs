@@ -112,7 +112,14 @@ fn actual_station_expiry_closes_paused_playback_without_quit() {
         ],
         125,
     );
-    assert!(elapsed.elapsed() >= std::time::Duration::from_secs(119));
+    let elapsed = elapsed.elapsed();
+    // The outer clock starts before launch and stops after process reaping.
+    // Its upper bound includes the complete session and cleanup interval.
+    assert!(
+        (std::time::Duration::from_secs(119)..=std::time::Duration::from_secs(122))
+            .contains(&elapsed),
+        "lifetime run did not stop and exit within the expected window: {elapsed:?}"
+    );
 }
 
 #[cfg(windows)]
