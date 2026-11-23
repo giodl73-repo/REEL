@@ -25,7 +25,15 @@ struct Request {
 struct Bundle {
     path: PathBuf,
     sha256: String,
-    waves: BTreeMap<String, Media>,
+    waves: BTreeMap<String, WaveBinding>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WaveBinding {
+    media: Media,
+    compiled_recipe_sha256: String,
+    execution_recipe_sha256: String,
 }
 
 // Only the fields needed for this review projection are interpreted.
@@ -39,6 +47,8 @@ struct Access {
 struct Edition {
     edition_id: String,
     language: String,
+    compiled_recipe_sha256: String,
+    execution_recipe_sha256: String,
     wave: Wave,
     duration_samples: u64,
     entries: Vec<Entry>,
@@ -113,9 +123,19 @@ fn project(request: Request) -> Result<Board> {
         }
         let mut remaining = bundle.waves;
         for edition in access.editions {
-            let Some(wave) = remaining.remove(&edition.edition_id) else {
+            let Some(binding) = remaining.remove(&edition.edition_id) else {
                 continue;
             };
+            if !exact_recipe(
+                &binding.compiled_recipe_sha256,
+                &edition.compiled_recipe_sha256,
+            ) || !exact_recipe(
+                &binding.execution_recipe_sha256,
+                &edition.execution_recipe_sha256,
+            ) {
+                return Err(error(ErrorKind::Conflict, "spoken-board-recipe"));
+            }
+            let wave = binding.media;
             if wave.artifact.sha256 != edition.wave.sha256
                 || wave.artifact.bytes != edition.wave.bytes
                 || wave.artifact.media_type != "audio/wav"
@@ -198,6 +218,14 @@ fn project(request: Request) -> Result<Board> {
     Ok(board)
 }
 
+fn exact_recipe(expected: &str, observed: &str) -> bool {
+    expected.len() == 64
+        && expected
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        && expected == observed
+}
+
 pub fn export(path: &Path, pin: &str, output: &Path) -> Result<Artifact> {
     let raw = pinned(path, pin)?;
     let request = serde_json::from_slice(&raw)
@@ -241,6 +269,8 @@ mod tests {
             let raw = serde_json::to_vec(&json!({
                 "schema":"reel.spoken-access.v1","sample_rate":48000,"editions":[{
                     "edition_id":edition,"language":language,
+                    "compiled_recipe_sha256":"1".repeat(64),
+                    "execution_recipe_sha256":"2".repeat(64),
                     "wave":{"sha256":hash,"bytes":288044},"duration_samples":48000,
                     "entries":[{"text":format!("Transcript {language}")}],
                     "chapters":[{"module_id":"opening","start_sample":0,"end_sample":24000},
@@ -250,9 +280,11 @@ mod tests {
             .unwrap();
             std::fs::write(&path, &raw).unwrap();
             json!({"path":path,"sha256":reel_workflow::digest(&raw),
-                "waves":{(edition):{"path":temp.path().join(format!("{edition}.wav")),
-                    "artifact":{"logical_id":format!("audio/{edition}"),"sha256":hash,
-                        "bytes":288044,"media_type":"audio/wav"}}}})
+                "waves":{(edition):{"compiled_recipe_sha256":"1".repeat(64),
+                    "execution_recipe_sha256":"2".repeat(64),
+                    "media":{"path":temp.path().join(format!("{edition}.wav")),
+                        "artifact":{"logical_id":format!("audio/{edition}"),"sha256":hash,
+                            "bytes":288044,"media_type":"audio/wav"}}}}})
         };
         let mut request = json!({"schema":"reel.workflow-spoken-board.v1",
             "project":"fixture","work_id":"programme","title":"Bilingual programme",
@@ -276,7 +308,16 @@ mod tests {
         assert_eq!(board.cues[1].language, "es");
         assert_eq!(board.cues[1].text, "Transcript es");
         assert_eq!(board.cues[1].markers[1].sample, 24000);
-        request["bundles"][1]["waves"]["spanish"]["artifact"]["sha256"] = "d".repeat(64).into();
+        let mut stale = request.clone();
+        stale["bundles"][1]["waves"]["spanish"]["compiled_recipe_sha256"] = "9".repeat(64).into();
+        assert_eq!(
+            invoke(&stale, &temp.path().join("stale.json"))
+                .unwrap_err()
+                .code,
+            "spoken-board-recipe"
+        );
+        request["bundles"][1]["waves"]["spanish"]["media"]["artifact"]["sha256"] =
+            "d".repeat(64).into();
         let rejected = temp.path().join("rejected.json");
         assert_eq!(
             invoke(&request, &rejected).unwrap_err().kind,
