@@ -60,6 +60,72 @@ fn returned(packet: &Packet, mode: Mode) -> ReturnedResult {
 }
 
 #[test]
+fn speech_handoff_refuses_a_different_captured_recording() {
+    use serde_json::json;
+    let artifact = |id: &str, media: &str, raw: &[u8]| Artifact {
+        logical_id: id.into(),
+        sha256: digest(raw),
+        bytes: raw.len() as u64,
+        media_type: media.into(),
+    };
+    let request = artifact("speech/request", "application/json", b"{\"request\":1}");
+    let authorization = artifact(
+        "speech/authorization",
+        "application/json",
+        b"{\"authorization\":1}",
+    );
+    let wave = artifact("speech/wave", "audio/wav", b"synthetic recording");
+    let alignment = artifact("speech/alignment", "application/json", b"{}");
+    let pin = |a: &Artifact| json!({"sha256":a.sha256,"bytes":a.bytes});
+    let raw = serde_json::to_vec(&json!({
+        "schema":"reel.speech-candidate-receipt.v1",
+        "request":pin(&request),"authorization":pin(&authorization),
+        "wave":pin(&wave),"alignment":pin(&alignment),"timing_qualified":true,
+        "production_selection":false,"human_approval":false,"public_release":false
+    }))
+    .unwrap();
+    let outputs = BTreeMap::from([
+        ("recording".into(), wave),
+        ("alignment".into(), alignment),
+        (
+            "receipt".into(),
+            artifact("speech/receipt", "application/json", &raw),
+        ),
+    ]);
+    let mut plan = plan();
+    let task = &mut plan.tasks[0];
+    task.operation = Operation::SpeechCandidate;
+    task.inputs = vec![request, authorization];
+    task.outputs = outputs
+        .iter()
+        .map(|(name, a): (&String, &Artifact)| {
+            (
+                name.clone(),
+                OutputContract {
+                    media_type: a.media_type.clone(),
+                    max_bytes: 1024,
+                    required: true,
+                },
+            )
+        })
+        .collect();
+    let packet = make_packet(&plan, "note", BTreeMap::new()).unwrap();
+    let mut result = returned(&packet, Mode::Handoff);
+    result.artifacts = outputs;
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("receipt.json");
+    std::fs::write(&path, raw).unwrap();
+    assert!(speech_handoff::check(&packet, &result, &path).unwrap());
+    result.artifacts.get_mut("recording").unwrap().sha256 = digest(b"another take");
+    assert_eq!(
+        speech_handoff::check(&packet, &result, &path)
+            .unwrap_err()
+            .code,
+        "speech-handoff-receipt-binding"
+    );
+}
+
+#[test]
 fn streamed_outputs_handle_short_reads_and_interruption_with_bounded_buffers() {
     use std::io::Read;
     struct ShortReads {
