@@ -132,6 +132,12 @@ impl ParentSession {
         }
         Some(event)
     }
+    pub(super) fn local_event(&mut self) -> Option<ParentEvent> {
+        if matches!(self.events.front(), Some(ParentEvent::Display(_))) {
+            return None;
+        }
+        self.event()
+    }
     pub fn observed(&self) -> Option<Snapshot> {
         self.observed
     }

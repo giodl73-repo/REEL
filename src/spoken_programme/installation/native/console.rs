@@ -1,8 +1,8 @@
 //! Explicit blocking console primitives. Use only on owned I/O threads, never
 //! the audio callback or <=20 ms controller. No endpoint or playback is opened.
 use super::{
-    input::InputSender,
-    parent::{DisplayItem, DisplayTicket, LayoutObservation},
+    input::{InputReceiver, InputSender},
+    parent::{DisplayItem, DisplayTicket, LayoutObservation, ParentEvent, ParentSession},
     protocol::{Output, Preparation},
     *,
 };
@@ -122,7 +122,7 @@ impl ConsoleSurface {
     /// this reader off the controller before releasing console ownership.
     pub fn start_reader(&mut self, mut input: InputSender) -> Result<ConsoleReader> {
         ensure!(
-            self.expected.is_some() && !self.reader_started && self.offset == self.length,
+            !self.reader_started && self.offset == self.length,
             "installation console reader unavailable"
         );
         let mut surface = Self {
@@ -147,6 +147,12 @@ impl ConsoleSurface {
                         break;
                     }
                     if result? == ConsoleRead::Eof {
+                        // Cooked input can return zero before Windows schedules
+                        // the Ctrl+C handler. Keep the read receipt and allow
+                        // the handler to publish its own receipt first.
+                        if INTERRUPT_REGISTERED.load(Ordering::Acquire) {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
                         return Ok(Some(surface.received_counter()));
                     }
                 }
@@ -485,6 +491,58 @@ impl ConsoleSurface {
 
 type Rendered = (DisplayTicket, Option<LayoutObservation>);
 
+/// Owns the console side of a foreground session. Opening and shutdown run
+/// outside the controller loop. The process owner retains worker reaping.
+pub struct ConsoleForeground {
+    reader: ConsoleReader,
+    renderer: ConsoleRenderer,
+    interrupt: ConsoleInterrupt,
+    input: InputReceiver,
+    parent: ParentSession,
+}
+impl ConsoleForeground {
+    pub fn open(parent: ParentSession) -> Result<Self> {
+        let interrupt = ConsoleInterrupt::install()?;
+        let mut surface = ConsoleSurface::open()?;
+        let (sender, input) = parent.command_pool().channel();
+        let reader = surface.start_reader(sender)?;
+        let renderer = ConsoleRenderer::start(surface)?;
+        Ok(Self {
+            reader,
+            renderer,
+            interrupt,
+            input,
+            parent,
+        })
+    }
+    pub fn tick(&mut self) -> Result<()> {
+        self.parent.poll_console_interrupt(&self.interrupt)?;
+        if !self.parent.quit_requested() {
+            self.parent
+                .poll_console_input(&mut self.input, &mut self.reader)?;
+        }
+        self.parent.tick_with_renderer(&mut self.renderer)
+    }
+    pub fn quit_requested(&self) -> bool {
+        self.parent.quit_requested()
+    }
+    pub fn final_displayed(&self) -> bool {
+        self.parent.final_displayed()
+    }
+    pub fn local_event(&mut self) -> Option<ParentEvent> {
+        self.parent.local_event()
+    }
+    /// Join actual console I/O before releasing the handler and channel.
+    pub fn shutdown(mut self) -> Result<()> {
+        self.input.close();
+        let reader = self.reader.shutdown();
+        let renderer = self.renderer.shutdown();
+        let interrupt = self.interrupt.shutdown();
+        let channel = self.parent.shutdown_channel();
+        reader.and(renderer).and(interrupt).and(channel)
+    }
+}
+
 /// A single in-flight display ticket keeps output ordered and bounded.
 pub struct ConsoleRenderer {
     requests: Option<std::sync::mpsc::SyncSender<DisplayItem>>,
@@ -801,35 +859,48 @@ mod tests {
             assert!(received_counter >= last_receipt && received_counter > 0);
             last_receipt = received_counter;
         }
-        let mut interrupted = super::super::parent::tests::fixture();
-        let mut interrupt = ConsoleInterrupt::install().unwrap();
+        drop(surface);
+        let fixture = super::super::parent::tests::fixture();
+        let mut peer = fixture.peer;
+        let mut owner = ConsoleForeground::open(fixture.parent).unwrap();
         assert!(ConsoleInterrupt::install().is_err());
         std::fs::write(
             "console-interrupt-ready.marker",
-            b"Ctrl+C handler installed",
+            b"foreground owner running",
         )
         .unwrap();
         let deadline = Instant::now() + Duration::from_secs(3);
-        while !interrupted.parent.quit_requested() {
-            interrupted
-                .parent
-                .poll_console_interrupt(&interrupt)
-                .unwrap();
+        while !owner.quit_requested() {
+            owner.tick().unwrap();
             assert!(Instant::now() < deadline, "Ctrl+C deadline");
             std::thread::sleep(Duration::from_millis(2));
         }
-        let packet = super::super::parent::tests::receive(&mut interrupted.peer);
+        let packet = super::super::parent::tests::receive(&mut peer);
         assert!(matches!(
             super::super::protocol::Input::parse(&packet).unwrap(),
             super::super::protocol::Input::Control { id: 1, command: Command::Quit, received_counter }
-                if Some(received_counter) == interrupt.receipt()
+                if Some(received_counter) == owner.interrupt.receipt()
         ));
-        interrupted
-            .parent
-            .poll_console_interrupt(&interrupt)
-            .unwrap();
-        assert_eq!(interrupted.parent.outstanding(), 1);
-        interrupt.shutdown().unwrap();
+        let mut at = 0;
+        unsafe {
+            QueryPerformanceCounter(&mut at).unwrap();
+        }
+        let ended = Output::PreparationEnded {
+            phase: Preparation::Stopped,
+            observed_counter: at,
+        };
+        peer.send(0, &ended.bytes().unwrap()).unwrap();
+        while !owner.final_displayed() {
+            owner.tick().unwrap();
+            assert!(
+                Instant::now() < deadline,
+                "foreground final display deadline"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(peer.receive().is_none());
+        owner.shutdown().unwrap();
+        let surface = ConsoleSurface::open().unwrap();
         let mut renderer = ConsoleRenderer::start(surface).unwrap();
         let display = || DisplayItem {
             ticket: DisplayTicket::fixture(),
