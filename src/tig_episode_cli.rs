@@ -345,8 +345,9 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
         source: key(&p.source_id)?,
         owner: key(&p.owner)?,
     };
-    let mut journal = SourceJournal::open(&p.journal_root, &p.journal_minimum)?;
-    if let Some(current) = journal.source(&identity.source)? {
+    let mut journal =
+        wait.run_source(|| SourceJournal::open(&p.journal_root, &p.journal_minimum))?;
+    if let Some(current) = wait.run_source(|| journal.source(&identity.source))? {
         if current.owner != identity.owner
             || current.revision != p.expected_revision
             || current.pending.is_some()
@@ -466,7 +467,8 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     // Explicit request validation precedes source-journal adoption.
     let _fence = jobs::fence(&coordination, &journal, &identity)?;
     source_reuse::check_retired(&p, reused_children.as_ref(), &mut journal)?;
-    let prepared = journal.apply(
+    let prepared = wait.apply_source(
+        &mut journal,
         phase(&p.source_id, &p.operation, "prepare")?,
         Command::Prepare {
             source: identity.source.clone(),
@@ -475,7 +477,8 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
             selection: root.resources.selection().clone(),
         },
     )?;
-    let adopted = journal.apply(
+    let adopted = wait.apply_source(
+        &mut journal,
         phase(&p.source_id, &p.operation, "adopt")?,
         Command::Adopt {
             source: identity.source.clone(),

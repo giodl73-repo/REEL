@@ -13,6 +13,10 @@ use windows::{
     core::PCWSTR,
 };
 
+// CPAL 0.18.2 enumerates 16 standard WASAPI render rates, can append
+// the mix rate, and emits at most seven sample formats for each rate.
+const MAX_RENDER_CONFIGURATIONS: usize = (16 + 1) * 7;
+
 pub(super) fn os_build() -> Result<u32> {
     let mut system = SYSTEM_INFO::default();
     unsafe { GetNativeSystemInfo(&mut system) };
@@ -134,9 +138,12 @@ pub(super) fn observe(id_text: &str) -> Result<(cpal::Device, EndpointObservatio
     );
     let mut configurations = Vec::new();
     let mut supports = false;
-    for config in device.supported_output_configs()?.take(65) {
+    for config in device
+        .supported_output_configs()?
+        .take(MAX_RENDER_CONFIGURATIONS + 1)
+    {
         ensure!(
-            configurations.len() < 64,
+            configurations.len() < MAX_RENDER_CONFIGURATIONS,
             "installation endpoint format budget"
         );
         let (min, max) = match config.buffer_size() {

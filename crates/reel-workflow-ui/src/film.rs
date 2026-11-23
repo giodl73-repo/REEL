@@ -183,6 +183,7 @@ pub fn project(request: &Request, reader: &mut impl film_inspect::Reader) -> Res
                         title: event.semantic_id.clone(),
                         versions: vec![],
                         spans: vec![],
+                        review_spans: vec![],
                         task: None,
                     });
                     board.units.len() - 1
@@ -284,6 +285,17 @@ pub fn export(
     repository: &Path,
     output: &Path,
 ) -> Result<Artifact> {
+    export_with(request_path, pin, output, |request| {
+        project(request, &mut film_inspect::GitReader { repository })
+    })
+}
+
+pub fn export_with(
+    request_path: &Path,
+    pin: &str,
+    output: &Path,
+    project_request: impl FnOnce(&Request) -> Result<Board>,
+) -> Result<Artifact> {
     let file = std::fs::File::open(request_path)
         .map_err(|_| error(ErrorKind::Missing, "film-board-request-file"))?;
     let mut raw = Vec::new();
@@ -298,7 +310,7 @@ pub fn export(
     }
     let request: Request = serde_json::from_slice(&raw)
         .map_err(|_| error(ErrorKind::Invalid, "film-board-request-json"))?;
-    let mut board = project(&request, &mut film_inspect::GitReader { repository })?;
+    let mut board = project_request(&request)?;
     board.projection_request = Some(Artifact {
         logical_id: "workflow/film-board-request".into(),
         sha256: pin.into(),

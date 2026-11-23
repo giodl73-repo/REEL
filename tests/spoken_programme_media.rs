@@ -89,12 +89,15 @@ impl Drop for Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with_temp(tempfile::tempdir().unwrap())
+    }
+    fn with_temp(temp: tempfile::TempDir) -> Self {
         let started = std::time::Instant::now();
         let document =
             serde_json::from_str(include_str!("fixtures/spoken-programme/four-editions.json"))
                 .unwrap();
         let mut f = Self {
-            temp: tempfile::tempdir().unwrap(),
+            temp,
             document,
             signals: vec![],
             started,

@@ -50,6 +50,22 @@ fn clock_identity_and_candidate_target_are_checked_before_media_reads() {
         );
     }
 }
+#[test]
+fn scene_review_clocks_can_differ_by_language_and_require_consistent_rates() {
+    let (_temp, _root, mut value) = board();
+    value["units"][0]["review_spans"] = json!([
+        {"language":"es","sample_rate":44100,"start_sample":0,"end_sample":44100},
+        {"language":"en","sample_rate":48000,"start_sample":0,"end_sample":72000}
+    ]);
+    let parsed: reel_workflow_ui::Board = serde_json::from_value(value.clone()).unwrap();
+    parsed.check().unwrap();
+    value["units"][1]["review_spans"] = json!([
+        {"language":"es","sample_rate":48000,"start_sample":48000,"end_sample":96000}
+    ]);
+    let parsed: reel_workflow_ui::Board = serde_json::from_value(value).unwrap();
+    assert_eq!(parsed.check().unwrap_err().code, "board-review-span-clock");
+}
+
 #[cfg(windows)]
 #[test]
 fn observed_candidate_is_live_but_selection_and_source_profile_remain_exact() {
