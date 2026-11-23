@@ -708,6 +708,15 @@ exit within two seconds before resuming output draining. The fixture opens no
 audio capture. A pass establishes cleanup while the host is withholding reads.
 Whether a particular console write blocked still requires direct observation.
 
+In the follow-up station run, neither pinned Dell runtime reached the first
+console marker, and the silent WASAPI fixture could not open the Dell stream.
+The pinned source independently passed `check-session`. Windows enumerated
+the Dell endpoint only as a non-present device. The same silent fixture on the
+enrolled CA-2890 opened successfully and reported a 480-frame period, five
+callbacks, a largest observed callback of 1,056 frames and zero submitted
+source frames. The Dell attempts establish absence before playback. Live
+disconnect and terminal cleanup during playback still require a station run.
+
 The opt-in test `capture::record_isolated_station_loopback` records the pinned
 render endpoint's WASAPI loopback. On an isolated synthetic test output, set
 `REEL_INSTALLATION_CAPTURE_SCOPE=isolated-synthetic-render` and
