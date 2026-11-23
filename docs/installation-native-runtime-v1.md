@@ -645,8 +645,9 @@ opens the selected request in a pseudoconsole and follows the visible Start,
 Pause, Resume, loop, completion, Restart, Stop and Quit sequence. Set
 `REEL_INSTALLATION_STATION_SESSION` to the absolute path of the enrolled
 request before invoking the test by its exact name with `--ignored --exact`.
-Keep its player image outside the build directory so recompiling the test
-cannot replace the pinned executable. This test checks the visible control
+Keep its player image and exact build lockfile in retained paths outside the
+build directory and working checkout. Recompiling can replace the executable,
+and updating the checkout can replace the lockfile. This test checks the visible control
 sequence and process exit. M12c also requires independent capture and numeric
 timing evidence.
 
@@ -672,6 +673,194 @@ and ≤20 ms source-span error. Invoke
 This run sends only Start and Quit so the two passes and loop interval are
 continuous. Start the separate recorder before invoking the test and retain its
 state and recording after the test exits.
+
+To exercise the two-minute lifetime with a live paused stream, invoke
+`actual_station_expiry_closes_paused_playback_without_quit` by exact name
+with `--ignored --exact` and the same station request. It starts and pauses
+the fixture, sends no further command, and checks for Stopped and clean exit.
+The pinned Dell development session passed this test in 120.39 seconds total.
+The CA-2890 synthetic session reached Stopped and exited without Quit in
+120.84 seconds with the pinned `f42b864` player. The current test starts its
+outer clock before launch and requires process exit within 122 seconds.
+The test's outer wall clock includes setup. For the independent cleanup gate,
+retain the expiry and process-exit timestamps from a synchronized clock.
+
+`actual_station_closes_live_playback_on_interrupt_and_eof` sends Ctrl+C
+and cooked Ctrl+Z/Enter in separate sessions while the stream is Playing.
+The pinned Dell runs confirmed complete process exit within 402.4 ms
+and 226.8 ms respectively, measured from before sending the input. These
+upper bounds include input delivery and process observation. They do not
+measure how long source audio remained at the physical output.
+
+The final Stopped row retains the numbered Quit acknowledgement when ConPTY
+coalesces the display updates. Three pinned Dell runs observed the numbered
+reply within 22.3–31.2 ms and confirmed process exit within 180.3–619.5 ms
+of sending Quit. Earlier runs showed only the unnumbered final Stopped row.
+
+The opt-in `actual_station_refuses_changed_endpoint_configuration` test
+changes only the configuration fingerprint in a temporary request. On the
+same Dell output whose valid request completed playback, the changed request
+displayed Fault and exited with status 2 after Quit. No Start was sent and
+the system's endpoint settings were untouched. Actual disconnect remains a
+separate station check.
+
+For the physical disconnect check, use an enrolled removable endpoint and a
+checked synthetic session. Start playback and confirm the Playing state before
+removing the endpoint. Keep the session running until the fault is visible or
+the observation deadline passes. Record the endpoint-removal observation and
+the visible fault in the same monotonic clock, along with the worker and
+stream closure observations. Check that no other endpoint starts playing, then
+Quit and confirm process exit. Record whether endpoint removal was observed
+by the OS or timestamped by the operator, since those observations have
+different precision. An endpoint absent at startup covers admission only.
+The opt-in `actual_station_displays_fault_after_operator_disconnect` fixture
+prints the operator cue after observing Playing and writes the private console
+trace. Run it with `--ignored --exact --nocapture` and a fresh absolute trace
+path. The physical removal observation and stream closure need independent
+evidence alongside that trace.
+With the CA-2890 deliberately left connected, the fixture observed Ready and
+Playing but no Fault. The containing job terminated on its deadline and the
+fixture failed as expected. This run checks the fixture's failure behavior.
+
+The opt-in test `actual_station_exits_while_terminal_output_is_undrained`
+starts the pinned synthetic playback under ConPTY, stops reading terminal output
+after observing `Playing p1`, and sends EOF. It checks for successful process
+exit within two seconds before resuming output draining. The fixture opens no
+audio capture. A pass establishes cleanup while the host is withholding reads.
+Whether a particular console write blocked still requires direct observation.
+
+In the follow-up station run, neither pinned Dell runtime reached the first
+console marker, and the silent WASAPI fixture could not open the Dell stream.
+The pinned source independently passed `check-session`. Windows enumerated
+the Dell endpoint only as a non-present device. The same silent fixture on the
+enrolled CA-2890 opened successfully and reported a 480-frame period, five
+callbacks, a largest observed callback of 1,056 frames and zero submitted
+source frames. A dedicated check with the unchanged Dell request observed
+Fault before Start, then confirmed exit status 2 within 175.73 ms of Quit.
+The earlier playback harness waited for Ready and therefore missed that
+startup outcome. These checks establish absence before playback.
+
+A new private session retained the exact `f42b864` runtime and checked source
+and selected the previously enrolled CA-2890 endpoint. After `check-session`
+passed, the undrained-output test reached live playback and observed successful
+process exit 248.96 ms after EOF. A separate two-pass run on that same pin
+submitted 288,000 source frames across 625 of 630 callbacks, with a reported
+480-frame period and a 1,056-frame largest observed callback. A control run on
+that pin measured 14.37 ms to the Start acknowledgement, 61.07 ms to visible
+Playing and 28.27 ms to the Stop acknowledgement. A separate Restart run
+measured 12.59 ms to acknowledgement and 475.75 ms to visible pass-one Playing.
+These are stream, console
+and process measurements from synthetic playback. Live disconnect and isolated
+render-mix measurement remain open.
+
+The opt-in test `capture::record_isolated_station_loopback` records the pinned
+render endpoint's WASAPI loopback. On an isolated synthetic test output, set
+`REEL_INSTALLATION_CAPTURE_SCOPE=isolated-synthetic-render` and
+`REEL_INSTALLATION_CAPTURE_OUTPUT` to a new absolute `.f32le` path, in
+addition to the station request variable. Invoke the recorder by exact name
+with `--ignored --exact --nocapture`. After it reports that capture started,
+run the uninterrupted playback test in a separate process. The recorder
+saves up to 45 seconds of stereo samples and a packet clock sidecar. The
+observation point is the Windows render mix before physical output.
+
+The contained `actual_station_observes_native_period_and_silent_callbacks`
+test opens the pinned render stream without attaching source PCM. Four Dell
+runs requested a 480-frame buffer, reported a 480-frame native period, and
+observed a largest callback of 1,056 frames among the first five callbacks.
+Each run submitted zero source frames and closed the stream. The callback
+size remained below the 2,048-frame limit. These observations cover silent
+startup. The separate contained
+`actual_station_observes_callbacks_through_two_native_passes` test attaches
+the transport after guarded original checks. The Dell run reported a
+480-frame period and a largest observed callback of 1,056 frames across
+630 callbacks. The source was attached for 625 callbacks, and both passes
+submitted exactly 288,000 source frames. These are native submission
+observations. Render-mix capture and physical timing remain separate.
+Keep the sidecar next to the PCM with the same basename. The analyzer binds
+the sidecar to the exact audio hash and length, checks packet coverage and
+timestamp continuity, then measures both source spans and the loop gap again
+against the WASAPI capture clock. Without the sidecar it reports sample
+positions only.
+
+Keep the evidence for each station measurement tied to the clock and
+observation point that produced it:
+
+| Gate | Evidence required |
+| --- | --- |
+| Loop interval and source-span error | The uninterrupted two-pass PCM, bound packet clock and marker analysis. WASAPI loopback measures the render mix. |
+| Start and Restart onset | Complete command receipt time and first source onset on the declared capture path. Use a synchronized clock and retain the observed marker offset. |
+| Command acknowledgement | Complete cooked-line receipt and actual visible acknowledgement timestamps. A test process sending a line only gives an earlier outer bound. |
+| Pause and Stop quiescence | Command receipt and the final captured source boundary, with any queued output accounted for. |
+| Disconnect and expiry | The fault or stopped transition, actual worker and stream closure, and elapsed time from the event that triggered cleanup. |
+
+Record human listening, operator usability and rights review separately from
+these measurements.
+
+For the opt-in station console tests, set `REEL_INSTALLATION_CONSOLE_TRACE`
+to a new absolute JSON path to retain command send, visible status and
+process-exit timestamps. The private trace includes the session-request hash.
+Its Windows QPC nanosecond timestamps share the WASAPI packet clock domain.
+The combined Ctrl+C and EOF test replaces the path's extension with
+`.interrupt.json` and `.eof.json` so each run retains its own trace.
+The command send timestamp precedes the application's cooked-line receipt,
+and the console observation comes after rendering. Use these as outer bounds
+when comparing them with capture.
+Pass the trace path to the retained-capture analyzer through the same
+variable. It verifies that the trace and recording came from the same
+session request. The Start-to-first-marker check gives a conservative
+onset bound at the render mix because the marker follows the source's
+initial silence. It allows up to two seconds and needs both clock files.
+For Restart, use `actual_station_restart_leaves_a_fresh_onset_observation_window`
+in a separate capture. The fixture holds the original and restarted playback
+long enough for each head marker, then quits before the tail marker. The
+analyzer requires exactly two head markers, one before Restart and one after.
+It applies the 35-second aggregate Restart onset limit, which includes the
+required fresh source check. The two-second onset limit above applies to Start.
+The CA-2890 playback-only rehearsal reached visible Playing after Restart in
+507.99 ms. The render-mix measurement still needs an isolated recording.
+For a dedicated Pause or Stop capture, the same analyzer requires the first
+source marker before the command and packet coverage through the next 250 ms.
+It measures from before sending the command to the first frame of sustained
+digital silence.
+Missing packets or a recording that ends before that window cannot establish
+quiescence. This is a render-mix measurement.
+Use `actual_station_pause_leaves_a_quiescence_observation_window` and
+`actual_station_stop_leaves_a_quiescence_observation_window` in separate runs
+with the recorder and console trace enabled. Each waits 300 ms after visible
+Playing before sending its command, and another 350 ms after the numbered
+reply before sending Quit. The Dell playback-only Stop test verified both
+delays in the trace. A CA-2890 playback-only Pause run measured 302.01 ms
+before Pause, 24.68 ms to the visible acknowledgement and 351.46 ms from the
+reply to Quit. A capture still has to prove packet coverage.
+
+`actual_station_status_acknowledgement_meets_outer_deadline` times from
+before typing Status into the pseudoconsole to the reader observing its
+numbered Ready acknowledgement. This bounds the application's receipt-to-display
+time from above. Three Dell runs measured 12.9–14.4 ms after eliminating a
+duplicate Ready report that could overwrite the acknowledgement. These
+measurements cover Status while Ready, with no stream open.
+
+The live Pause/Resume test uses the same outer clock and reads the numbered
+replies while the stream is open. The pinned Dell player measured 29.2 ms for
+Pause and 30.7 ms for Resume in a successful run. A diagnostic build measured
+30.8 ms and 30.5 ms. Earlier runs on the same candidate were inconclusive:
+one exited before the numbered Pause reply and two timed out waiting for Ready.
+The successful timings establish individual observations while station
+repeatability remains open.
+
+`actual_station_start_and_stop_acknowledgements_meet_outer_deadline`
+measured 20.3 ms for the numbered Start reply and 34.9 ms for the numbered
+Stop reply on the pinned Dell session. Start's numbered reply records
+Starting. Stop's reply records Stopped. Physical onset and quiescence still
+require independently synchronized capture.
+On a repeat run the console reported Playing 101.0 ms after Start. The
+numbered Start and Stop replies took 14.2 ms and 25.2 ms on that run.
+
+`actual_station_restart_acknowledges_and_returns_to_pass_one` exercises a
+fresh check and native reopen after Stop. On the pinned Dell session,
+Restart's numbered acknowledgement took 15.0 ms. The console reported
+Playing on pass one 923.7 ms after sending Restart. The latter bounds the
+return to visible Playing. Physical onset still requires capture.
 
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
