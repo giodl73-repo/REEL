@@ -183,6 +183,7 @@ pub fn project(request: &Request, reader: &mut impl film_inspect::Reader) -> Res
                         title: event.semantic_id.clone(),
                         versions: vec![],
                         spans: vec![],
+                        review_spans: vec![],
                         task: None,
                     });
                     board.units.len() - 1

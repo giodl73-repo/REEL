@@ -55,6 +55,12 @@
     root.append(versionButtons(unit));
     const span=unit.spans.find(s=>s.language===state.language),cue=state.data.cues.find(c=>c.id===span?.cue_id&&c.language===state.language);
     if(cue){root.append(node("h3","","CUE · "+cue.id),node("p","transcript",cue.text),node("p","muted",`${name[0].toUpperCase()+name.slice(1)} starts at ${clock(span.start_sample/cue.sample_rate)} on this cue’s clock.`));}
+    const review=unit.review_spans?.find(s=>s.language===state.language);
+    if(review){
+      const start=clock(review.start_sample/review.sample_rate);
+      const end=clock(review.end_sample/review.sample_rate);
+      root.append(node("h3","","Scene review timing"),node("p","",`${start}–${end}`));
+    }
     const details=node("details");details.append(node("summary","","Source & lineage"));const list=node("dl");
     const approvals=(state.data.approvals||[]).filter(a=>a.subject.logical_id===version?.asset.logical_id);
     const recorded=version?.approval_reference || approvals.some(a=>exactSubject(a.subject,version?.asset));
