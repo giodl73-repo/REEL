@@ -187,6 +187,7 @@ mod tests {
     }
 
     fn legacy_bytes(path: &Path, filter: Option<&str>, format: &str) -> Vec<u8> {
+        let mut command = crate::episode_conform::command("ffmpeg");
         command.args(["-v", "error", "-nostdin", "-i"]).arg(path);
         if let Some(filter) = filter {
             command.args(["-vf", filter]);
@@ -214,6 +215,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         for codec in ["ffv1", "libx264"] {
             let path = temp.path().join(format!("{codec}.mkv"));
+            let mut command = crate::episode_conform::command("ffmpeg");
             command.args([
                 "-v",
                 "error",
