@@ -598,6 +598,22 @@ leaves the specified 12,000 transport frames (250 ms). The transport test
 checks the exact markers, silent seams and full sample sequence. Capture and
 clock comparison on an enrolled endpoint remain M12c evidence.
 
+To retain the synthetic originals on Windows, set
+`REEL_INSTALLATION_FIXTURE_PARENT` to an existing absolute directory and run:
+
+```powershell
+cargo test --locked --all-features --test spoken_programme_media installation::export_synthetic_station_originals -- --ignored --exact --nocapture
+```
+
+The test prints the new fixture directory. Its `original.json` contains the
+exact `original` object for a private session request, including absolute roots
+and the retained producer image. Keep the fixture at those paths. Use
+`en-technical` and two passes for the marker sequence above. The station
+request also requires the separately pinned player build and the explicitly
+enrolled endpoint. The export runs the original checker and prepares the
+transport without opening a device. With the environment variable unset, the
+test uses a temporary directory and removes it when finished.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 

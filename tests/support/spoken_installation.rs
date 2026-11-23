@@ -19,7 +19,9 @@ struct InstallationFixture {
 }
 impl InstallationFixture {
     fn new(quiet: bool) -> Self {
-        let mut f = Fixture::new();
+        Self::from_fixture(Fixture::new(), quiet)
+    }
+    fn from_fixture(mut f: Fixture, quiet: bool) -> Self {
         f.document.modules.truncate(1);
         f.document.performances = vec![
             f.document.performances[0].clone(),
@@ -145,48 +147,59 @@ fn selection() -> api::Selection {
 }
 
 #[cfg(all(windows, feature = "installation-native"))]
-fn native_request(f: &InstallationFixture) -> api::native::SessionRequest {
-    use api::native::{EndpointBinding, OriginalProgramme, PlaybackBuild, SessionRequest};
+fn fixture_file(root: &std::path::Path, name: &str, raw: &[u8]) -> reel::scene_delivery::FileRef {
     use reel::scene_delivery::FileRef;
-    let put = |name: &str, raw: &[u8]| {
-        let path = f.root.join(name);
-        fs::write(&path, raw).unwrap();
-        FileRef {
-            path,
-            sha256: hash(raw),
-            bytes: raw.len() as u64,
-        }
-    };
+    let path = root.join(name);
+    fs::write(&path, raw).unwrap();
+    FileRef {
+        path,
+        sha256: hash(raw),
+        bytes: raw.len() as u64,
+    }
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+fn native_original(f: &InstallationFixture) -> api::native::OriginalProgramme {
+    use api::native::OriginalProgramme;
+    use reel::scene_delivery::FileRef;
+    let put = |name, raw: &[u8]| fixture_file(&f.root, name, raw);
     // Provenance bytes need not be an executable on the playback OS. They are
     // retained/hashed, never run. This also proves no implicit current-player
     // identity can replace the original compiler/producer identity.
     let original_path = f.root.join("retained-original-runtime.data");
     fs::copy(std::env::current_exe().unwrap(), &original_path).unwrap();
+    OriginalProgramme {
+        declaration: put(
+            "invocation-declaration.json",
+            &serde_json::to_vec(&f.f.document).unwrap(),
+        ),
+        plan: put("invocation-plan.json", &f.plan),
+        receipt: put("invocation-receipt.json", &f.receipt),
+        processing: Some(put(
+            "invocation-processing.json",
+            &serde_json::to_vec(&f.policy).unwrap(),
+        )),
+        access_manifest: put("invocation-access.json", &f.access_manifest),
+        compiler_producer: FileRef {
+            path: original_path,
+            sha256: f.runtime.sha256.clone(),
+            bytes: f.runtime.bytes,
+        },
+        source_root: f.root.clone(),
+        candidate_root: f.candidate.clone(),
+        access_root: f.access.clone(),
+    }
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+fn native_request(f: &InstallationFixture) -> api::native::SessionRequest {
+    use api::native::{EndpointBinding, PlaybackBuild, SessionRequest};
+    let put = |name, raw: &[u8]| fixture_file(&f.root, name, raw);
     SessionRequest {
         schema: "reel.installation-session.v1".into(),
         edition_id: "en-technical".into(),
         passes: 2,
-        original: OriginalProgramme {
-            declaration: put(
-                "invocation-declaration.json",
-                &serde_json::to_vec(&f.f.document).unwrap(),
-            ),
-            plan: put("invocation-plan.json", &f.plan),
-            receipt: put("invocation-receipt.json", &f.receipt),
-            processing: Some(put(
-                "invocation-processing.json",
-                &serde_json::to_vec(&f.policy).unwrap(),
-            )),
-            access_manifest: put("invocation-access.json", &f.access_manifest),
-            compiler_producer: FileRef {
-                path: original_path,
-                sha256: f.runtime.sha256.clone(),
-                bytes: f.runtime.bytes,
-            },
-            source_root: f.root.clone(),
-            candidate_root: f.candidate.clone(),
-            access_root: f.access.clone(),
-        },
+        original: native_original(f),
         playback: PlaybackBuild {
             runtime: put(
                 "different-unexecuted-player.exe",
@@ -203,6 +216,40 @@ fn native_request(f: &InstallationFixture) -> api::native::SessionRequest {
             driver_version: "fictional metadata only".into(),
             configuration_sha256: "b".repeat(64),
         },
+    }
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+#[test]
+#[ignore = "explicit synthetic station fixture verification and optional retention"]
+fn export_synthetic_station_originals() {
+    let parent = std::env::var_os("REEL_INSTALLATION_FIXTURE_PARENT").map(PathBuf::from);
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("reel-installation-fixture-");
+    let temp = match &parent {
+        Some(parent) => {
+            assert!(parent.is_absolute() && parent.is_dir());
+            builder.tempdir_in(parent)
+        }
+        None => builder.tempdir(),
+    }
+    .unwrap();
+    let mut fixture = InstallationFixture::from_fixture(Fixture::with_temp(temp), true);
+    let original = native_original(&fixture);
+    let prepared = fixture.prepared("en", 2);
+    assert_eq!(prepared.summary().source_frames, 144_000);
+    prepared.transport(0, control()).unwrap();
+    fs::write(
+        fixture.root.join("original.json"),
+        serde_json::to_vec_pretty(&original).unwrap(),
+    )
+    .unwrap();
+    if parent.is_some() {
+        fixture.f.temp.disable_cleanup(true);
+        println!(
+            "Synthetic installation originals: {}",
+            fixture.root.display()
+        );
     }
 }
 
