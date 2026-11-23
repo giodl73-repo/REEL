@@ -36,8 +36,24 @@ impl InstallationFixture {
             p.scope.edition_ids.retain(|id| id.ends_with("-technical"));
         }
         if quiet {
+            // Stereo capture markers have independently known frame offsets.
+            // Keep the low-level PCM conversion oracle at frame 5000 intact.
             for signal in &mut f.signals {
+                let frames = signal.len() / 2;
                 signal[..4800 * 2].fill(0);
+                signal[(frames - 4800) * 2..].fill(0);
+                for (offset, left, right) in [
+                    (5040, 524_288, -262_144),
+                    (frames - 5280, -262_144, 524_288),
+                ] {
+                    for (index, frame) in signal[offset * 2..(offset + 240) * 2]
+                        .chunks_exact_mut(2)
+                        .enumerate()
+                    {
+                        let polarity = if index / 24 % 2 == 0 { 1 } else { -1 };
+                        frame.copy_from_slice(&[polarity * left, polarity * right]);
+                    }
+                }
             }
         }
         f.signals[0][5000 * 2..5000 * 2 + 5].copy_from_slice(&[-32768, -1, 0, 1, 32767]);
@@ -592,6 +608,28 @@ fn exact_checked_pcm_reaches_finite_transport_without_device() {
         .map(|n| n.to_bits())
         .collect();
     assert_eq!(bits, [0xbb800000, 0xb4000000, 0, 0x34000000, 0x3b7ffe00]);
+    // Independent offsets and amplitudes for the checked English edition.
+    for pass_start in [0, 156_000] {
+        assert!(
+            actual[pass_start * 2..(pass_start + 4800) * 2]
+                .iter()
+                .all(|v| *v == 0.0)
+        );
+        assert!(
+            actual[(pass_start + 139_200) * 2..(pass_start + 144_000) * 2]
+                .iter()
+                .all(|v| *v == 0.0)
+        );
+        for (offset, left, right) in [(5040, 0.0625, -0.03125), (138_720, -0.03125, 0.0625)] {
+            let start = (pass_start + offset) * 2;
+            let marker: Vec<_> = [left, right]
+                .repeat(24)
+                .into_iter()
+                .chain([-left, -right].repeat(24))
+                .collect();
+            assert_eq!(&actual[start..start + 480], marker.repeat(5));
+        }
+    }
     assert!(actual[expected.len()..].iter().all(|v| *v == 0.0));
     assert_eq!(t.snapshot().pass, 2);
 }

@@ -587,6 +587,17 @@ and device measurements remain M12c.
 
 ## Requirement/test map
 
+The checked engineering fixture in `tests/support/spoken_installation.rs`
+uses synthetic stereo PCM. Each edition has 4,800 zero frames at each end
+and two distinguishable 240-frame markers. The first marker begins at frame
+5,040, and the last begins 5,280 frames before the source ends. In the
+144,000-frame English edition, the last marker begins at frame 138,720.
+Across consecutive passes, the nominal last-to-first marker span is
+22,320 frames at 48 kHz (465 ms). Subtracting the two known source offsets
+leaves the specified 12,000 transport frames (250 ms). The transport test
+checks the exact markers, silent seams and full sample sequence. Capture and
+clock comparison on an enrolled endpoint remain M12c evidence.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 
