@@ -438,6 +438,7 @@ fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<V
         root,
         manifest_bytes,
         &file_sha(&std::env::current_exe()?)?,
+        true,
     )
 }
 
@@ -448,6 +449,7 @@ fn checked_source_proofs(
     root: &Path,
     manifest_bytes: &[u8],
     validator: &str,
+    require_complete: bool,
 ) -> Result<Vec<Proof>> {
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
     let profile = compact_profile(&manifest)?;
@@ -665,7 +667,7 @@ fn checked_source_proofs(
         }
         proofs.push(proof);
     }
-    if index != manifest.segments.len() {
+    if require_complete && index != manifest.segments.len() {
         bail!("incomplete programme part coverage");
     }
     Ok(proofs)
@@ -707,6 +709,45 @@ fn prepare_originals(proofs: &[Proof]) -> Result<Vec<PreparedPart>> {
                 .map(move |part| PreparedPart::original(p, part))
         })
         .collect()
+}
+
+/// Derive the exact exclusive next range from an explicitly declared,
+/// contiguous prefix. Uses the same checked evidence as part finalization.
+pub fn next_range(set_path: &Path, root: &Path, end: usize) -> Result<Range> {
+    let scope = checkpoint::snapshot_job_scope(root)?;
+    declared_control(set_path, root, &scope)?;
+    let set: PartSet = serde_json::from_slice(&checkpoint::bounded_bytes(set_path)?)?;
+    if set.manifest.bytes > 4 * 1024 * 1024 {
+        bail!("programme manifest exceeds range planning bound");
+    }
+    let manifest_path = scene_delivery::checked_file(root, &set.manifest)?;
+    let bytes = checkpoint::bounded_bytes(&manifest_path)?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)?;
+    let proofs = checked_source_proofs(
+        &set,
+        root,
+        &bytes,
+        &file_sha(&std::env::current_exe()?)?,
+        false,
+    )?;
+    let last = proofs.last().context("programme prefix missing")?;
+    let part = last.parts.last().context("programme prefix has no parts")?;
+    let range = Range {
+        start: last.range.end,
+        end,
+        start_frame: part
+            .native
+            .start_frame
+            .checked_add(part.native.frames)
+            .context("next range frame overflow")?,
+        start_sample: part
+            .native
+            .start_sample
+            .checked_add(part.native.samples)
+            .context("next range sample overflow")?,
+    };
+    range.validate(&manifest)?;
+    Ok(range)
 }
 
 /// Finalize only explicitly declared compact/PCM/proof/control inputs in a new
