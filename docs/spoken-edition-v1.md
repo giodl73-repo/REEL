@@ -98,3 +98,22 @@ Keep the full declaration and its alignment metadata available so the compiler
 can validate reuse scope, authorship and dependencies. Supply any processing
 policy for the included editions. The checker can write the transcript and
 chapter evidence with `--write-access`.
+
+For managed execution, a `tig-publication` build can describe the selected
+compile, produce and check steps as one asset-runner recipe.
+
+```sh
+reel spoken-edition-describe-job request.json --asset-root WORKSPACE
+```
+
+The request uses `reel.spoken-workflow-job.v1` and names the workspace-relative
+`declaration` and optional `processing` control. Supply `profile`,
+`budget_bytes`, `scratch_bytes`, and `expected_editions` mapping affected
+edition IDs to their current recipe hashes from the impact report.
+
+The exporter checks those hashes against a freshly compiled plan and emits the
+recipe on stdout. Register its exact inputs and installed worker with the
+project's existing runner before admission. On success the runner retains the
+compiled plan, production receipt, audio, transcripts and access manifest with
+chapter clocks. An unchanged edition still needs its prior checked output and
+exact custody evidence before reuse.
