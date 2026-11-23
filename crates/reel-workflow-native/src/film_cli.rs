@@ -347,6 +347,20 @@ pub enum Action {
     Close,
     RecoverClose,
 }
+
+fn retained_scene_evidence(
+    result: &reel_workflow::ReturnedResult,
+    acknowledgement: &crate::retention::Acknowledgement,
+) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "task_key": result.task_key,
+        "attempt_id": result.attempt_id,
+        "artifacts": result.artifacts,
+        "worker_receipt": result.worker_receipt,
+        "retained_acknowledgement": acknowledgement.artifact()?,
+    }))
+}
+
 pub fn execute(
     request: &Request,
     request_pin: &str,
@@ -390,9 +404,11 @@ pub fn execute(
                 )?
             };
             generated.ingest(&request.source, &request.admission)?;
-            generated.retain(&request.source, &request.admission, &request.retained)?;
+            let acknowledgement =
+                generated.retain(&request.source, &request.admission, &request.retained)?;
+            let evidence = retained_scene_evidence(generated.result(), &acknowledgement)?;
             Ok(
-                serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false}),
+                serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false,"retained_scene":evidence}),
             )
         }
         _ => {
@@ -408,8 +424,9 @@ pub fn execute(
                     &result,
                     &ack,
                 )?;
+                let evidence = retained_scene_evidence(&result, &ack)?;
                 return Ok(
-                    serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false}),
+                    serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false,"retained_scene":evidence}),
                 );
             }
             let close_action = match action {

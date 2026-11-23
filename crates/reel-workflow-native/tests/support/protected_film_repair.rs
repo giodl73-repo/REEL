@@ -584,10 +584,17 @@ fn retained_image_and_derived_controls_rebuild_original_film_with_owned_recovery
         &runtime,
         &request,
         &evidence.join("film-ticket.json"),
+        true,
     );
 }
 
-fn finish(evidence: &Path, runtime: &Tool, request: &film_cli::Request, ticket_path: &Path) {
+fn finish(
+    evidence: &Path,
+    runtime: &Tool,
+    request: &film_cli::Request,
+    ticket_path: &Path,
+    use_dispatch: bool,
+) {
     let baseline: serde_json::Value = load(evidence.join("baseline.json"));
     let locations = &baseline["locations"];
     let original: Packet = serde_json::from_value(locations["packet"].clone()).unwrap();
@@ -627,7 +634,40 @@ fn finish(evidence: &Path, runtime: &Tool, request: &film_cli::Request, ticket_p
             &args.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
         )
     };
-    let done = action("run-film", true);
+    let done = if use_dispatch {
+        let dispatch_path = evidence.join("film-dispatch.json");
+        let rebuild_request_pin = digest(&fs::read(evidence.join("rebuild-request.json")).unwrap());
+        let export_pin = digest(&fs::read(evidence.join("bound/export.json")).unwrap());
+        save(
+            &dispatch_path,
+            &serde_json::json!({
+                "schema": "reel.workflow-film-rebuild-dispatch.v1",
+                "export_directory": evidence.join("bound"),
+                "rebuild_request_sha256": rebuild_request_pin,
+                "export_sha256": export_pin,
+                "editions": { (request.packet.task.id.clone()): {
+                    "request": evidence.join("film-request.json"),
+                    "request_sha256": sha,
+                    "ticket": ticket_path,
+                    "ticket_sha256": ticket_sha,
+                    "action": "run",
+                }}
+            }),
+        );
+        let dispatch_pin = digest(&fs::read(&dispatch_path).unwrap());
+        let dispatched = call(
+            runtime,
+            &[
+                Path::new("dispatch-film-rebuild"),
+                &dispatch_path,
+                Path::new(&dispatch_pin),
+                Path::new("--apply"),
+            ],
+        );
+        dispatched["editions"][request.packet.task.id.as_str()].clone()
+    } else {
+        action("run-film", true)
+    };
     assert_eq!(done["task_completed"], true);
     assert_eq!(done["retained_owner_acknowledged"], true);
     eprintln!("Rendered and retained the protected film repair");
@@ -637,6 +677,16 @@ fn finish(evidence: &Path, runtime: &Tool, request: &film_cli::Request, ticket_p
         .join(ticket["root_name"].as_str().unwrap())
         .join("work");
     let result: ReturnedResult = load(workspace.join("workflow-result.json"));
+    if use_dispatch {
+        assert_eq!(
+            done["retained_scene"]["artifacts"],
+            serde_json::to_value(&result.artifacts).unwrap()
+        );
+        assert_eq!(
+            done["retained_scene"]["worker_receipt"],
+            serde_json::to_value(&result.worker_receipt).unwrap()
+        );
+    }
     for name in ["D-wav", "M-wav", "E-wav", "mix-wav"] {
         assert_eq!(
             result.artifacts[name].sha256,
@@ -812,5 +862,6 @@ fn continue_original_protected_repair_after_control_gate_refusal() {
         &runtime,
         &request,
         &recovery.join("film-ticket.json"),
+        false,
     );
 }
