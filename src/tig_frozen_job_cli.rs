@@ -152,7 +152,7 @@ fn parse_profile(bytes: &[u8]) -> Result<Value> {
     Ok(value)
 }
 
-fn execute(path: &Path) -> Result<Value> {
+fn execute(path: &Path, checkpoint: Option<&Path>) -> Result<Value> {
     let (_profile_guard, raw) = read(path, 128 * 1024)?;
     let p: Profile = serde_json::from_value(parse_profile(&raw)?)?;
     let dependencies = dependency_mode(
@@ -266,6 +266,21 @@ fn execute(path: &Path) -> Result<Value> {
     } else {
         job::restore(&p.job_context, &admission, &mut reader, trees)?
     };
+    let checkpoint_guard = if let Some(path) = checkpoint {
+        if !dependencies || !path.is_absolute() {
+            bail!("frozen checkpoint requires the enrolled dependency scope and an absolute path");
+        }
+        let (guard, bytes) = read(path, 256 * 1024)?;
+        if !resources
+            .of(job::Role::Evidence)
+            .contains(&Object::from_bytes(&bytes))
+        {
+            bail!("frozen checkpoint descriptor is outside the enrolled evidence");
+        }
+        Some(guard)
+    } else {
+        None
+    };
     let mut journal = SourceJournal::open(&p.journal_root, &p.journal_minimum)?;
     let profile = tig_job_runner::Profile {
         config: &p.cache,
@@ -279,18 +294,33 @@ fn execute(path: &Path) -> Result<Value> {
         metadata_minimum: &p.metadata_minimum,
         tree_limits: trees,
     };
-    let run = if dependencies {
-        tig_job_runner::run_with_dependencies
+    let mut result = if let Some(path) = checkpoint {
+        tig_job_runner::resume_with_dependencies(
+            &p.project,
+            &p.manifest.path,
+            &resources,
+            &mut journal,
+            &profile,
+            (path, &request_pin),
+        )?
+    } else if dependencies {
+        tig_job_runner::run_with_dependencies(
+            &p.project,
+            &p.manifest.path,
+            &resources,
+            &mut journal,
+            &profile,
+        )?
     } else {
-        tig_job_runner::run
+        tig_job_runner::run(
+            &p.project,
+            &p.manifest.path,
+            &resources,
+            &mut journal,
+            &profile,
+        )?
     };
-    let mut result = run(
-        &p.project,
-        &p.manifest.path,
-        &resources,
-        &mut journal,
-        &profile,
-    )?;
+    drop(checkpoint_guard);
     // The generic runner returns Err for a failed child, even when its failed
     // result was successfully retained. Only this successful return is true.
     result["succeeded"] = Value::Bool(true);
@@ -305,7 +335,11 @@ fn execute(path: &Path) -> Result<Value> {
 /// Trusted caller admission, existing metadata and exact owner required. Public
 /// failures omit private paths/IDs/text; successful runner output stays private.
 pub fn run(path: &Path) -> Result<Value> {
-    execute(path).map_err(|_| {
+    run_with_checkpoint(path, None)
+}
+
+pub fn run_with_checkpoint(path: &Path, checkpoint: Option<&Path>) -> Result<Value> {
+    execute(path, checkpoint).map_err(|_| {
         anyhow::anyhow!(
             "frozen job refused or incomplete; preserve owned scratch and inspect private state"
         )

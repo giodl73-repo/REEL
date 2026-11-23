@@ -11,7 +11,12 @@ enum Operation {
     /// Freeze/reopen committed generic job metadata in existing stores; no adoption.
     CaptureFrozen { profile: PathBuf, output: PathBuf },
     /// Replay an already enrolled generic job; no setup, source adoption or media claim.
-    RunFrozen { profile: PathBuf },
+    RunFrozen {
+        profile: PathBuf,
+        /// Resume from a descriptor already enrolled as evidence for this job.
+        #[arg(long)]
+        checkpoint: Option<PathBuf>,
+    },
     /// Inspect a declared generation basis; no model execution or primary reads.
     InspectGeneration { profile: PathBuf, output: PathBuf },
     /// Inspect a declared generator set and order blocked/catch-up advice.
@@ -129,7 +134,10 @@ fn main() -> ExitCode {
         Operation::CaptureFrozen { profile, output } => {
             reel::tig_frozen_job_cli::capture(&profile, &output)
         }
-        Operation::RunFrozen { profile } => reel::tig_frozen_job_cli::run(&profile),
+        Operation::RunFrozen {
+            profile,
+            checkpoint,
+        } => reel::tig_frozen_job_cli::run_with_checkpoint(&profile, checkpoint.as_deref()),
         Operation::InspectGeneration { profile, output } => {
             reel::tig_generation::inspect(&profile, &output)
         }
