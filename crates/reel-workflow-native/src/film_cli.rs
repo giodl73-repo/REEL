@@ -179,6 +179,9 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
         .as_ref()
         .map(|spec| crate::film_controls::verify(&request.packet, &mut native, spec))
         .transpose()?;
+    // End this byte-reading pass before bind reopens the same candidate job.
+    // Keep the exact snapshot and durable child claims; bind rechecks its pins.
+    native.held.clear();
     let bound = film_task::bind(&request.packet, &mut native)?;
     let maximum = bound
         .request()
@@ -365,6 +368,8 @@ pub fn execute(
                 if let Some(spec) = &request.control_derivation {
                     crate::film_controls::verify(&request.packet, &mut native, spec)?;
                 }
+                // run performs its own control bind and guarded file reopen.
+                native.held.clear();
                 film_task::run(&request.packet, native, invocation)?
             } else {
                 film_task::resume(
