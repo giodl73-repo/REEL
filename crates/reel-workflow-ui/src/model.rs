@@ -16,6 +16,10 @@ pub struct Board {
     pub format: Format,
     pub source_commit: String,
     #[serde(default)]
+    pub projection_request: Option<Artifact>,
+    #[serde(default)]
+    pub approvals: Vec<ApprovalReference>,
+    #[serde(default)]
     pub synthetic: bool,
     pub languages: Vec<Language>,
     pub scenes: Vec<Scene>,
@@ -23,6 +27,12 @@ pub struct Board {
     pub cues: Vec<Cue>,
     pub media: BTreeMap<String, Media>,
     pub tasks: BTreeMap<String, Watch>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalReference {
+    pub subject: Artifact,
+    pub evidence: Artifact,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -53,6 +63,8 @@ pub struct Unit {
     pub title: String,
     pub versions: Vec<Version>,
     pub spans: Vec<Span>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_spans: Vec<ReviewSpan>,
     #[serde(default)]
     pub task: Option<String>,
 }
@@ -80,6 +92,14 @@ pub struct Version {
 pub struct Span {
     pub language: String,
     pub cue_id: String,
+    pub start_sample: u64,
+    pub end_sample: u64,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewSpan {
+    pub language: String,
+    pub sample_rate: u32,
     pub start_sample: u64,
     pub end_sample: u64,
 }
@@ -190,8 +210,16 @@ impl Board {
             || self.cues.len() > 2048
             || self.media.len() > 4096
             || self.tasks.len() > 128
+            || self.approvals.len() > 128
         {
             return Err(error(ErrorKind::Invalid, "board-shape"));
+        }
+        if let Some(request) = &self.projection_request {
+            artifact(request)?;
+        }
+        for approval in &self.approvals {
+            artifact(&approval.subject)?;
+            artifact(&approval.evidence)?;
         }
         let mut languages = BTreeSet::new();
         for language in &self.languages {
@@ -273,6 +301,7 @@ impl Board {
         }
         let mut units = BTreeSet::new();
         let mut stories = BTreeMap::new();
+        let mut review_rates = BTreeMap::new();
         for unit in &self.units {
             if !id(&unit.id)
                 || !units.insert(&unit.id)
@@ -337,6 +366,21 @@ impl Board {
                         .any(|m| m.semantic_id == unit.semantic_id && m.sample == span.start_sample)
                 {
                     return Err(error(ErrorKind::Invalid, "board-span-clock"));
+                }
+            }
+            let mut review_languages = BTreeSet::new();
+            for span in &unit.review_spans {
+                if self.format != Format::Film
+                    || !languages.contains(&span.language)
+                    || !review_languages.insert(&span.language)
+                    || !(8000..=192000).contains(&span.sample_rate)
+                    || span.start_sample >= span.end_sample
+                    || span.end_sample > u64::from(span.sample_rate) * 21600
+                    || review_rates
+                        .insert((&unit.scene_id, &span.language), span.sample_rate)
+                        .is_some_and(|rate| rate != span.sample_rate)
+                {
+                    return Err(error(ErrorKind::Invalid, "board-review-span-clock"));
                 }
             }
         }

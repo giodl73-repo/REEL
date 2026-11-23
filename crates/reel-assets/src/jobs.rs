@@ -783,7 +783,12 @@ mod process;
 /// This is an admission ceiling, not a default or a reservation of host memory.
 pub const MAX_QUIET_CHILD_MEMORY_BYTES: u64 = 24 * 1024 * 1024 * 1024;
 #[cfg(windows)]
-pub use process::{QuietLimits, run_quiet};
+pub use process::{BorrowedPseudoConsole, run_pseudoconsole_observed};
+#[cfg(windows)]
+pub use process::{
+    QuietEvent, QuietLimits, QuietProcess, current_peak_working_set_bytes, run_quiet,
+    run_quiet_observed,
+};
 
 #[cfg(not(windows))]
 mod process {

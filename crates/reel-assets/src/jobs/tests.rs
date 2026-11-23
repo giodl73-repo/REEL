@@ -507,6 +507,193 @@ fn quiet_child_tree_timeout_stops_descendants_before_return() {
 }
 
 #[test]
+fn quiet_observer_binds_the_actual_process_and_measures_peak_before_reaping() {
+    use std::cell::{Cell, RefCell};
+    use windows_sys::Win32::{Foundation::*, System::Threading::*};
+    struct Process(HANDLE);
+    impl Drop for Process {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+    for cancel in [false, true] {
+        let (root, exe) = quiet_fixture();
+        let held = RefCell::new(None::<Process>);
+        let observed = RefCell::new(Vec::new());
+        let measured = Cell::new(false);
+        let reaped = Cell::new(false);
+        let result = run_quiet_observed(
+            &exe,
+            &["observed".into()],
+            root.path(),
+            Duration::from_secs(5),
+            quiet_limits(),
+            |event| {
+                observed.borrow_mut().push(event);
+                match event {
+                    QuietEvent::BeforeStart => assert!(!root.path().join("observed.pid").exists()),
+                    QuietEvent::Process(info) => {
+                        assert_ne!(info.process_id, std::process::id());
+                        if held.borrow().is_none() {
+                            let handle = unsafe {
+                                OpenProcess(
+                                    PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION,
+                                    0,
+                                    info.process_id,
+                                )
+                            };
+                            assert!(!handle.is_null());
+                            *held.borrow_mut() = Some(Process(handle));
+                        }
+                        assert_eq!(
+                            unsafe { GetProcessId(held.borrow().as_ref().unwrap().0) },
+                            info.process_id
+                        );
+                        if info.exit_observed {
+                            assert!(
+                                measured.get() && info.peak_working_set_bytes >= 32 * 1024 * 1024
+                            );
+                            assert_eq!(
+                                unsafe {
+                                    WaitForSingleObject(held.borrow().as_ref().unwrap().0, 0)
+                                },
+                                WAIT_OBJECT_0
+                            );
+                        } else if fs::read_to_string(root.path().join("observed.allocated"))
+                            .ok()
+                            .as_deref()
+                            == Some("33554432")
+                            && info.peak_working_set_bytes >= 32 * 1024 * 1024
+                        {
+                            let pid: u32 = fs::read_to_string(root.path().join("observed.pid"))
+                                .unwrap()
+                                .parse()
+                                .unwrap();
+                            assert_eq!(pid, info.process_id);
+                            measured.set(true);
+                            if cancel {
+                                return Err("observer cancelled after measured allocation".into());
+                            }
+                            fs::write(root.path().join("observed.release"), b"release").unwrap();
+                        }
+                    }
+                    QuietEvent::Reaped => {
+                        assert_eq!(
+                            unsafe { WaitForSingleObject(held.borrow().as_ref().unwrap().0, 0) },
+                            WAIT_OBJECT_0
+                        );
+                        reaped.set(true);
+                    }
+                }
+                Ok(())
+            },
+        );
+        assert_eq!(result.is_err(), cancel, "{result:?}");
+        assert!(measured.get());
+        assert_eq!(reaped.get(), !cancel);
+        assert_eq!(
+            unsafe { WaitForSingleObject(held.borrow().as_ref().unwrap().0, 0) },
+            WAIT_OBJECT_0
+        );
+        let events = observed.borrow();
+        assert_eq!(events.first(), Some(&QuietEvent::BeforeStart));
+        if cancel {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("observer cancelled")
+            );
+        } else {
+            assert!(matches!(
+                events[events.len() - 2],
+                QuietEvent::Process(QuietProcess {
+                    exit_observed: true,
+                    ..
+                })
+            ));
+            assert_eq!(events.last(), Some(&QuietEvent::Reaped));
+        }
+        assert!(!root.path().join("step-0.log").exists());
+    }
+}
+
+#[test]
+fn quiet_observer_before_start_refusal_creates_no_process_or_output() {
+    let (root, exe) = quiet_fixture();
+    let error = run_quiet_observed(
+        &exe,
+        &["observed".into()],
+        root.path(),
+        Duration::from_secs(5),
+        quiet_limits(),
+        |event| {
+            assert_eq!(event, QuietEvent::BeforeStart);
+            Err("before start refusal".into())
+        },
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(error.contains("before start refusal"));
+    assert!(!root.path().join("observed.pid").exists());
+    assert!(!root.path().join("observed.release").exists());
+}
+
+#[test]
+fn quiet_observer_reaped_follows_actual_descendant_termination() {
+    use std::cell::{Cell, RefCell};
+    use windows_sys::Win32::{Foundation::*, System::Threading::*};
+    struct Process(HANDLE);
+    impl Drop for Process {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.0);
+            }
+        }
+    }
+    let (root, exe) = quiet_fixture();
+    let child = RefCell::new(None::<Process>);
+    let reaped = Cell::new(false);
+    run_quiet_observed(
+        &exe,
+        &["orphan-child".into()],
+        root.path(),
+        Duration::from_secs(5),
+        quiet_limits(),
+        |event| {
+            match event {
+                QuietEvent::Process(QuietProcess {
+                    exit_observed: true,
+                    ..
+                }) => {
+                    let pid = fs::read_to_string(root.path().join("child.pid"))
+                        .unwrap()
+                        .parse()
+                        .unwrap();
+                    let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+                    assert!(!handle.is_null());
+                    assert_eq!(unsafe { WaitForSingleObject(handle, 0) }, WAIT_TIMEOUT);
+                    *child.borrow_mut() = Some(Process(handle));
+                }
+                QuietEvent::Reaped => {
+                    assert_eq!(
+                        unsafe { WaitForSingleObject(child.borrow().as_ref().unwrap().0, 0) },
+                        WAIT_OBJECT_0
+                    );
+                    reaped.set(true);
+                }
+                _ => {}
+            }
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(reaped.get());
+}
+
+#[test]
 fn quiet_failure_preserves_exit_code_and_reports_job_memory_without_a_log() {
     let (root, exe) = quiet_fixture();
     fs::write(root.path().join("in.bin"), b"fixture").unwrap();

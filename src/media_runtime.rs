@@ -211,6 +211,95 @@ pub struct BoundTool {
     identity: ByteIdentity,
     _held: HeldFile,
 }
+
+/// Internal native source/control guard. Unlike a tool, this file is never
+/// executed and may be an original runtime from a different host platform.
+#[cfg(all(windows, feature = "installation-native"))]
+pub(crate) struct BoundInput {
+    original: PathBuf,
+    path: PathBuf,
+    identity: ByteIdentity,
+    _held: HeldFile,
+}
+#[cfg(all(windows, feature = "installation-native"))]
+impl BoundInput {
+    pub(crate) fn bind(file: &FileRef) -> Result<Self> {
+        let identity = pin(file);
+        identity.validate()?;
+        if !file.path.is_absolute() {
+            bail!("protected input requires an absolute path");
+        }
+        let (path, held) = hold(&file.path, &identity)?;
+        let bound = Self {
+            original: file.path.clone(),
+            path,
+            identity,
+            _held: held,
+        };
+        bound.name()?;
+        Ok(bound)
+    }
+    fn name(&self) -> Result<()> {
+        if self.original.canonicalize()? != self.path {
+            bail!("protected input namespace changed");
+        }
+        Ok(())
+    }
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+    pub(crate) fn identity(&self) -> &ByteIdentity {
+        &self.identity
+    }
+    pub(crate) fn recheck(&self) -> Result<()> {
+        self.name()?;
+        if ByteIdentity::observe_file_bounded(&self.path, self.identity.bytes)? != self.identity {
+            bail!("protected input identity changed");
+        }
+        Ok(())
+    }
+    pub(crate) fn read(&self, max: usize) -> Result<Vec<u8>> {
+        self.name()?;
+        if self.identity.bytes > max as u64 {
+            bail!("protected input read exceeds budget");
+        }
+        let mut bytes = Vec::new();
+        File::open(&self.path)?
+            .take(self.identity.bytes + 1)
+            .read_to_end(&mut bytes)?;
+        if ByteIdentity::from_bytes(&bytes) != self.identity {
+            bail!("protected input bytes differ");
+        }
+        Ok(bytes)
+    }
+}
+
+#[cfg(all(test, windows, feature = "installation-native"))]
+mod installation_input_tests {
+    use super::*;
+    #[test]
+    fn held_original_input_denies_mutation_and_rename_without_executable_requirement() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("original.data");
+        let renamed = dir.path().join("renamed.data");
+        std::fs::write(&path, b"known").unwrap();
+        let original = FileRef {
+            path: path.clone(),
+            sha256: crate::production::sha256_bytes(b"known"),
+            bytes: 5,
+        };
+        let guard = BoundInput::bind(&original).unwrap();
+        assert_eq!(guard.read(5).unwrap(), b"known");
+        assert!(guard.read(4).is_err());
+        assert!(OpenOptions::new().write(true).open(&path).is_err());
+        assert!(std::fs::rename(&path, &renamed).is_err());
+        guard.recheck().unwrap();
+        drop(guard);
+        std::fs::rename(&path, &renamed).unwrap();
+        std::fs::write(&renamed, b"changed").unwrap();
+        assert_eq!(std::fs::read(renamed).unwrap(), b"changed");
+    }
+}
 impl BoundTool {
     pub fn bind(file: &FileRef) -> Result<Self> {
         let identity = pin(file);

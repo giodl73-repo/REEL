@@ -3,13 +3,39 @@ use super::*;
 use serde::{Deserialize, Serialize};
 
 mod callback;
-pub use callback::{Callback, CallbackControl, CallbackReport, callback_pair};
+#[cfg(windows)]
+pub mod console;
+#[cfg(windows)]
+pub mod controller;
+#[cfg(windows)]
+pub mod input;
+pub use callback::{
+    Callback, CallbackCommandError, CallbackControl, CallbackDelivery, CallbackEmission,
+    CallbackReport, callback_pair,
+};
 #[cfg(windows)]
 mod device;
 #[cfg(windows)]
+pub mod output;
+#[cfg(windows)]
 mod owned;
+#[cfg(windows)]
+pub mod parent;
 mod probe;
+pub mod protocol;
+#[cfg(windows)]
+pub mod source;
+#[cfg(windows)]
+pub mod worker;
 pub use probe::{ProbeRequest, probe, probe_worker};
+#[cfg(windows)]
+pub mod pipe;
+mod session;
+pub mod wire;
+pub use session::{
+    MAX_REQUEST as MAX_SESSION_REQUEST_BYTES, OriginalProgramme, PlaybackBuild, SessionCheck,
+    SessionRequest,
+};
 
 pub const PROFILE: &str = "reel.installation.win11-wasapi-pcm24.v1";
 pub(super) fn explicit_endpoint_id(id: &str) -> bool {

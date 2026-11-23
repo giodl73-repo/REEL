@@ -472,7 +472,7 @@ fn exercise_variant_mode(
         serde_json::from_value(prepared_report["resources"].clone()).unwrap();
     let minimum = serde_json::from_value(prepared_report["metadata_minimum"].clone()).unwrap();
     let mut resource_reader = MetadataReader::open(&metadata, &minimum).unwrap();
-    let (entries, _) = tig_core::tree::Tree::from_root(resources.root)
+    let (entries, _) = tig_core::tree::Tree::from_root(resources.root.clone())
         .entries(&mut resource_reader, TreeLimits::default())
         .unwrap();
     let objects = entries
@@ -675,6 +675,42 @@ fn exercise_variant_mode(
                 .source(&key("bounded-episode-cli"))
                 .unwrap()
                 .is_none()
+        );
+    }
+    if !mixed {
+        let command = tig_store::source_claims::Command::Prepare {
+            source: key("bounded-episode-cli"),
+            owner: key("fixture"),
+            expected_revision: 0,
+            selection: resources,
+        };
+        let operation = tig_core::Digest::blob(
+            &tig_core::identity::canonical_json(&json!({
+                "schema":"reel.tig-episode-worker.experimental-1",
+                "source":"bounded-episode-cli",
+                "operation":"run-v1",
+                "phase":"prepare"
+            }))
+            .unwrap(),
+        );
+        p.owners.apply(key(operation.as_str()), command).unwrap();
+        let pending_checkpoint = p.owners.checkpoint();
+
+        let mut foreign = profile.clone();
+        foreign["operation"] = json!("other-run");
+        let foreign_path = p.data.path().join("foreign-prepared-episode.json");
+        fs::write(&foreign_path, serde_json::to_vec(&foreign).unwrap()).unwrap();
+        let denied = std::process::Command::new(&binary)
+            .arg("run-episode")
+            .arg(foreign_path)
+            .output()
+            .unwrap();
+        assert!(!denied.status.success());
+        assert_eq!(
+            SourceJournal::open(&p.data.path().join("owners"), &pending_checkpoint)
+                .unwrap()
+                .checkpoint(),
+            pending_checkpoint,
         );
     }
     let output = std::process::Command::new(&binary)

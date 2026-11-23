@@ -1,0 +1,1277 @@
+//! Explicit blocking console primitives. Use only on owned I/O threads, never
+//! the audio callback or <=20 ms controller. No endpoint or playback is opened.
+use super::{
+    input::{InputReceiver, InputSender},
+    parent::{DisplayItem, DisplayTicket, LayoutObservation, ParentEvent, ParentSession},
+    protocol::{Output, Preparation},
+    *,
+};
+use std::{
+    fs::File,
+    os::windows::io::{AsHandle, AsRawHandle},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, AtomicI64, Ordering},
+    },
+    thread::JoinHandle,
+};
+use windows::Win32::{
+    Foundation::*,
+    System::{Console::*, IO::CancelSynchronousIo, Performance::QueryPerformanceCounter},
+};
+
+fn handle(file: &File) -> HANDLE {
+    HANDLE(file.as_raw_handle())
+}
+
+static INTERRUPT_REGISTERED: AtomicBool = AtomicBool::new(false);
+static INTERRUPT_RECEIPT: AtomicI64 = AtomicI64::new(0);
+
+unsafe extern "system" fn console_interrupt(event: u32) -> windows::core::BOOL {
+    if event != CTRL_C_EVENT {
+        return false.into();
+    }
+    let mut counter = 0;
+    if unsafe { QueryPerformanceCounter(&mut counter) }.is_err() || counter <= 0 {
+        counter = -1;
+    }
+    let _ = INTERRUPT_RECEIPT.compare_exchange(0, counter, Ordering::Release, Ordering::Relaxed);
+    true.into()
+}
+
+/// Owns the process-local Ctrl+C handler for the foreground session.
+pub struct ConsoleInterrupt {
+    registered: bool,
+}
+impl ConsoleInterrupt {
+    pub fn install() -> Result<Self> {
+        ensure!(
+            INTERRUPT_REGISTERED
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok(),
+            "installation console interrupt handler already installed"
+        );
+        INTERRUPT_RECEIPT.store(0, Ordering::Release);
+        if let Err(error) = unsafe { SetConsoleCtrlHandler(Some(console_interrupt), true) } {
+            INTERRUPT_REGISTERED.store(false, Ordering::Release);
+            return Err(error.into());
+        }
+        Ok(Self { registered: true })
+    }
+    pub(super) fn receipt(&self) -> Option<i64> {
+        let counter = INTERRUPT_RECEIPT.load(Ordering::Acquire);
+        (self.registered && counter != 0).then_some(counter)
+    }
+    pub fn shutdown(&mut self) -> Result<()> {
+        if self.registered {
+            unsafe {
+                SetConsoleCtrlHandler(Some(console_interrupt), false)?;
+            }
+            self.registered = false;
+            INTERRUPT_REGISTERED.store(false, Ordering::Release);
+        }
+        Ok(())
+    }
+}
+impl Drop for ConsoleInterrupt {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+struct Environment {
+    input: File,
+    output: File,
+    input_mode: CONSOLE_MODE,
+    output_mode: CONSOLE_MODE,
+    input_cp: u32,
+    output_cp: u32,
+    restored: bool,
+}
+impl Environment {
+    fn restore(&mut self) -> Result<()> {
+        if self.restored {
+            return Ok(());
+        }
+        // Attempt every setting even when one restoration fails.
+        let result = unsafe {
+            let input_mode = SetConsoleMode(handle(&self.input), self.input_mode);
+            let output_mode = SetConsoleMode(handle(&self.output), self.output_mode);
+            let input_cp = SetConsoleCP(self.input_cp);
+            let output_cp = SetConsoleOutputCP(self.output_cp);
+            input_mode.and(output_mode).and(input_cp).and(output_cp)
+        };
+        result.map_err(|error| anyhow::anyhow!("installation console restoration: {error}"))?;
+        self.restored = true;
+        Ok(())
+    }
+}
+impl Drop for Environment {
+    fn drop(&mut self) {
+        let _ = self.restore();
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ConsoleRead {
+    Queued,
+    Invalid,
+    Eof,
+}
+/// Holds explicit attached-console handles and restores process console settings
+/// on actual destruction. Opening/rendering/reading/destruction may block.
+pub struct ConsoleSurface {
+    environment: Arc<Environment>,
+    reader_started: bool,
+    left: i16,
+    top: i16,
+    expected: Option<Vec<u16>>,
+    closing_ack: Option<u64>,
+    pending: [u16; 64],
+    offset: usize,
+    length: usize,
+    received_counter: i64,
+}
+impl ConsoleSurface {
+    /// Start the sole cooked reader after the transcript has been drawn.
+    /// The renderer retains its own surface and may update the status row
+    /// while the reader blocks. The caller owns the input queue and must join
+    /// this reader off the controller before releasing console ownership.
+    pub fn start_reader(&mut self, mut input: InputSender) -> Result<ConsoleReader> {
+        ensure!(
+            !self.reader_started && self.offset == self.length,
+            "installation console reader unavailable"
+        );
+        let mut surface = Self {
+            environment: self.environment.clone(),
+            reader_started: false,
+            left: self.left,
+            top: self.top,
+            expected: None,
+            closing_ack: None,
+            pending: [0; 64],
+            offset: 0,
+            length: 0,
+            received_counter: 0,
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let requested = stop.clone();
+        let invalid = Arc::new(AtomicBool::new(false));
+        let invalid_line = invalid.clone();
+        let owner = std::thread::current();
+        let thread = std::thread::Builder::new()
+            .name("reel-console-input".into())
+            .spawn(move || {
+                while !requested.load(Ordering::Acquire) {
+                    let result = surface.read(&mut input);
+                    if requested.load(Ordering::Acquire) {
+                        break;
+                    }
+                    let outcome = result?;
+                    if outcome == ConsoleRead::Invalid {
+                        invalid_line.store(true, Ordering::Release);
+                    }
+                    owner.unpark();
+                    if outcome == ConsoleRead::Eof {
+                        // Cooked input can return zero before Windows schedules
+                        // the Ctrl+C handler. Keep the read receipt and allow
+                        // the handler to publish its own receipt first.
+                        if INTERRUPT_REGISTERED.load(Ordering::Acquire) {
+                            std::thread::sleep(Duration::from_millis(20));
+                        }
+                        return Ok(Some(surface.received_counter()));
+                    }
+                }
+                Ok(None)
+            })?;
+        self.reader_started = true;
+        Ok(ConsoleReader {
+            stop,
+            invalid,
+            thread: Some(thread),
+        })
+    }
+    /// Original QPC of the last native read, including EOF. Never resample it
+    /// when converting an input termination into the owner's Quit request.
+    pub fn received_counter(&self) -> i64 {
+        self.received_counter
+    }
+    pub fn open() -> Result<Self> {
+        // These names refer to this process's actual attached console, not a
+        // redirected stdio pipe/file. No console is allocated or substituted.
+        let input = File::options().read(true).write(true).open("CONIN$")?;
+        let output = File::options().read(true).write(true).open("CONOUT$")?;
+        let (mut input_mode, mut output_mode) = (CONSOLE_MODE::default(), CONSOLE_MODE::default());
+        unsafe {
+            GetConsoleMode(handle(&input), &mut input_mode)?;
+            GetConsoleMode(handle(&output), &mut output_mode)?;
+        }
+        let environment = Environment {
+            input,
+            output,
+            input_mode,
+            output_mode,
+            input_cp: unsafe { GetConsoleCP() },
+            output_cp: unsafe { GetConsoleOutputCP() },
+            restored: false,
+        };
+        ensure!(
+            environment.input_cp != 0 && environment.output_cp != 0,
+            "installation console code pages unavailable"
+        );
+        unsafe {
+            SetConsoleCP(65001)?;
+            SetConsoleOutputCP(65001)?;
+            SetConsoleMode(
+                handle(&environment.input),
+                (input_mode | ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)
+                    & !ENABLE_VIRTUAL_TERMINAL_INPUT,
+            )?;
+            SetConsoleMode(
+                handle(&environment.output),
+                output_mode | ENABLE_PROCESSED_OUTPUT,
+            )?;
+        }
+        let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
+        unsafe {
+            GetConsoleScreenBufferInfo(handle(&environment.output), &mut info)?;
+        }
+        ensure!(
+            info.srWindow.Right - info.srWindow.Left + 1 >= 80
+                && info.srWindow.Bottom - info.srWindow.Top + 1 >= 30,
+            "installation console requires 80 columns and 30 rows"
+        );
+        Ok(Self {
+            environment: Arc::new(environment),
+            reader_started: false,
+            left: info.srWindow.Left,
+            top: info.srWindow.Top,
+            expected: None,
+            closing_ack: None,
+            pending: [0; 64],
+            offset: 0,
+            length: 0,
+            received_counter: 0,
+        })
+    }
+    pub fn layout(&self) -> Result<LayoutObservation> {
+        let mut info = CONSOLE_SCREEN_BUFFER_INFO::default();
+        let (mut input_mode, mut output_mode) = (CONSOLE_MODE::default(), CONSOLE_MODE::default());
+        unsafe {
+            GetConsoleScreenBufferInfo(handle(&self.environment.output), &mut info)?;
+            GetConsoleMode(handle(&self.environment.input), &mut input_mode)?;
+            GetConsoleMode(handle(&self.environment.output), &mut output_mode)?;
+        }
+        let required = ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT;
+        ensure!(
+            input_mode & required == required
+                && input_mode & ENABLE_VIRTUAL_TERMINAL_INPUT == CONSOLE_MODE(0)
+                && output_mode & ENABLE_PROCESSED_OUTPUT != CONSOLE_MODE(0),
+            "installation console mode changed"
+        );
+        let layout = LayoutObservation {
+            columns: (info.srWindow.Right - info.srWindow.Left + 1) as u16,
+            rows: (info.srWindow.Bottom - info.srWindow.Top + 1) as u16,
+            input_code_page: unsafe { GetConsoleCP() },
+            output_code_page: unsafe { GetConsoleOutputCP() },
+        };
+        ensure!(
+            layout.columns >= 80
+                && layout.rows >= 30
+                && layout.input_code_page == 65001
+                && layout.output_code_page == 65001
+                && info.srWindow.Left == self.left
+                && info.srWindow.Top == self.top,
+            "installation console layout changed"
+        );
+        Ok(layout)
+    }
+    fn write_cells(&self, top: i16, rows: i16, values: &[u16]) -> Result<()> {
+        self.layout()?;
+        let cells: Vec<CHAR_INFO> = values
+            .iter()
+            .map(|value| CHAR_INFO {
+                Char: CHAR_INFO_0 {
+                    UnicodeChar: *value,
+                },
+                Attributes: 7,
+            })
+            .collect();
+        let mut rect = SMALL_RECT {
+            Left: self.left,
+            Top: top,
+            Right: self.left + 79,
+            Bottom: top + rows - 1,
+        };
+        unsafe {
+            WriteConsoleOutputW(
+                handle(&self.environment.output),
+                cells.as_ptr(),
+                COORD { X: 80, Y: rows },
+                COORD { X: 0, Y: 0 },
+                &mut rect,
+            )?;
+        }
+        ensure!(
+            rect.Left == self.left
+                && rect.Top == top
+                && rect.Right == self.left + 79
+                && rect.Bottom == top + rows - 1,
+            "installation console write clipped"
+        );
+        Ok(())
+    }
+    pub fn transcript(&mut self, original: &str) -> Result<LayoutObservation> {
+        let text = super::super::text(original.as_bytes().to_vec())?;
+        let mut values = vec![b' ' as u16; 80 * 20];
+        for (row, line) in text.lines().enumerate() {
+            for (column, value) in line.encode_utf16().enumerate() {
+                values[row * 80 + column] = value;
+            }
+        }
+        // Reserve rows 1..20 for text, row 21 for status. Input uses a fixed
+        // lower area: classic cooked echo does not honor VT scrolling margins.
+        self.write_cells(self.top, 20, &values)?;
+        self.expected = Some(values);
+        self.verify_transcript()?;
+        self.layout()
+    }
+    pub fn verify_transcript(&self) -> Result<()> {
+        self.layout()?;
+        let expected = self
+            .expected
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("installation transcript not displayed"))?;
+        let mut cells = vec![CHAR_INFO::default(); 80 * 20];
+        let mut rect = SMALL_RECT {
+            Left: self.left,
+            Top: self.top,
+            Right: self.left + 79,
+            Bottom: self.top + 19,
+        };
+        unsafe {
+            ReadConsoleOutputW(
+                handle(&self.environment.output),
+                cells.as_mut_ptr(),
+                COORD { X: 80, Y: 20 },
+                COORD { X: 0, Y: 0 },
+                &mut rect,
+            )?;
+        }
+        ensure!(
+            rect.Left == self.left
+                && rect.Top == self.top
+                && rect.Right == self.left + 79
+                && rect.Bottom == self.top + 19,
+            "installation console read clipped"
+        );
+        ensure!(
+            cells
+                .iter()
+                .zip(expected)
+                .all(|(cell, value)| unsafe { cell.Char.UnicodeChar == *value }),
+            "installation transcript displaced by console input"
+        );
+        Ok(())
+    }
+    pub fn status(&self, status: &str) -> Result<()> {
+        ensure!(
+            status.len() <= 80 && status.bytes().all(|c| (32..=126).contains(&c)),
+            "installation plain console status profile"
+        );
+        if self.expected.is_some() {
+            self.verify_transcript()?;
+        }
+        let mut values = vec![b' ' as u16; 80];
+        for (slot, value) in values.iter_mut().zip(status.encode_utf16()) {
+            *slot = value;
+        }
+        self.write_cells(self.top + 20, 1, &values)
+    }
+    /// Return the foreground ticket only after the console operation succeeds.
+    /// Call on the output owner, since console writes and readback may block.
+    pub fn render(
+        &mut self,
+        item: DisplayItem,
+    ) -> Result<(DisplayTicket, Option<LayoutObservation>)> {
+        fn phase_label(phase: Preparation) -> &'static str {
+            match phase {
+                Preparation::Checking => "Checking",
+                Preparation::AwaitingText => "Awaiting transcript display",
+                Preparation::Fault => "Fault",
+                Preparation::Stopped => "Stopped",
+            }
+        }
+        fn playback_status(snapshot: Snapshot) -> String {
+            let position = if snapshot.state == State::LoopWait || snapshot.interval_frame != 0 {
+                format!("gap {}", snapshot.interval_frame)
+            } else {
+                format!("frame {}", snapshot.source_frame)
+            };
+            format!("{:?} p{} {position}", snapshot.state, snapshot.pass)
+        }
+        let status = match item.report {
+            Output::Transcript { text, .. } => {
+                return Ok((item.ticket, Some(self.transcript(&text)?)));
+            }
+            Output::Preparing { phase, .. } | Output::PreparationEnded { phase, .. } => {
+                phase_label(phase).into()
+            }
+            Output::PreparationAck {
+                id, phase, refusal, ..
+            } => match refusal {
+                Some(reason) => format!("Command {id} refused: {reason:?}"),
+                None => format!("Command {id}: {}", phase_label(phase)),
+            },
+            Output::Ready { snapshot, .. } | Output::State { snapshot, .. } => {
+                playback_status(snapshot)
+            }
+            Output::Ended { snapshot, .. } => {
+                let status = playback_status(snapshot);
+                // ConPTY can coalesce the final display with the Quit reply.
+                // Keep the acknowledged command visible in the final row.
+                self.closing_ack
+                    .map_or_else(|| status.clone(), |id| format!("Command {id}: {status}"))
+            }
+            Output::Ack {
+                id,
+                snapshot,
+                refusal,
+                ..
+            } => match refusal {
+                Some(reason) => format!("Command {id} refused: {reason:?}"),
+                None => {
+                    if snapshot.session_closed {
+                        self.closing_ack = Some(id);
+                    }
+                    format!("Command {id}: {}", playback_status(snapshot))
+                }
+            },
+            Output::ResourcesClosed { .. } => "Worker resources closed".into(),
+            Output::SessionFault { .. } => "Fault".into(),
+            Output::CreditReleased { .. } | Output::Hello { .. } => {
+                anyhow::bail!("installation report has no console display")
+            }
+        };
+        let status = if item.fault_overlay && status != "Fault" {
+            format!("Fault | {status}")
+        } else {
+            status
+        };
+        self.status(&status)?;
+        Ok((item.ticket, None))
+    }
+    /// Blocking standard cooked read. Every returned chunk is stamped before
+    /// parsing; queued lines keep that receipt, including multiple pasted lines.
+    pub fn read(&mut self, input: &mut InputSender) -> Result<ConsoleRead> {
+        ensure!(
+            !self.reader_started,
+            "installation console reader already owns input"
+        );
+        self.write_cells(self.top + 21, 9, &vec![b' ' as u16; 80 * 9])?;
+        unsafe {
+            SetConsoleCursorPosition(
+                handle(&self.environment.output),
+                COORD {
+                    X: self.left,
+                    Y: self.top + 21,
+                },
+            )?;
+        }
+        let mut line = [0u8; 32];
+        let (mut length, mut invalid, mut eof) = (0, false, false);
+        loop {
+            if self.offset == self.length {
+                let mut count = 0;
+                unsafe {
+                    ReadConsoleW(
+                        handle(&self.environment.input),
+                        self.pending.as_mut_ptr().cast(),
+                        64,
+                        &mut count,
+                        None,
+                    )?;
+                    QueryPerformanceCounter(&mut self.received_counter)?;
+                }
+                ensure!(
+                    self.received_counter > 0 && count <= 64,
+                    "installation console read context"
+                );
+                if count == 0 {
+                    return Ok(ConsoleRead::Eof);
+                }
+                self.offset = 0;
+                self.length = count as usize;
+            }
+            let value = self.pending[self.offset];
+            self.pending[self.offset] = 0;
+            self.offset += 1;
+            if value == 10 {
+                if invalid {
+                    return Ok(ConsoleRead::Invalid);
+                }
+                if eof {
+                    return Ok(ConsoleRead::Eof);
+                }
+                return match input
+                    .line(std::str::from_utf8(&line[..length])?, self.received_counter)
+                {
+                    Ok(()) => Ok(ConsoleRead::Queued),
+                    Err(super::input::InputError::InvalidLine) => Ok(ConsoleRead::Invalid),
+                    Err(error) => Err(error.into()),
+                };
+            }
+            if value == 13 {
+                continue;
+            }
+            if value == 26 && length == 0 && !invalid {
+                eof = true;
+                continue;
+            }
+            if eof || value > 127 || length == 32 {
+                invalid = true;
+            } else {
+                line[length] = value as u8;
+                length += 1;
+            }
+        }
+    }
+}
+
+type Rendered = (DisplayTicket, Option<LayoutObservation>);
+
+/// Owns the console side of a foreground session. Opening and shutdown run
+/// outside the controller loop. The process owner retains worker reaping.
+pub struct ConsoleForeground {
+    command_refused: bool,
+    reader: ConsoleReader,
+    renderer: ConsoleRenderer,
+    environment: Arc<Environment>,
+    interrupt: ConsoleInterrupt,
+    input: InputReceiver,
+    parent: ParentSession,
+}
+impl ConsoleForeground {
+    pub fn open(parent: ParentSession) -> Result<Self> {
+        let interrupt = ConsoleInterrupt::install()?;
+        let mut surface = ConsoleSurface::open()?;
+        let environment = surface.environment.clone();
+        let (sender, input) = parent.command_pool().channel();
+        let reader = surface.start_reader(sender)?;
+        let renderer = ConsoleRenderer::start(surface)?;
+        Ok(Self {
+            command_refused: false,
+            reader,
+            renderer,
+            environment,
+            interrupt,
+            input,
+            parent,
+        })
+    }
+    pub fn tick(&mut self) -> Result<()> {
+        self.parent.stop_input_at_lifetime()?;
+        self.parent.poll_console_interrupt(&self.interrupt)?;
+        if !self.parent.quit_requested() {
+            self.command_refused |= self
+                .parent
+                .poll_console_input(&mut self.input, &mut self.reader)?;
+        }
+        self.parent.tick_with_renderer(&mut self.renderer)?;
+        if !self.parent.quit_requested() && !self.renderer.pending() {
+            let status = if std::mem::take(&mut self.command_refused) {
+                Some(if self.parent.failed() {
+                    "Fault | Command unavailable"
+                } else {
+                    "Command unavailable"
+                })
+            } else if self.reader.invalid.swap(false, Ordering::AcqRel) {
+                Some(if self.parent.failed() {
+                    "Fault | Invalid command"
+                } else {
+                    "Invalid command"
+                })
+            } else {
+                None
+            };
+            if let Some(status) = status {
+                self.renderer.queue(RenderRequest::Status(status))?;
+            }
+        }
+        Ok(())
+    }
+    pub fn quit_requested(&self) -> bool {
+        self.parent.quit_requested()
+    }
+    pub fn final_displayed(&self) -> bool {
+        self.parent.final_displayed()
+    }
+    pub(super) fn failed(&self) -> bool {
+        self.parent.failed()
+    }
+    pub fn local_event(&mut self) -> Option<ParentEvent> {
+        self.parent.local_event()
+    }
+    /// Join actual console I/O before releasing the handler and channel.
+    pub fn shutdown(mut self) -> Result<()> {
+        self.input.close();
+        let reader = self.reader.shutdown();
+        let renderer = self.renderer.shutdown();
+        let restoration = Arc::try_unwrap(self.environment)
+            .map_err(|_| anyhow::anyhow!("installation console still owned by an I/O thread"))
+            .and_then(|mut environment| environment.restore());
+        let interrupt = self.interrupt.shutdown();
+        let channel = self.parent.shutdown_channel();
+        reader
+            .and(renderer)
+            .and(restoration)
+            .and(interrupt)
+            .and(channel)
+    }
+}
+
+/// A single in-flight display ticket keeps output ordered and bounded.
+enum RenderRequest {
+    Ticket(DisplayItem),
+    Status(&'static str),
+}
+
+pub struct ConsoleRenderer {
+    requests: Option<std::sync::mpsc::SyncSender<RenderRequest>>,
+    rendered: std::sync::mpsc::Receiver<Result<Option<Rendered>>>,
+    thread: Option<JoinHandle<()>>,
+    pending: bool,
+}
+impl ConsoleRenderer {
+    pub(super) fn pending(&self) -> bool {
+        self.pending
+    }
+    pub fn start(mut surface: ConsoleSurface) -> Result<Self> {
+        let (requests, input) = std::sync::mpsc::sync_channel(1);
+        let (output, rendered) = std::sync::mpsc::sync_channel(1);
+        let owner = std::thread::current();
+        let thread = std::thread::Builder::new()
+            .name("reel-console-output".into())
+            .spawn(move || {
+                while let Ok(request) = input.recv() {
+                    let result = match request {
+                        RenderRequest::Ticket(item) => surface.render(item).map(Some),
+                        RenderRequest::Status(status) => surface.status(status).map(|()| None),
+                    };
+                    let failed = result.is_err();
+                    let sent = output.send(result);
+                    owner.unpark();
+                    if sent.is_err() || failed {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: Some(requests),
+            rendered,
+            thread: Some(thread),
+            pending: false,
+        })
+    }
+    pub fn submit(&mut self, item: DisplayItem) -> Result<()> {
+        self.queue(RenderRequest::Ticket(item))
+    }
+    fn queue(&mut self, request: RenderRequest) -> Result<()> {
+        ensure!(!self.pending, "installation console already rendering");
+        self.requests
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("installation renderer closed"))?
+            .try_send(request)
+            .map_err(|_| anyhow::anyhow!("installation renderer unavailable"))?;
+        self.pending = true;
+        Ok(())
+    }
+    pub fn completion(&mut self) -> Result<Option<Rendered>> {
+        if !self.pending {
+            return Ok(None);
+        }
+        match self.rendered.try_recv() {
+            Ok(result) => {
+                self.pending = false;
+                result
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                anyhow::bail!("installation renderer ended during display")
+            }
+        }
+    }
+    /// Close and join on the console owner, outside the controller loop.
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.requests.take();
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        while !thread.is_finished() {
+            unsafe {
+                let _ = CancelSynchronousIo(HANDLE(thread.as_handle().as_raw_handle()));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("installation console renderer panicked"))
+    }
+}
+impl Drop for ConsoleRenderer {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+pub struct ConsoleReader {
+    stop: Arc<AtomicBool>,
+    invalid: Arc<AtomicBool>,
+    thread: Option<JoinHandle<Result<Option<i64>>>>,
+}
+impl ConsoleReader {
+    pub fn finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+    /// Cancel synchronous I/O and join the real thread. Repeat cancellation
+    /// because the first request can race entry into the native read.
+    /// Returns the native EOF receipt counter if the reader reached EOF.
+    pub fn shutdown(&mut self) -> Result<Option<i64>> {
+        self.stop.store(true, Ordering::Release);
+        let Some(thread) = self.thread.take() else {
+            return Ok(None);
+        };
+        while !thread.is_finished() {
+            unsafe {
+                let _ = CancelSynchronousIo(HANDLE(thread.as_handle().as_raw_handle()));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("installation console reader panicked"))?
+    }
+}
+impl Drop for ConsoleReader {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::input::CommandPool;
+    use super::*;
+    use anyhow::Context as _;
+    use reel_assets::jobs::{
+        BorrowedPseudoConsole, QuietEvent, QuietLimits, run_pseudoconsole_observed,
+    };
+    use std::os::windows::io::FromRawHandle;
+    use std::{
+        io::{Read, Write},
+        sync::{
+            Arc,
+            atomic::{AtomicBool, AtomicU32, Ordering},
+        },
+        thread::JoinHandle,
+    };
+    use windows::Win32::System::Pipes::CreatePipe;
+    struct Pseudo(HPCON);
+    impl Pseudo {
+        fn borrowed(&self) -> BorrowedPseudoConsole<'_> {
+            unsafe { BorrowedPseudoConsole::from_raw(self.0.0).unwrap() }
+        }
+    }
+    impl Drop for Pseudo {
+        fn drop(&mut self) {
+            unsafe {
+                ClosePseudoConsole(self.0);
+            }
+        }
+    }
+    struct Capture {
+        console: Option<Pseudo>,
+        input: Option<File>,
+        reader: Option<JoinHandle<(Vec<u8>, bool)>>,
+    }
+    fn pipe() -> (File, File) {
+        let (mut read, mut write) = (HANDLE::default(), HANDLE::default());
+        unsafe {
+            CreatePipe(&mut read, &mut write, None, 0).unwrap();
+            (
+                File::from_raw_handle(read.0),
+                File::from_raw_handle(write.0),
+            )
+        }
+    }
+    #[test]
+    fn renderer_shutdown_cancels_and_joins_a_blocked_windows_write() {
+        use windows::Win32::Foundation::ERROR_OPERATION_ABORTED;
+
+        let (read, mut write) = pipe();
+        let (requests, input) = std::sync::mpsc::sync_channel(1);
+        let (output, rendered) = std::sync::mpsc::sync_channel(1);
+        let (started, writing) = std::sync::mpsc::channel();
+        let (finished, joined) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            input.recv().unwrap();
+            let bytes = vec![b'x'; 1024 * 1024];
+            started.send(()).unwrap();
+            let error = write.write_all(&bytes).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(ERROR_OPERATION_ABORTED.0 as i32));
+            drop(output);
+        });
+        // Keep the pipe unread. Closing it on timeout lets the test fail
+        // without leaving the fixture's writer blocked indefinitely.
+        let watchdog = std::thread::spawn(move || {
+            let result = joined.recv_timeout(Duration::from_secs(2));
+            drop(read);
+            result
+        });
+        let mut renderer = ConsoleRenderer {
+            requests: Some(requests),
+            rendered,
+            thread: Some(thread),
+            pending: false,
+        };
+        renderer.queue(RenderRequest::Status("fixture")).unwrap();
+        writing.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = renderer.shutdown();
+        let _ = finished.send(());
+        watchdog.join().unwrap().unwrap();
+        result.unwrap();
+        assert!(renderer.completion().is_err());
+    }
+    impl Capture {
+        fn new() -> Self {
+            let (input, writer) = pipe();
+            let (mut reader, output) = pipe();
+            let console = unsafe {
+                CreatePseudoConsole(COORD { X: 80, Y: 30 }, handle(&input), handle(&output), 0)
+                    .unwrap()
+            };
+            drop(input);
+            drop(output);
+            let reader = std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let mut overflow = false;
+                let mut buffer = [0; 4096];
+                loop {
+                    let count = match reader.read(&mut buffer) {
+                        Ok(0) | Err(_) => break,
+                        Ok(count) => count,
+                    };
+                    if bytes.len() + count <= 256 * 1024 {
+                        bytes.extend_from_slice(&buffer[..count]);
+                    } else {
+                        overflow = true;
+                    } // Keep draining through actual close.
+                }
+                (bytes, overflow)
+            });
+            Self {
+                console: Some(Pseudo(console)),
+                input: Some(writer),
+                reader: Some(reader),
+            }
+        }
+        fn finish(&mut self) -> (Vec<u8>, bool) {
+            drop(self.input.take());
+            drop(self.console.take());
+            self.reader.take().unwrap().join().unwrap()
+        }
+    }
+    impl Drop for Capture {
+        fn drop(&mut self) {
+            drop(self.input.take());
+            drop(self.console.take());
+            if let Some(reader) = self.reader.take() {
+                let _ = reader.join();
+            }
+        }
+    }
+    #[test]
+    #[ignore = "owned headless console child; explicitly launched by parent"]
+    fn console_fixture() {
+        let original_input = File::options()
+            .read(true)
+            .write(true)
+            .open("CONIN$")
+            .unwrap();
+        let original_output = File::options()
+            .read(true)
+            .write(true)
+            .open("CONOUT$")
+            .unwrap();
+        let (mut original_input_mode, mut original_output_mode) =
+            (CONSOLE_MODE::default(), CONSOLE_MODE::default());
+        unsafe {
+            GetConsoleMode(handle(&original_input), &mut original_input_mode).unwrap();
+            GetConsoleMode(handle(&original_output), &mut original_output_mode).unwrap();
+            original_input_mode |= ENABLE_LINE_INPUT
+                | ENABLE_ECHO_INPUT
+                | ENABLE_PROCESSED_INPUT
+                | ENABLE_VIRTUAL_TERMINAL_INPUT;
+            original_output_mode &= !ENABLE_PROCESSED_OUTPUT;
+            SetConsoleMode(handle(&original_input), original_input_mode).unwrap();
+            SetConsoleMode(handle(&original_output), original_output_mode).unwrap();
+            SetConsoleCP(1252).unwrap();
+            SetConsoleOutputCP(1252).unwrap();
+        }
+        let original_pages = unsafe { (GetConsoleCP(), GetConsoleOutputCP()) };
+        let mut surface = ConsoleSurface::open().unwrap();
+        let text = (0..20)
+            .map(|row| format!("Línea {row:02}: señal de ingeniería; año, acción, pingüino.\n"))
+            .collect::<String>();
+        let layout = surface.transcript(&text).unwrap();
+        assert!(
+            layout.columns >= 80
+                && layout.rows >= 30
+                && layout.input_code_page == 65001
+                && layout.output_code_page == 65001
+        );
+        surface.status("Engineering console fixture").unwrap();
+        let pool = CommandPool::new();
+        let (mut input, mut commands) = pool.channel();
+        std::fs::write(
+            "console-ready.marker",
+            b"actual console cells and cooked modes checked",
+        )
+        .unwrap();
+        for index in 0..40 {
+            assert_eq!(
+                surface
+                    .read(&mut input)
+                    .with_context(|| format!("echo line {index}"))
+                    .unwrap(),
+                ConsoleRead::Queued
+            );
+            let command = commands.receive().unwrap();
+            assert_eq!(command.command(), Command::Status);
+            assert!(command.received_counter() > 0);
+            drop(command);
+            assert_eq!(pool.occupied(), 0);
+            surface
+                .status("Status after ordinary echoed line")
+                .with_context(|| format!("after echo line {index}"))
+                .unwrap();
+        }
+        for _ in 0..3 {
+            assert_eq!(surface.read(&mut input).unwrap(), ConsoleRead::Invalid);
+            assert_eq!(pool.occupied(), 0);
+            assert!(commands.receive().is_none());
+            surface.verify_transcript().unwrap();
+        }
+        assert_eq!(surface.read(&mut input).unwrap(), ConsoleRead::Eof);
+        assert!(surface.received_counter() > 0);
+        assert_eq!(pool.occupied(), 0);
+        surface.verify_transcript().unwrap();
+        let mut input_foreground = super::super::parent::tests::fixture();
+        let (input, mut commands) = input_foreground.parent.command_pool().channel();
+        let mut reader = surface.start_reader(input).unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!reader.finished());
+        surface
+            .status("Renderer stays responsive during cooked input")
+            .unwrap();
+        std::fs::write("console-reader-ready.marker", b"cooked reader running").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !input_foreground.parent.quit_requested() {
+            input_foreground
+                .parent
+                .poll_console_input(&mut commands, &mut reader)
+                .unwrap();
+            assert!(Instant::now() < deadline, "cooked reader EOF deadline");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(reader.invalid.load(Ordering::Acquire));
+        let mut last_receipt = 0;
+        for (expected_id, expected_command) in [(1, Command::Status), (2, Command::Quit)] {
+            let packet = super::super::parent::tests::receive(&mut input_foreground.peer);
+            let super::super::protocol::Input::Control {
+                id,
+                command,
+                received_counter,
+            } = super::super::protocol::Input::parse(&packet).unwrap()
+            else {
+                panic!("expected control");
+            };
+            assert_eq!((id, command), (expected_id, expected_command));
+            assert!(received_counter >= last_receipt && received_counter > 0);
+            last_receipt = received_counter;
+        }
+        drop(surface);
+        let fixture = super::super::parent::tests::fixture();
+        let mut peer = fixture.peer;
+        let mut owner = ConsoleForeground::open(fixture.parent).unwrap();
+        assert!(ConsoleInterrupt::install().is_err());
+        std::fs::write(
+            "console-interrupt-ready.marker",
+            b"foreground owner running",
+        )
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(3);
+        while !owner.quit_requested() {
+            owner.tick().unwrap();
+            assert!(Instant::now() < deadline, "Ctrl+C deadline");
+            std::thread::park_timeout(Duration::from_millis(2));
+        }
+        let packet = super::super::parent::tests::receive(&mut peer);
+        assert!(matches!(
+            super::super::protocol::Input::parse(&packet).unwrap(),
+            super::super::protocol::Input::Control { id: 1, command: Command::Quit, received_counter }
+                if Some(received_counter) == owner.interrupt.receipt()
+        ));
+        let mut at = 0;
+        unsafe {
+            QueryPerformanceCounter(&mut at).unwrap();
+        }
+        let ended = Output::PreparationEnded {
+            phase: Preparation::Stopped,
+            observed_counter: at,
+        };
+        peer.send(0, &ended.bytes().unwrap()).unwrap();
+        while !owner.final_displayed() {
+            owner.tick().unwrap();
+            assert!(
+                Instant::now() < deadline,
+                "foreground final display deadline"
+            );
+            std::thread::park_timeout(Duration::from_millis(2));
+        }
+        let packet = super::super::parent::tests::receive(&mut peer);
+        assert!(matches!(
+            super::super::protocol::Input::parse(&packet).unwrap(),
+            super::super::protocol::Input::FinalShown { report_counter } if report_counter == at
+        ));
+        owner.shutdown().unwrap();
+        let surface = ConsoleSurface::open().unwrap();
+        let mut renderer = ConsoleRenderer::start(surface).unwrap();
+        let display = || DisplayItem {
+            ticket: DisplayTicket::fixture(),
+            report: Output::Transcript {
+                text: text.clone(),
+                sha256: crate::production::sha256_bytes(text.as_bytes()),
+            },
+            fault_overlay: false,
+        };
+        renderer.submit(display()).unwrap();
+        assert!(renderer.submit(display()).is_err());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some((_, layout)) = renderer.completion().unwrap() {
+                assert_eq!(layout.unwrap().columns, 80);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut foreground = super::super::parent::tests::fixture();
+        foreground
+            .peer
+            .send(0, &display().report.bytes().unwrap())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            foreground.parent.tick_with_renderer(&mut renderer).unwrap();
+            if let Some(packet) = foreground.peer.receive() {
+                assert!(matches!(
+                    super::super::protocol::Input::parse(&packet).unwrap(),
+                    super::super::protocol::Input::TextShown {
+                        columns: 80,
+                        rows: 30,
+                        ..
+                    }
+                ));
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        std::fs::write(
+            "console-resize-ready.marker",
+            b"complete read and unchanged source cells",
+        )
+        .unwrap();
+        let until = Instant::now() + Duration::from_secs(5);
+        while !std::path::Path::new("console-resized.marker").is_file() {
+            assert!(Instant::now() < until);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let mut at = 0;
+        unsafe {
+            QueryPerformanceCounter(&mut at).unwrap();
+        }
+        let id = foreground
+            .parent
+            .command(Command::Status, at)
+            .unwrap()
+            .unwrap();
+        super::super::parent::tests::receive(&mut foreground.peer);
+        unsafe {
+            QueryPerformanceCounter(&mut at).unwrap();
+        }
+        let report = Output::PreparationAck {
+            id,
+            phase: Preparation::AwaitingText,
+            refusal: None,
+            observed_counter: at,
+        };
+        foreground.peer.send(0, &report.bytes().unwrap()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Err(error) = foreground.parent.tick_with_renderer(&mut renderer) {
+                assert!(
+                    error.to_string().contains("console layout changed"),
+                    "{error}"
+                );
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert!(foreground.parent.failed());
+        assert_eq!(foreground.parent.outstanding(), 1);
+        assert!(foreground.peer.receive().is_none());
+        renderer.shutdown().unwrap();
+        let (mut input_mode, mut output_mode) = (CONSOLE_MODE::default(), CONSOLE_MODE::default());
+        unsafe {
+            GetConsoleMode(handle(&original_input), &mut input_mode).unwrap();
+            GetConsoleMode(handle(&original_output), &mut output_mode).unwrap();
+        }
+        assert_eq!(
+            (input_mode.0, output_mode.0),
+            (original_input_mode.0, original_output_mode.0)
+        );
+        assert_eq!(
+            unsafe { (GetConsoleCP(), GetConsoleOutputCP()) },
+            original_pages
+        );
+        std::fs::write(
+            "console-complete.marker",
+            b"forty echoed lines preserved exact original cells",
+        )
+        .unwrap();
+    }
+    #[test]
+    fn owned_console_keeps_spanish_transcript_through_repeated_cooked_echo() {
+        let root = tempfile::tempdir().unwrap();
+        let path = std::env::current_exe().unwrap();
+        let identity = crate::media_runtime::ByteIdentity::observe_file(&path).unwrap();
+        let binding = crate::media_runtime::BoundTool::bind(&crate::scene_delivery::FileRef {
+            path,
+            sha256: identity.sha256,
+            bytes: identity.bytes,
+        })
+        .unwrap();
+        let mut capture = Capture::new();
+        let console = capture.console.as_ref().unwrap().borrowed();
+        let pid = AtomicU32::new(0);
+        let cancel = Arc::new(AtomicBool::new(false));
+        struct Cancel(Arc<AtomicBool>);
+        impl Drop for Cancel {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        std::thread::scope(|scope| {
+            let (program, directory, actual_pid) = (binding.path(), root.path(), &pid);
+            let stopped = cancel.clone();
+            let job = scope.spawn(move || {
+                run_pseudoconsole_observed(
+                    program,
+                    &[
+                        "--ignored".into(),
+                        "--exact".into(),
+                        "spoken_programme::installation::native::console::tests::console_fixture"
+                            .into(),
+                        "--test-threads=1".into(),
+                    ],
+                    directory,
+                    Duration::from_secs(30),
+                    QuietLimits {
+                        memory_bytes: 256 * 1024 * 1024,
+                        processes: 1,
+                    },
+                    console,
+                    |event| {
+                        if stopped.load(Ordering::Acquire) {
+                            return Err("controlled console cancelled".into());
+                        }
+                        if let QuietEvent::Process(info) = event {
+                            actual_pid.store(info.process_id, Ordering::Release);
+                        }
+                        Ok(())
+                    },
+                )
+                .map_err(|error| error.to_string())
+            });
+            let _cancel = Cancel(cancel.clone());
+            let until = Instant::now() + Duration::from_secs(25);
+            while !root.path().join("console-ready.marker").is_file() {
+                assert!(!job.is_finished(), "console child exited before admission");
+                assert!(Instant::now() < until, "console admission deadline");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            assert!(pid.load(Ordering::Acquire) > 0);
+            capture
+                .input
+                .as_mut()
+                .unwrap()
+                .write_all(
+                    format!(
+                        "{}bogus\rpausé\r{}\r\x1a\r",
+                        "status\r".repeat(40),
+                        "s".repeat(65)
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            while !root.path().join("console-reader-ready.marker").is_file() {
+                assert!(
+                    !job.is_finished(),
+                    "console child exited before cooked reader"
+                );
+                assert!(Instant::now() < until, "console reader handshake deadline");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            capture
+                .input
+                .as_mut()
+                .unwrap()
+                .write_all(b"bogus\rstatus\r\x1a\r")
+                .unwrap();
+            while !root.path().join("console-interrupt-ready.marker").is_file() {
+                assert!(!job.is_finished(), "console child exited before Ctrl+C");
+                assert!(
+                    Instant::now() < until,
+                    "console interrupt handshake deadline"
+                );
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            capture.input.as_mut().unwrap().write_all(&[3]).unwrap();
+            while !root.path().join("console-resize-ready.marker").is_file() {
+                assert!(
+                    !job.is_finished(),
+                    "console child exited before resize check"
+                );
+                assert!(Instant::now() < until, "console resize handshake deadline");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            unsafe {
+                ResizePseudoConsole(capture.console.as_ref().unwrap().0, COORD { X: 79, Y: 29 })
+                    .unwrap();
+            }
+            std::fs::write(
+                root.path().join("console-resized.marker"),
+                b"actual pseudoconsole resized below admitted layout",
+            )
+            .unwrap();
+            let result = job.join().unwrap();
+            assert!(result.is_ok(), "{result:?}");
+            assert!(root.path().join("console-complete.marker").is_file());
+        });
+        let (bytes, overflow) = capture.finish();
+        assert!(!overflow);
+        let text = String::from_utf8(bytes).unwrap();
+        assert!(text.contains("señal") && text.contains("pingüino"));
+    }
+}
