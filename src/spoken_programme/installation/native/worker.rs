@@ -208,6 +208,7 @@ pub struct WorkerSession {
     source_fault: bool,
     fault_reported: bool,
     closing: bool,
+    expired: bool,
     cleanup_deadline_us: u64,
     acknowledgements: VecDeque<DisplayAck>,
 }
@@ -306,6 +307,7 @@ impl WorkerSession {
             source_fault: false,
             fault_reported: false,
             closing: false,
+            expired: false,
             cleanup_deadline_us: MAX_SESSION_MS * 1000 + 2_000_000,
             acknowledgements: VecDeque::with_capacity(8),
         })
@@ -396,6 +398,15 @@ impl WorkerSession {
             self.send(0, self.gate.hello())?;
             self.hello = true;
         }
+        if self
+            .clock
+            .now_us()
+            .is_some_and(|now| now >= MAX_SESSION_MS * 1000)
+        {
+            self.expired = true;
+            self.closing = true;
+            return Ok(());
+        }
         // A peer may refill the queue while we drain it. Bound this batch so
         // even valid Status/AckShown traffic cannot starve native/core ticks.
         for _ in 0..8 {
@@ -423,10 +434,8 @@ impl WorkerSession {
             anyhow::bail!("installation worker authorization deadline");
         }
         if now >= MAX_SESSION_MS * 1000 {
+            self.expired = true;
             self.closing = true;
-            if let Some(controller) = &mut self.controller {
-                controller.abort();
-            }
             return Ok(());
         }
         if self
@@ -730,11 +739,15 @@ impl WorkerSession {
         ensure!(self.closing, "installation worker still active");
         self.gate.end();
         let generation = self.generation();
-        let snapshot = self.observed();
+        let mut snapshot = self.observed();
         if let Some(source) = &self.source {
             source.request_stop();
         }
-        drop(self.controller.take());
+        if let Some(mut controller) = self.controller.take()
+            && self.expired
+        {
+            snapshot = Some(controller.finish_expired()?);
+        }
         drop(self.output.take());
         drop(self.source.take());
         drop(self.core.take());

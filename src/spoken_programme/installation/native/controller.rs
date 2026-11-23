@@ -645,11 +645,11 @@ impl Controller {
     }
 }
 
-impl Drop for Controller {
-    fn drop(&mut self) {
+impl Controller {
+    fn shutdown_and_reclaim(&mut self) -> Result<()> {
         // Keep the return receiver alive while the native closure is actually
         // destroyed. Struct field drop order alone would drop it too early.
-        let _ = self.output.shutdown();
+        let result = self.output.shutdown();
         if let Some(sink) = self.sink.as_mut() {
             sink.reclaim_closed();
         }
@@ -658,6 +658,33 @@ impl Drop for Controller {
                 self.core = Some(core);
             }
         }
+        result
+    }
+
+    /// Called by worker teardown, after lifetime expiry, outside the control loop.
+    pub(super) fn finish_expired(&mut self) -> Result<Snapshot> {
+        self.shutdown_and_reclaim()?;
+        let now = self.now()?;
+        ensure!(
+            now >= MAX_SESSION_MS * 1000,
+            "installation lifetime has not expired"
+        );
+        ensure!(
+            self.core.is_some(),
+            "installation expired transport was not returned"
+        );
+        self.poll_core(now);
+        ensure!(
+            self.observed.session_closed,
+            "installation expired transport did not close"
+        );
+        Ok(self.observed)
+    }
+}
+
+impl Drop for Controller {
+    fn drop(&mut self) {
+        let _ = self.shutdown_and_reclaim();
     }
 }
 
@@ -667,7 +694,9 @@ mod tests {
     use super::*;
     use std::sync::atomic::Ordering;
     fn fixture() -> (Controller, Harness, OutputClock) {
-        let clock = OutputClock::start().unwrap();
+        fixture_at(OutputClock::start().unwrap())
+    }
+    fn fixture_at(clock: OutputClock) -> (Controller, Harness, OutputClock) {
         let binding = super::super::session::fixture_request().endpoint;
         let (output, harness) = output(binding, clock);
         let mut samples = vec![0.0; 20000];
@@ -676,6 +705,34 @@ mod tests {
             Transport::new(samples.into(), "Engineering signal\n".into(), [7; 32], 2, 0).unwrap(),
         );
         (Controller::new(core, output, clock), harness, clock)
+    }
+    #[test]
+    fn expiry_reclaims_a_paused_callback_and_reports_the_real_stopped_core() {
+        let (origin, frequency) = OutputClock::start().unwrap().origin();
+        let clock = OutputClock::from_origin(origin - frequency * 119, frequency).unwrap();
+        let (mut controller, harness, _) = fixture_at(clock);
+        controller
+            .command(1, Command::Start, 0, clock.now_us().unwrap())
+            .unwrap();
+        wait(&mut controller, &harness, |c| {
+            c.observed().state == State::Playing
+        });
+        controller
+            .command(2, Command::Pause, 1, clock.now_us().unwrap())
+            .unwrap();
+        wait(&mut controller, &harness, |c| {
+            c.observed().state == State::Paused
+        });
+        assert!(controller.core.is_none());
+        let paused = controller.observed();
+        while clock.now_us().unwrap() < MAX_SESSION_MS * 1000 {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let closed = controller.finish_expired().unwrap();
+        assert_eq!(closed.state, State::Stopped);
+        assert!(closed.session_closed);
+        assert_eq!(closed.source_frame, paused.source_frame);
+        assert_eq!(closed.generation, paused.generation);
     }
     fn wait(
         controller: &mut Controller,
