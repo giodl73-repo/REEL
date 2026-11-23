@@ -718,6 +718,13 @@ observation point that produced it:
 Record human listening, operator usability and rights review separately from
 these measurements.
 
+`actual_station_status_acknowledgement_meets_outer_deadline` times from
+before typing Status into the pseudoconsole to the reader observing its
+numbered Ready acknowledgement. This bounds the application's receipt-to-display
+time from above. Three Dell runs measured 12.9–14.4 ms after eliminating a
+duplicate Ready report that could overwrite the acknowledgement. These
+measurements cover Status while Ready, with no stream open.
+
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
 The controller still tracks every callback cursor, but publishes cursor-only
