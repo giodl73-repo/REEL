@@ -9,7 +9,20 @@ production assets. Build with `cargo build --locked --features speech-provider
 reel-tig-speech inspect PROFILE
 reel-tig-speech capture PROFILE RESPONSE_SHA256 RESPONSE_BYTES NEW_ABSOLUTE_OUTPUT
 reel-tig-speech execute PROFILE NEW_ABSOLUTE_OUTPUT
+reel-tig-speech cut PROFILE SPEC NEW_ABSOLUTE_OUTPUT
 ```
+
+`cut` extracts exact PCM samples from an approved canonical mono PCM16/44100
+audition, with no provider call. A `reel.speech-cut.v1` specification pins the
+wave, raw alignment and exact owner approval, then supplies segments with safe
+IDs, half-open source character ranges and expected text. Role, language, model,
+source text and wave must match the approval subject. Every selected timestamp
+must fit the source PCM. A qualified prefix can be extracted when a later,
+unselected endpoint is invalid; the receipt keeps that global failure explicit.
+Derived alignment endpoints use the native sample grid (floor starts, ceil ends,
+less than one sample of quantization). Original PCM and alignment remain intact.
+Outputs contain clip WAVs, checked relative alignments and a source-bound receipt;
+technical qualification does not approve the edit or authorize public release.
 
 Inspection verifies existing objects without reading credentials, writing an
 attempt or contacting a provider. Capture imports an existing exact response;
@@ -56,6 +69,13 @@ The request uses `schema: reel.speech-request.v1`, `provider: elevenlabs`,
 or model is inferred. The tag, if declared, is a leading advisory delivery tag;
 its effect requires listening. A seed does not guarantee deterministic output.
 
+For `eleven_v4` and `eleven_v4_turbo`, the provider body contains only the
+supported `stability` and `similarity_boost` voice settings. The v1 control
+document retains its legacy settings shape, with `style:0`, `speed:1` and
+`use_speaker_boost:false` required as neutral placeholders; these three fields
+are omitted from the provider request. Nonneutral unsupported controls refuse
+rather than silently promising an effect. Older model bodies remain unchanged.
+
 The scope object uses `schema: reel.speech-authorization.v1`, the exact request
 object pin, matching `role_id`, `voice_id`, `language_code`, existing
 `consent_evidence` and `casting_evidence` object pins, explicit boolean
@@ -94,6 +114,24 @@ Transport errors have a static failure record. Do not infer that a failed or
 timed-out attempt was unbilled or never reached the provider.
 
 ## Candidate outputs and qualification
+
+For a manual REEL workflow cue, declare a `speech-candidate` task with the cue's
+language and output slots `recording` for `recording.wav` (`audio/wav`),
+`alignment` for `alignment.json`, and `receipt` for `receipt.json` (both
+`application/json`). Bind the exact request and
+authorization as task inputs. Run `reel-tig-speech` against that profile and
+pass the three output paths to `reel-workflow capture-work` using the matching
+slot names and original attempt. Use the
+[workflow exchange instructions](../crates/reel-workflow/README.md) for the
+path map and package commands. Preserve the private speech workspace as the
+source of provider and authorization evidence.
+
+Manual capture checks the declared file bounds and hashes. Before native
+retention or downstream timing use, run
+`reel-workflow check-speech-handoff PACKET RESULT RECEIPT` to compare the
+receipt's pins against the captured output metadata and declared task inputs.
+Use the reported timing qualification alongside the original speech evidence.
+Existing selected recordings can be bound directly to cue tasks.
 
 On a successful decode, the attempt contains the raw response, original PCM16
 mono 44100 Hz bytes, a WAV wrapper with unchanged samples, original and normalized

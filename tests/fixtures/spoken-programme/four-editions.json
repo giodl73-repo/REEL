@@ -1,0 +1,585 @@
+{
+  "schema": "reel.spoken-edition.v1",
+  "id": "public-engineering-fixture",
+  "sample_rate": 48000,
+  "modules": [
+    {
+      "id": "opening",
+      "requires": [],
+      "cues": [
+        {
+          "id": "opening",
+          "speaker_id": "host",
+          "scripts": [
+            {
+              "language": "en",
+              "text": "We can reuse reviewed speech in different editions.",
+              "sha256": "53e6307e1f044a160d0cdc774a406539aabd0622cd7c061ddab7f0e236106bcf",
+              "authority": {
+                "path": "fixture/fixture-text-authority-en",
+                "sha256": "7b915ff6acd2bf3feff2b657bd465faaa2d868759d2399f11e07f346a756da2d",
+                "bytes": 64
+              },
+              "id": "en-standard"
+            },
+            {
+              "language": "es",
+              "text": "Podemos reutilizar voz revisada en distintas ediciones.",
+              "sha256": "86e2bd85cb47b16d83900de0f5681496ae35b48b052f4540e00b8a66b51ece91",
+              "authority": {
+                "path": "fixture/fixture-text-authority-es",
+                "sha256": "8d66b3ae600992d9bb85d2c85a53a3b8906478ffb5dbc1e076983d493d212590",
+                "bytes": 64
+              },
+              "id": "es-standard"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "detail",
+      "requires": [],
+      "cues": [
+        {
+          "id": "detail",
+          "speaker_id": "expert",
+          "scripts": [
+            {
+              "language": "en",
+              "text": "Each edition selects exact takes and declares its speaker handoffs.",
+              "sha256": "4339f736ca85bf46c328babaf7b993fb02ac9d6b384963511ff0d095279f918f",
+              "authority": {
+                "path": "fixture/fixture-text-authority-en",
+                "sha256": "7b915ff6acd2bf3feff2b657bd465faaa2d868759d2399f11e07f346a756da2d",
+                "bytes": 64
+              },
+              "id": "en-standard"
+            },
+            {
+              "language": "es",
+              "text": "Cada edición selecciona tomas exactas y declara los cambios de hablante.",
+              "sha256": "ba6addb065d436903d96e9c663eae1b7d9d9fbbd72e875141202f1631cad3ece",
+              "authority": {
+                "path": "fixture/fixture-text-authority-es",
+                "sha256": "8d66b3ae600992d9bb85d2c85a53a3b8906478ffb5dbc1e076983d493d212590",
+                "bytes": 64
+              },
+              "id": "es-standard"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "closing",
+      "requires": [
+        "opening"
+      ],
+      "cues": [
+        {
+          "id": "closing",
+          "speaker_id": "host",
+          "scripts": [
+            {
+              "language": "en",
+              "text": "The result keeps its own timing and review evidence.",
+              "sha256": "df93872d5b4b16e045c8a549c29f9e19c28f10b6840782ebabb542a4ffbd3879",
+              "authority": {
+                "path": "fixture/fixture-text-authority-en",
+                "sha256": "7b915ff6acd2bf3feff2b657bd465faaa2d868759d2399f11e07f346a756da2d",
+                "bytes": 64
+              },
+              "id": "en-standard"
+            },
+            {
+              "language": "es",
+              "text": "El resultado conserva sus propios tiempos y la evidencia de revisión.",
+              "sha256": "a56d760f3b789b5bc04bdcec22472b9c6e3bdafd92b7935465f41e3ed0ddff22",
+              "authority": {
+                "path": "fixture/fixture-text-authority-es",
+                "sha256": "8d66b3ae600992d9bb85d2c85a53a3b8906478ffb5dbc1e076983d493d212590",
+                "bytes": 64
+              },
+              "id": "es-standard"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "performances": [
+    {
+      "id": "en-opening",
+      "module_id": "opening",
+      "cue_id": "opening",
+      "language": "en",
+      "script_sha256": "53e6307e1f044a160d0cdc774a406539aabd0622cd7c061ddab7f0e236106bcf",
+      "observed_text_sha256": "f8dc9bb6f9cb6c91056c6dc5792790e19efa2b80d9901fd1e3f817eb82e300c0",
+      "source": {
+        "path": "fixture/en-opening.wav",
+        "sha256": "c5a1447087d1290a27370e22d699e65118a7f70656942f7b555e3ba015684ecc",
+        "bytes": 64
+      },
+      "alignment": {
+        "path": "fixture/en-opening-fixture-clock.json",
+        "sha256": "20442b3bd774bf21132c453fdd52e0a3f0a9b7df3472d4ef00bf715f15b59d97",
+        "bytes": 64
+      },
+      "duration_samples": 144000,
+      "markers": [],
+      "protected": [
+        {
+          "kind": "word",
+          "start_sample": 2400,
+          "end_sample": 139200
+        },
+        {
+          "kind": "tail",
+          "start_sample": 139200,
+          "end_sample": 144000
+        }
+      ],
+      "scope": {
+        "kind": "engineering-signal",
+        "speaker_id": "host",
+        "language": "en",
+        "edition_ids": [
+          "en-technical",
+          "en-executive"
+        ],
+        "evidence": {
+          "path": "fixture/fixture-only-reuse-en",
+          "sha256": "ac9d1a1f43bdc0be6e1cdda87fb69171452bffb8cfce8292e67985227b9f4f7a",
+          "bytes": 64
+        }
+      },
+      "script_id": "en-standard"
+    },
+    {
+      "id": "en-detail",
+      "module_id": "detail",
+      "cue_id": "detail",
+      "language": "en",
+      "script_sha256": "4339f736ca85bf46c328babaf7b993fb02ac9d6b384963511ff0d095279f918f",
+      "observed_text_sha256": "f8dc9bb6f9cb6c91056c6dc5792790e19efa2b80d9901fd1e3f817eb82e300c0",
+      "source": {
+        "path": "fixture/en-detail.wav",
+        "sha256": "82db31a391b21e4d6a3fa1347dec556344ae7852538ecb27c5c2b042eafd270b",
+        "bytes": 64
+      },
+      "alignment": {
+        "path": "fixture/en-detail-fixture-clock.json",
+        "sha256": "2957237dd0f9166a3c7f54b96b394acb793883ae44f2d2c055dbec35570b553b",
+        "bytes": 64
+      },
+      "duration_samples": 192000,
+      "markers": [],
+      "protected": [
+        {
+          "kind": "word",
+          "start_sample": 2400,
+          "end_sample": 187200
+        },
+        {
+          "kind": "tail",
+          "start_sample": 187200,
+          "end_sample": 192000
+        }
+      ],
+      "scope": {
+        "kind": "engineering-signal",
+        "speaker_id": "expert",
+        "language": "en",
+        "edition_ids": [
+          "en-technical"
+        ],
+        "evidence": {
+          "path": "fixture/fixture-only-reuse-en",
+          "sha256": "ac9d1a1f43bdc0be6e1cdda87fb69171452bffb8cfce8292e67985227b9f4f7a",
+          "bytes": 64
+        }
+      },
+      "script_id": "en-standard"
+    },
+    {
+      "id": "en-closing",
+      "module_id": "closing",
+      "cue_id": "closing",
+      "language": "en",
+      "script_sha256": "df93872d5b4b16e045c8a549c29f9e19c28f10b6840782ebabb542a4ffbd3879",
+      "observed_text_sha256": "f8dc9bb6f9cb6c91056c6dc5792790e19efa2b80d9901fd1e3f817eb82e300c0",
+      "source": {
+        "path": "fixture/en-closing.wav",
+        "sha256": "54c0bf92ca40a476894226b38275d60c8beae72d59ee490bfac64fa6620d6475",
+        "bytes": 64
+      },
+      "alignment": {
+        "path": "fixture/en-closing-fixture-clock.json",
+        "sha256": "d00db043a4a9df0022d54e535890c74ed805ebacf510726ac117a11ff1a1c28d",
+        "bytes": 64
+      },
+      "duration_samples": 144000,
+      "markers": [],
+      "protected": [
+        {
+          "kind": "word",
+          "start_sample": 2400,
+          "end_sample": 139200
+        },
+        {
+          "kind": "tail",
+          "start_sample": 139200,
+          "end_sample": 144000
+        }
+      ],
+      "scope": {
+        "kind": "engineering-signal",
+        "speaker_id": "host",
+        "language": "en",
+        "edition_ids": [
+          "en-technical",
+          "en-executive"
+        ],
+        "evidence": {
+          "path": "fixture/fixture-only-reuse-en",
+          "sha256": "ac9d1a1f43bdc0be6e1cdda87fb69171452bffb8cfce8292e67985227b9f4f7a",
+          "bytes": 64
+        }
+      },
+      "script_id": "en-standard"
+    },
+    {
+      "id": "es-opening",
+      "module_id": "opening",
+      "cue_id": "opening",
+      "language": "es",
+      "script_sha256": "86e2bd85cb47b16d83900de0f5681496ae35b48b052f4540e00b8a66b51ece91",
+      "observed_text_sha256": "f8dc9bb6f9cb6c91056c6dc5792790e19efa2b80d9901fd1e3f817eb82e300c0",
+      "source": {
+        "path": "fixture/es-opening.wav",
+        "sha256": "47c213c07f85693d91c802ceb7bb8ad81fa480b8054b03f9ff3960a7007e9914",
+        "bytes": 64
+      },
+      "alignment": {
+        "path": "fixture/es-opening-fixture-clock.json",
+        "sha256": "e10706518cee3953360cf10729d6a88c93c2c63883e1090b32b2f3806dd4625b",
+        "bytes": 64
+      },
+      "duration_samples": 168000,
+      "markers": [],
+      "protected": [
+        {
+          "kind": "word",
+          "start_sample": 2400,
+          "end_sample": 163200
+        },
+        {
+          "kind": "tail",
+          "start_sample": 163200,
+          "end_sample": 168000
+        }
+      ],
+      "scope": {
+        "kind": "engineering-signal",
+        "speaker_id": "host",
+        "language": "es",
+        "edition_ids": [
+          "es-technical",
+          "es-executive"
+        ],
+        "evidence": {
+          "path": "fixture/fixture-only-reuse-es",
+          "sha256": "01660cb818fed7a676b587bba2614393c58165f454b4f662dc514dcba6c04bde",
+          "bytes": 64
+        }
+      },
+      "script_id": "es-standard"
+    },
+    {
+      "id": "es-detail",
+      "module_id": "detail",
+      "cue_id": "detail",
+      "language": "es",
+      "script_sha256": "ba6addb065d436903d96e9c663eae1b7d9d9fbbd72e875141202f1631cad3ece",
+      "observed_text_sha256": "f8dc9bb6f9cb6c91056c6dc5792790e19efa2b80d9901fd1e3f817eb82e300c0",
+      "source": {
+        "path": "fixture/es-detail.wav",
+        "sha256": "1924fcf93b87187d63177ed547e2550a365cfacf9378a70b50aede9341408b14",
+        "bytes": 64
+      },
+      "alignment": {
+        "path": "fixture/es-detail-fixture-clock.json",
+        "sha256": "9a8f5fb1de8c78f8587a286663ccf3fbd3179fdf34e7d1d879d23bb1085c6393",
+        "bytes": 64
+      },
+      "duration_samples": 216000,
+      "markers": [],
+      "protected": [
+        {
+          "kind": "word",
+          "start_sample": 2400,
+          "end_sample": 211200
+        },
+        {
+          "kind": "tail",
+          "start_sample": 211200,
+          "end_sample": 216000
+        }
+      ],
+      "scope": {
+        "kind": "engineering-signal",
+        "speaker_id": "expert",
+        "language": "es",
+        "edition_ids": [
+          "es-technical"
+        ],
+        "evidence": {
+          "path": "fixture/fixture-only-reuse-es",
+          "sha256": "01660cb818fed7a676b587bba2614393c58165f454b4f662dc514dcba6c04bde",
+          "bytes": 64
+        }
+      },
+      "script_id": "es-standard"
+    },
+    {
+      "id": "es-closing",
+      "module_id": "closing",
+      "cue_id": "closing",
+      "language": "es",
+      "script_sha256": "a56d760f3b789b5bc04bdcec22472b9c6e3bdafd92b7935465f41e3ed0ddff22",
+      "observed_text_sha256": "f8dc9bb6f9cb6c91056c6dc5792790e19efa2b80d9901fd1e3f817eb82e300c0",
+      "source": {
+        "path": "fixture/es-closing.wav",
+        "sha256": "2cc05d9af3f84820f6d92cdf0fcf2bb0371e4f4c066eb5d04d1abd27d7521bc0",
+        "bytes": 64
+      },
+      "alignment": {
+        "path": "fixture/es-closing-fixture-clock.json",
+        "sha256": "b3a79a0c9af2a61ed19fb4a16e5764c9e6f5c7c48f26ae7602b13c923c6f0743",
+        "bytes": 64
+      },
+      "duration_samples": 168000,
+      "markers": [],
+      "protected": [
+        {
+          "kind": "word",
+          "start_sample": 2400,
+          "end_sample": 163200
+        },
+        {
+          "kind": "tail",
+          "start_sample": 163200,
+          "end_sample": 168000
+        }
+      ],
+      "scope": {
+        "kind": "engineering-signal",
+        "speaker_id": "host",
+        "language": "es",
+        "edition_ids": [
+          "es-technical",
+          "es-executive"
+        ],
+        "evidence": {
+          "path": "fixture/fixture-only-reuse-es",
+          "sha256": "01660cb818fed7a676b587bba2614393c58165f454b4f662dc514dcba6c04bde",
+          "bytes": 64
+        }
+      },
+      "script_id": "es-standard"
+    }
+  ],
+  "editions": [
+    {
+      "id": "en-executive",
+      "language": "en",
+      "audience": "executive",
+      "selections": [
+        {
+          "module_id": "opening",
+          "takes": [
+            {
+              "performance_id": "en-opening",
+              "start_sample": 0,
+              "end_sample": 144000
+            }
+          ]
+        },
+        {
+          "module_id": "closing",
+          "takes": [
+            {
+              "performance_id": "en-closing",
+              "start_sample": 0,
+              "end_sample": 144000
+            }
+          ]
+        }
+      ],
+      "joins": [
+        {
+          "from": "en-opening",
+          "to": "en-closing",
+          "added_pause_samples": 12000,
+          "overlap_samples": 0
+        }
+      ],
+      "required_modules": [
+        "opening",
+        "closing"
+      ]
+    },
+    {
+      "id": "en-technical",
+      "language": "en",
+      "audience": "technical",
+      "selections": [
+        {
+          "module_id": "opening",
+          "takes": [
+            {
+              "performance_id": "en-opening",
+              "start_sample": 0,
+              "end_sample": 144000
+            }
+          ]
+        },
+        {
+          "module_id": "detail",
+          "takes": [
+            {
+              "performance_id": "en-detail",
+              "start_sample": 0,
+              "end_sample": 192000
+            }
+          ]
+        },
+        {
+          "module_id": "closing",
+          "takes": [
+            {
+              "performance_id": "en-closing",
+              "start_sample": 0,
+              "end_sample": 144000
+            }
+          ]
+        }
+      ],
+      "joins": [
+        {
+          "from": "en-opening",
+          "to": "en-detail",
+          "added_pause_samples": 14400,
+          "overlap_samples": 0
+        },
+        {
+          "from": "en-detail",
+          "to": "en-closing",
+          "added_pause_samples": 14400,
+          "overlap_samples": 0
+        }
+      ],
+      "required_modules": [
+        "opening",
+        "detail",
+        "closing"
+      ]
+    },
+    {
+      "id": "es-executive",
+      "language": "es",
+      "audience": "executive",
+      "selections": [
+        {
+          "module_id": "opening",
+          "takes": [
+            {
+              "performance_id": "es-opening",
+              "start_sample": 0,
+              "end_sample": 168000
+            }
+          ]
+        },
+        {
+          "module_id": "closing",
+          "takes": [
+            {
+              "performance_id": "es-closing",
+              "start_sample": 0,
+              "end_sample": 168000
+            }
+          ]
+        }
+      ],
+      "joins": [
+        {
+          "from": "es-opening",
+          "to": "es-closing",
+          "added_pause_samples": 16800,
+          "overlap_samples": 0
+        }
+      ],
+      "required_modules": [
+        "opening",
+        "closing"
+      ]
+    },
+    {
+      "id": "es-technical",
+      "language": "es",
+      "audience": "technical",
+      "selections": [
+        {
+          "module_id": "opening",
+          "takes": [
+            {
+              "performance_id": "es-opening",
+              "start_sample": 0,
+              "end_sample": 168000
+            }
+          ]
+        },
+        {
+          "module_id": "detail",
+          "takes": [
+            {
+              "performance_id": "es-detail",
+              "start_sample": 0,
+              "end_sample": 216000
+            }
+          ]
+        },
+        {
+          "module_id": "closing",
+          "takes": [
+            {
+              "performance_id": "es-closing",
+              "start_sample": 0,
+              "end_sample": 168000
+            }
+          ]
+        }
+      ],
+      "joins": [
+        {
+          "from": "es-opening",
+          "to": "es-detail",
+          "added_pause_samples": 19200,
+          "overlap_samples": 0
+        },
+        {
+          "from": "es-detail",
+          "to": "es-closing",
+          "added_pause_samples": 19200,
+          "overlap_samples": 0
+        }
+      ],
+      "required_modules": [
+        "opening",
+        "detail",
+        "closing"
+      ]
+    }
+  ]
+}

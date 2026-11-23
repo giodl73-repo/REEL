@@ -34,6 +34,8 @@ mod capture;
 mod comparison;
 mod delivery_inspection;
 pub use delivery_inspection::inspect_delivery;
+mod episode_control_inspection;
+pub use episode_control_inspection::inspect_episode_controls;
 pub(crate) mod metadata_wait;
 pub use comparison::{
     check_retained_delivery, compare_browser_retained,

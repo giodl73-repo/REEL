@@ -13,6 +13,12 @@ enum Operation {
     Inspect { profile: PathBuf },
     /// Make one authorized provider request and preserve a private, unselected attempt.
     Execute { profile: PathBuf, output: PathBuf },
+    /// Extract exact approved PCM subranges using bounded source character evidence; no provider call.
+    Cut {
+        profile: PathBuf,
+        spec: PathBuf,
+        output: PathBuf,
+    },
     /// Capture an existing response; does not attest who generated it or select a voice.
     Capture {
         profile: PathBuf,
@@ -27,6 +33,11 @@ fn main() -> ExitCode {
         Operation::Execute { profile, output } => {
             reel::speech_generation::execute(&profile, &output)
         }
+        Operation::Cut {
+            profile,
+            spec,
+            output,
+        } => reel::speech_generation::cut(&profile, &spec, &output),
         Operation::Capture {
             profile,
             response_sha256,

@@ -1,14 +1,11 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     AuthorityRef,
-    hash::{canonical_sha256, sha256_path},
+    hash::canonical_sha256,
     nonempty,
     time::{AudioTimebase, MusicalTimebase},
     validate_authority, validate_sha256,
@@ -90,17 +87,48 @@ pub struct ValidationReport {
 }
 
 pub fn load(path: &Path) -> Result<SourceManifest> {
-    let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+    load_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn load_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<SourceManifest> {
+    let bytes = inputs
+        .read(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
     serde_yaml::from_slice(&bytes)
         .with_context(|| format!("music source is not valid YAML: {}", path.display()))
 }
 
 pub fn validate(path: &Path) -> Result<ValidationReport> {
-    let manifest = load(path)?;
-    validate_loaded(path, &manifest)
+    validate_with_inputs(
+        path,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+pub fn validate_with_inputs(
+    path: &Path,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ValidationReport> {
+    let manifest = load_with_inputs(path, inputs)?;
+    validate_loaded_with_inputs(path, &manifest, inputs)
 }
 
 pub fn validate_loaded(path: &Path, manifest: &SourceManifest) -> Result<ValidationReport> {
+    validate_loaded_with_inputs(
+        path,
+        manifest,
+        &mut crate::validation_inputs::ValidationInputs::filesystem(),
+    )
+}
+fn validate_loaded_with_inputs(
+    path: &Path,
+    manifest: &SourceManifest,
+    inputs: &mut crate::validation_inputs::ValidationInputs<'_>,
+) -> Result<ValidationReport> {
     if manifest.schema != SCHEMA {
         bail!("music source schema must be {SCHEMA}");
     }
@@ -120,14 +148,14 @@ pub fn validate_loaded(path: &Path, manifest: &SourceManifest) -> Result<Validat
         bail!("egress.third_party_upload must be false");
     }
     let media_path = resolve(path, &manifest.media.path);
-    let media_hash = sha256_path(&media_path)?;
+    let media_hash = inputs.sha256(&media_path)?;
     if media_hash != manifest.media.sha256.to_lowercase() {
         bail!("media sha256 does not match media.sha256");
     }
     if media_hash != manifest.media.decoded_pcm_sha256.to_lowercase() {
         bail!("raw PCM source must have identical media and decoded PCM hashes");
     }
-    let bytes = fs::metadata(&media_path)?.len();
+    let bytes = inputs.len(&media_path)?;
     let expected = manifest
         .media
         .timebase
@@ -141,7 +169,7 @@ pub fn validate_loaded(path: &Path, manifest: &SourceManifest) -> Result<Validat
     Ok(ValidationReport {
         schema: SCHEMA.into(),
         source_id: manifest.source_id.clone(),
-        manifest_sha256: sha256_path(path)?,
+        manifest_sha256: inputs.sha256(path)?,
         contract_sha256: canonical_sha256(manifest)?,
         media_sha256: media_hash.clone(),
         decoded_pcm_sha256: media_hash,

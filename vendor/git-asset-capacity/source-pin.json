@@ -1,0 +1,8 @@
+{
+  "files": 379,
+  "source_commit": "fa6697cf62eb61bf9477fd62b6493a024ead4e49",
+  "source_repository": "https://github.com/giodl73-repo/git-asset",
+  "scope": "EVID-141 metadata capacity transitions and explicit lineage rebind; consumer adoption remains separate",
+  "source_manifest_sha256": "25e4a2173488842fe61201a48149ac4eb5f91f736f832a1a82e9e3e0401fddb4",
+  "schema": "reel.qualified-git-asset-capacity-source.v1"
+}

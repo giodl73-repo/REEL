@@ -150,6 +150,7 @@ fn fixture_with_clock(root: &Path, audio: bool, corrupt: bool, clock: bool) -> (
             sha256: inputs["clock.json"].sha256.clone(),
         }),
         audio_window: None,
+        lossless_master: None,
     };
     let manifest_bytes = serde_json::to_vec(&manifest).unwrap();
     (
@@ -181,7 +182,9 @@ fn limits() -> Limits {
             max_frames: 6,
             max_canvas_pixels: 64,
             max_elapsed_ms: 60000,
-            max_io_wait_ms: 15000,
+            // Cold hosted Edge discovery can exceed 15s before resource serving starts.
+            // This is fixture startup/IO budget, not a corruption or overall-timeout waiver.
+            max_io_wait_ms: 30000,
         },
         max_workspace_bytes: 128 * 1024 * 1024,
         max_output_bytes: 1024 * 1024,

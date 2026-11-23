@@ -187,6 +187,20 @@ The private profile schema is `reel.tig-episode-job.experimental-1`:
   `request`, pinned `runtime`, and exact `scenes`/`presentations` coverage. Each
   component supplies its segment `id`, native `request`, `output_id` and explicit
   `output_definition`. A scene may set `compiled: true` for projected controls.
+  When consuming a repaired master, set `expected_master` to the retained
+  artifact's `sha256` and `bytes`. Both preparation and the worker require
+  this exact object to match the scene's selected output. The worker still
+  checks the selected master against the current scene and language controls.
+
+Use `reel-tig-job bind-episode-repair REQUEST NEW_PROFILE` to copy retained
+master pins from a successful `dispatch-film-rebuild` report. The JSON request
+uses schema `reel.tig-episode-repair-binding.v1` and supplies `profile`,
+`profile_pin`, `dispatch`, `dispatch_pin`, and `replacements`. The two pins
+contain `sha256` and `bytes`. Key replacements by episode segment ID and
+give each a `task_id` and `master_artifact` from the dispatch report. Use one
+request per episode edition. This writes a new profile and preserves segment
+order. Run ordinary episode preparation to verify the selected output before
+starting assembly.
 - `cache`, `preparation_cache`, `metadata_root`/`metadata_minimum` and
   `journal_root`/`journal_minimum` select already existing shared providers.
   Independent worktrees should share those providers while using distinct source

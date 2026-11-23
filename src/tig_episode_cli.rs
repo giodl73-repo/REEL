@@ -36,9 +36,12 @@ mod planning;
 mod preparation;
 mod presentation;
 mod records;
+mod repair;
+mod source_reuse;
 mod worker;
 pub use handoff::finish_episode;
 pub use preparation::prepare;
+pub use repair::bind as bind_repair;
 pub use worker::worker;
 
 const SCHEMA: &str = "reel.tig-episode-job.experimental-1";
@@ -82,6 +85,22 @@ struct Scene {
     output_definition: String,
     #[serde(default)]
     compiled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_master: Option<Object>,
+}
+impl Scene {
+    fn check_master(&self, reference: &jobs::reference::ReferencePlan<'_, '_>) -> Result<()> {
+        let selected = reference.selected();
+        if self.expected_master.as_ref().is_some_and(|expected| {
+            expected.sha256.as_str() != selected.sha256 || expected.bytes != selected.bytes
+        }) {
+            bail!(
+                "episode scene {} selected master differs from its expected output",
+                self.id
+            );
+        }
+        Ok(())
+    }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -124,6 +143,8 @@ struct Profile {
     source_id: String,
     owner: String,
     expected_revision: u64,
+    #[serde(default)]
+    reuse_children: Option<Selection>,
     operation: String,
     budget_bytes: u64,
     scratch_bytes: u64,
@@ -157,6 +178,8 @@ struct Ticket {
     max_logical_bytes: u64,
     outputs: BTreeMap<String, u64>,
     output_roots: Vec<PathBuf>,
+    #[serde(default)]
+    reused_children: Option<source_reuse::Pool>,
 }
 fn read<T: DeserializeOwned>(path: &Path, limit: usize, expected: Option<&Object>) -> Result<T> {
     let mut raw = Vec::new();
@@ -333,6 +356,8 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     } else if p.expected_revision != 0 {
         bail!("episode source missing");
     }
+    let reused_children = source_reuse::resolve(&p)?;
+    source_reuse::check_retired(&p, reused_children.as_ref(), &mut journal)?;
     let preparation = Preparation::open_on(
         &p.cache,
         &p.journal_root,
@@ -394,14 +419,18 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     );
     planning::readback(&p.inputs, &source, &context, &programs, &root, &mut reader)?;
     preparation.finish()?;
-    let ticket = identity::canonical_json(&json!({"schema":TICKET,"inputs":p.inputs,
+    let mut ticket = json!({"schema":TICKET,"inputs":p.inputs,
         "metadata_root":p.metadata_root,"metadata_minimum":minimum,"journal_root":p.journal_root,
         "journal_minimum":journal.checkpoint(),"coordination_root":coordination.root,
         "source_id":p.source_id,"owner":p.owner,"operation":p.operation,
         "resources":root.resources.selection(),"recipe":root.recipe.fingerprint(),
         "root_revision":p.expected_revision.checked_add(2).context("episode root revision overflow")?,
         "reference_staging_bytes":p.reference_staging_bytes,"reference_picture_processes":p.reference_picture_processes,
-        "timeout_seconds":p.timeout_seconds,"max_objects":p.max_objects,"max_logical_bytes":p.max_logical_bytes,"outputs":p.outputs,"output_roots":p.cache.cache_roots}))?;
+        "timeout_seconds":p.timeout_seconds,"max_objects":p.max_objects,"max_logical_bytes":p.max_logical_bytes,"outputs":p.outputs,"output_roots":p.cache.cache_roots});
+    if let Some(pool) = &reused_children {
+        ticket["reused_children"] = serde_json::to_value(pool)?;
+    }
+    let ticket = identity::canonical_json(&ticket)?;
     if ticket.len() > 65536 {
         bail!("episode worker ticket exceeds budget");
     }
@@ -436,6 +465,7 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
         .map_err(|error| anyhow::anyhow!("episode runner admission: {error}"))?;
     // Explicit request validation precedes source-journal adoption.
     let _fence = jobs::fence(&coordination, &journal, &identity)?;
+    source_reuse::check_retired(&p, reused_children.as_ref(), &mut journal)?;
     let prepared = journal.apply(
         phase(&p.source_id, &p.operation, "prepare")?,
         Command::Prepare {

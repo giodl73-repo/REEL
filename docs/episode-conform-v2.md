@@ -40,3 +40,29 @@ principal approval and publication remain downstream checks.
 The v1 master template and its contiguous `chapter-scenes` role remain
 supported. The bilingual synthetic contract test covers adjacent editable
 displays, order and coverage rejection, and wrong-language evidence.
+
+
+## Explicit silent picture holds
+
+A segment may declare tail_hold_frames (omitted/default zero preserves existing
+conforms). It appends that many repetitions of the source's last complete frame
+and an exactly frame-clocked zero-audio tail, after the complete selected source.
+It never trims the source, replaces a musical ending or creates a narration cue.
+Holds are bounded to sixty seconds and checked for arithmetic overflow.
+
+For example, tail_hold_frames:50 adds two seconds on a 25fps conform. Use it
+on an introduction to retain its final picture/title before a film, and on the
+complete film to leave silence before the next introduction. Count the added
+time in picture cadence and total program duration.
+
+The native conform first verifies the original source and normalizes it under
+existing policy, then losslessly appends the hold. It independently checks the
+complete decoded picture/audio against the expected source prefix, final-frame
+repetition and zero samples. input_frames/input_samples retain source counts;
+frames/samples include the hold. Nonzero hold lengths are recorded separately
+as tail_hold_frames and tail_hold_samples; frame-conform sub-frame padding
+remains separately reported as audio_padding_samples.
+
+This authoring control grants no creative or release approval. The final hold
+inherits the final encoded picture, including any title already composited there.
+The following segment receives no overlay from its predecessor.

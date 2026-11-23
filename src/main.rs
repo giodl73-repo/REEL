@@ -201,6 +201,7 @@ fn run_cli() -> Result<()> {
             browser,
             output_path,
             clean_picture,
+            poster,
             output,
         } => {
             let report =
@@ -210,6 +211,7 @@ fn run_cli() -> Result<()> {
                     browser,
                     output: output_path,
                     clean_picture,
+                    poster,
                 })?;
             print_report(&report, output)?;
         }
@@ -543,6 +545,22 @@ fn run_cli() -> Result<()> {
             let report = reel::scene_review::check(&contract, &asset_root, &output_dir)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::SceneDeliveryDeriveStill {
+            job,
+            job_sha256,
+            replacement,
+            replacement_sha256,
+            output_path,
+        } => {
+            let receipt = reel::scene_delivery::repair::write_candidate(
+                &job,
+                &job_sha256,
+                &replacement,
+                &replacement_sha256,
+                &output_path,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        }
         Command::SceneDeliveryPlan {
             job,
             asset_root,
@@ -655,6 +673,60 @@ fn run_cli() -> Result<()> {
             &output_graph,
             &output_pointer,
         )?,
+        Command::SpokenEditionCheck {
+            declaration,
+            plan,
+            asset_root,
+            candidate,
+            processing,
+            access,
+            write_access,
+        } => {
+            let report = reel::spoken_programme::checker::check_file(
+                reel::spoken_programme::checker::FileCheckRequest {
+                    declaration: &declaration,
+                    plan: &plan,
+                    source_root: &asset_root,
+                    candidate: &candidate,
+                    processing: processing.as_deref(),
+                    access: access.as_deref(),
+                    write_access: write_access.as_deref(),
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SpokenEditionProduce {
+            plan,
+            declaration,
+            asset_root,
+            processing,
+            output,
+        } => {
+            let report = reel::spoken_programme::producer::produce_file(
+                &declaration,
+                &plan,
+                processing.as_deref(),
+                &asset_root,
+                &output,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SpokenEditionCompile {
+            edition,
+            output,
+            profile,
+        } => {
+            let report =
+                reel::spoken_programme::compiler::compile_file(&edition, &output, profile)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Command::SpokenEditionValidate { edition } => {
+            let document = reel::spoken_programme::load(&edition)?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&reel::spoken_programme::validate(&document)?)?
+            );
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -2678,6 +2750,9 @@ enum Command {
         /// Hide elements marked .reel-disclosure or data-reel-disclosure.
         #[arg(long)]
         clean_picture: bool,
+        /// Retain the exact captured PNG (single-frame compositions only).
+        #[arg(long)]
+        poster: Option<PathBuf>,
         #[arg(long = "format", value_enum, default_value_t = OutputFormat::Text)]
         output: OutputFormat,
     },
@@ -2792,6 +2867,18 @@ enum Command {
         #[arg(long)]
         output_dir: PathBuf,
     },
+    /// Derive NEW still-replacement controls with exact old subjects; never select or render.
+    SceneDeliveryDeriveStill {
+        job: PathBuf,
+        #[arg(long)]
+        job_sha256: String,
+        #[arg(long)]
+        replacement: PathBuf,
+        #[arg(long)]
+        replacement_sha256: String,
+        #[arg(long)]
+        output_path: PathBuf,
+    },
     /// Plan scene delivery directly from compiled semantic timing and verified inputs.
     SceneDeliveryPlan {
         job: PathBuf,
@@ -2905,6 +2992,43 @@ enum Command {
         output_graph: PathBuf,
         #[arg(long)]
         output_pointer: PathBuf,
+    },
+    /// Validate an audio-edition declaration without reading media or executing tools.
+    SpokenEditionValidate { edition: PathBuf },
+    /// Independently check lossless spoken PCM and optional local text access.
+    SpokenEditionCheck {
+        declaration: PathBuf,
+        plan: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        candidate: PathBuf,
+        #[arg(long)]
+        processing: Option<PathBuf>,
+        #[arg(long, conflicts_with = "write_access")]
+        access: Option<PathBuf>,
+        #[arg(long)]
+        write_access: Option<PathBuf>,
+    },
+    /// Assemble a new private lossless spoken candidate from current exact controls.
+    SpokenEditionProduce {
+        plan: PathBuf,
+        #[arg(long)]
+        declaration: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        processing: Option<PathBuf>,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Compile selected spoken control evidence into a new private sample plan.
+    SpokenEditionCompile {
+        edition: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
+        profile: reel::spoken_programme::compiler::CompilationProfile,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {

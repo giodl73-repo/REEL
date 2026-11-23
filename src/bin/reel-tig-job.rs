@@ -38,6 +38,8 @@ enum Operation {
     VerifyEpisode { profile: PathBuf },
     /// Freeze/read back complete episode resources without adopting or rendering.
     PrepareEpisode { profile: PathBuf, output: PathBuf },
+    /// Bind dispatched repair outputs into a new episode profile.
+    BindEpisodeRepair { request: PathBuf, output: PathBuf },
     /// Resume a completed episode job's verified metadata/owner handoff only.
     FinishEpisode { profile: PathBuf },
     #[command(hide = true)]
@@ -59,6 +61,9 @@ enum Operation {
     RecoverSceneAudio { profile: PathBuf, output: PathBuf },
     /// Compile a committed presentation source without media reads or writes.
     InspectPresentation { profile: PathBuf },
+    /// Read exact compiled episode controls from an admitted frozen metadata root.
+    /// Does not open primary media, execute programs or mutate the store.
+    InspectEpisodeControls { profile: PathBuf },
     /// Independently compare a selected presentation master with its primaries.
     /// This read-only observation does not adopt a managed job or publish media.
     ComparePresentation { profile: PathBuf },
@@ -149,6 +154,9 @@ fn main() -> ExitCode {
         Operation::PrepareEpisode { profile, output } => {
             reel::tig_episode_cli::prepare(&profile, &output)
         }
+        Operation::BindEpisodeRepair { request, output } => {
+            reel::tig_episode_cli::bind_repair(&request, &output)
+        }
         Operation::FinishEpisode { profile } => reel::tig_episode_cli::finish_episode(&profile),
         Operation::EpisodeWorker {
             ticket,
@@ -168,6 +176,9 @@ fn main() -> ExitCode {
             reel::tig_pcm_recovery::run(&profile, publish)
         }
         Operation::InspectPresentation { profile } => reel::tig_presentation_cli::inspect(&profile),
+        Operation::InspectEpisodeControls { profile } => {
+            reel::tig_native_job_cli::inspect_episode_controls(&profile)
+        }
         Operation::ComparePresentation { profile } => reel::tig_presentation_cli::compare(&profile),
         Operation::MaterializePresentation { profile, output } => {
             reel::tig_presentation_cli::materialize(&profile, &output)

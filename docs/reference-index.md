@@ -14,11 +14,23 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 ## Orientation
 
 - [Architecture and responsibility](architecture.md)
+- [Capability guide](capabilities.md)
 - [Contributing to REEL](contributing.md)
+- [Development status and active workflow work](development-status.md)
 - [Getting started](getting-started.md)
 - [Documentation](README.md)
 - [Capability and adoption roadmap](tooling-roadmap.md)
 - [Use cases and workflow choices](use-cases.md)
+
+## Illustrated walkthroughs
+
+- [Episodes, cues and language editions](guides/episodes-and-languages.md)
+- [Cels, animation and semantic effects](guides/animation-and-effects.md)
+- [Voice, alignment and sound layers](guides/voice-and-sound.md)
+- [Songs, scores, albums and journeys](guides/music-and-albums.md)
+- [Comic issues, pages and editable layers](guides/comic-layers.md)
+- [Editions, captions, print and delivery history](guides/editions-and-delivery.md)
+- [git-asset, revisions and reproducible production](guides/assets-and-revisions.md)
 
 ## Tig integration and managed execution
 
@@ -129,6 +141,11 @@ points: [installation](setup/install.md), [manifest templates](../manifests/READ
 - [Native album video and bilingual reading pages](NATIVE-ALBUM-VIDEO.md)
 - [Native decoded media comparison](native-media-parity.md)
 - [Private native print collections](native-print-collections.md)
+- [Narrated reading editions and chapter navigation](narrated-reading-v1.md)
+- [Source-bound lesson and rehearsal package](lesson-rehearsal-v1.md)
+- [Semantic visual companions](semantic-visual-companion-v1.md)
+- [Single-device offline installation contract](offline-installation-v1.md)
+- [Native endpoint metadata and callback ownership](installation-native-foundation-v1.md) — M12b.1 software foundation; playback/operator loop and station qualification remain open.
 - [Native short editions](NATIVE-SONG-EDITION.md)
 - [Original-song masked materialization](original-song-masked-repair.md)
 - [Bounded provider execution from original song evidence](original-song-repair-provider.md)

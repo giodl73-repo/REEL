@@ -30,6 +30,8 @@ pub mod continuity;
 pub mod craft_plan;
 pub mod cue_import;
 pub mod cue_relative;
+mod decoded_video_hash;
+pub mod episode_captions;
 pub mod episode_conform;
 pub mod episode_delivery;
 pub mod exposure_sheet;
@@ -74,6 +76,7 @@ pub mod song_edition;
 pub mod sonic_assets;
 #[cfg(feature = "speech-provider")]
 pub mod speech_generation;
+pub mod spoken_programme;
 pub mod sprite_choreography;
 pub mod sprite_library;
 pub mod sprite_materializer;

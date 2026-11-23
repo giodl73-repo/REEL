@@ -8,7 +8,7 @@ pub mod packet;
 pub mod repair;
 pub mod source;
 mod transcripts;
-mod wave;
+pub(crate) mod wave;
 
 const MAX_FRAMES: u64 = 600 * 96_000;
 const MAX_PASSES: usize = 16;

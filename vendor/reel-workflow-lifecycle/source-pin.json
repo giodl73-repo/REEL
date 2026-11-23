@@ -1,0 +1,19 @@
+{
+  "schema": "reel.qualified-module-intake.v1",
+  "repository": "https://github.com/giodl73-repo/REEL",
+  "qualification": "EVID-151",
+  "qualified_combined_source_digest": "1c3d0b7db734bc946c3fd482134cabaac1c023f67ea7d2f19a0bf4c3f63d88e3",
+  "scope": "Exact slots module and original tests; adapter and fence shim separately qualified",
+  "files": [
+    {
+      "path": "src/tig_job_runner/slots.rs",
+      "bytes": 18510,
+      "sha256": "ec41788b26cbef2553f00d9682120e67e85b8a5ab90c31e5ce73c1b9eceba8d7"
+    },
+    {
+      "path": "src/tig_job_runner/slots/tests.rs",
+      "bytes": 13110,
+      "sha256": "d241c08e697b800b6965a13a4da848b1325fbf791181dc13a8c3788abb9397f0"
+    }
+  ]
+}

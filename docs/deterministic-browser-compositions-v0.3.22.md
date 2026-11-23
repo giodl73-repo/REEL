@@ -93,3 +93,12 @@ creative selection, or publication approval.
   `reelframe` event.
 - The first implementation captures PNG frames before FFmpeg encoding; long or
   high-resolution sequences require corresponding temporary disk capacity.
+
+## Lossless single-frame assets
+
+For a static composition, browser-composition-render accepts --poster <new.png>
+beside its output video. The manifest must contain exactly one frame. The PNG
+retains the exact captured bytes; it is not decoded from the lossy review video.
+The artifacts receipt binds its path, hash and size to the captured frame, and
+browser-composition-check rehashes it. Existing destinations, other directories
+and animated manifests are rejected. Omitting --poster preserves prior behavior.

@@ -23,9 +23,12 @@ impl ByteIdentity {
     /// Bounded read-only observation for preparing explicit local enrollment.
     /// This is not a protected capability; bind rechecks under effective guards.
     pub fn observe_file(path: &Path) -> Result<Self> {
+        Self::observe_file_bounded(path, COMPONENT_MAX)
+    }
+    pub(crate) fn observe_file_bounded(path: &Path, max_bytes: u64) -> Result<Self> {
         let mut file = File::open(path)?;
         let metadata = file.metadata()?;
-        if !metadata.is_file() || metadata.len() > COMPONENT_MAX {
+        if !metadata.is_file() || max_bytes > COMPONENT_MAX || metadata.len() > max_bytes {
             bail!("runtime observation exceeds budget/type");
         }
         let identity = read_identity(&mut file, metadata.len())?;
@@ -354,5 +357,24 @@ impl<T: InputFiles + ?Sized> InputFiles for RuntimeInputs<'_, T> {
             .get(&program)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("unbound media program"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bounded_observation_keeps_declared_byte_cap() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("declared-tool");
+        std::fs::write(&path, b"exact tool bytes").unwrap();
+        let identity = ByteIdentity::observe_file_bounded(&path, 16).unwrap();
+        assert_eq!(identity, ByteIdentity::observe_file(&path).unwrap());
+        assert_eq!(identity.bytes, 16);
+        assert!(ByteIdentity::observe_file_bounded(&path, 15).is_err());
+        assert!(ByteIdentity::observe_file_bounded(&path, COMPONENT_MAX + 1).is_err());
+        std::fs::write(&path, b"changed and larger tool bytes").unwrap();
+        assert!(ByteIdentity::observe_file_bounded(&path, identity.bytes).is_err());
     }
 }

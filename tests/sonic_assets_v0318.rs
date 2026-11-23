@@ -94,6 +94,42 @@ fn resolves_extensible_pcm24_and_rejects_float_or_invalid_extensions() {
     assert!(resolve(&truncated).is_err());
 }
 
+#[test]
+fn explicit_consumer_paths_verify_bytes_and_never_fall_back_to_catalog_paths() {
+    let temp = tempdir().unwrap();
+    let (catalog, request, _) = fixture(temp.path(), "fixture-only", true);
+    write_json(&temp.path().join("catalog.json"), &catalog);
+    write_json(&temp.path().join("request.json"), &request);
+    let mut catalog = sonic_assets::load_catalog(temp.path().join("catalog.json")).unwrap();
+    let request = sonic_assets::load_request(temp.path().join("request.json")).unwrap();
+    assert!(sonic_assets::resolve(&catalog, &request).is_ok());
+    let mut calls = 0;
+    assert!(
+        sonic_assets::resolve_with_paths(&catalog, &request, |_| {
+            calls += 1;
+            anyhow::bail!("explicit provider unavailable")
+        })
+        .is_err()
+    );
+    assert_eq!(calls, 1);
+    catalog.value.assets[0].variants[0].locator = "native/sfx/motor".into();
+    write_json(
+        &temp.path().join("catalog.json"),
+        &serde_json::to_value(&catalog.value).unwrap(),
+    );
+    catalog = sonic_assets::load_catalog(temp.path().join("catalog.json")).unwrap();
+    let (resolution, _) = sonic_assets::resolve_with_paths(&catalog, &request, |variant| {
+        assert_eq!(variant.locator, "native/sfx/motor");
+        Ok(temp.path().join("motor.wav"))
+    })
+    .unwrap();
+    assert_eq!(
+        resolution.selections[0].sha256,
+        catalog.value.assets[0].variants[0].sha256
+    );
+    assert!(sonic_assets::resolve(&catalog, &request).is_err());
+}
+
 fn fixture(root: &Path, state: &str, fixture: bool) -> (Value, Value, Vec<u8>) {
     let audio = wav(48_000, 1);
     fs::write(root.join("motor.wav"), &audio).unwrap();

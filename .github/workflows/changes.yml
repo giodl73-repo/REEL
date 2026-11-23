@@ -1,0 +1,26 @@
+name: Classify changed paths
+
+on:
+  workflow_call:
+    outputs:
+      docs_only:
+        description: Whether every changed path is allowlisted documentation
+        value: ${{ jobs.classify.outputs.docs_only }}
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.paths.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check documentation change detection
+        run: node --test .github/scripts/*.test.cjs
+      - name: Classify the complete Git diff
+        id: paths
+        run: node .github/scripts/docs-only.cjs

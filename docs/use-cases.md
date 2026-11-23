@@ -5,14 +5,19 @@ a workflow by the artifact you want to produce. [Getting started](getting-starte
 provides a runnable planning example; the linked contracts below specify the
 project inputs needed for production.
 
+For the source model before the commands, choose an
+[illustrated walkthrough](README.md#illustrated-guides). Each walkthrough ends
+with links back to the relevant tasks and exact contracts.
+
 ## Assemble an illustrated episode
 
 **Inputs:** ordered scenes, measured cue recordings, selected cels, language
 bindings, opening/credit presentations, an episode contract and runtime budgets.
 
 Author semantic events using the [native scene contract](scene-authoring-v1.md).
-Compile each scene's effective inputs for a chosen language. With Tig, capture
-one committed view and [resolve current leaf bindings](tig-native-scene.md), then
+Compile each scene's effective inputs for a chosen language. With the native
+asset adapter, capture one committed view and
+[resolve current leaf bindings](tig-native-scene.md), then
 run an admitted [managed scene job](tig-job-runner.md). Independently check the
 rendered frames and samples before retaining a component proof.
 
@@ -50,7 +55,7 @@ upstream revision or promise that every reuse avoids transcoding.
 pictures should stay exactly the same.
 
 Create new picture bytes, update the project record/selection and commit the
-change. In the [Tig scene compiler](tig-native-scene.md), the parent binding map
+change. In the [native scene compiler](tig-native-scene.md), the parent binding map
 can keep the same logical ID while resolving its new selected bytes. The old
 job's expected pin must refuse the changed input. Recompile against the new
 view and render/check a new candidate.
@@ -73,7 +78,7 @@ measured alignment and explicit shared/override bindings.
 
 [Scene authoring V2](scene-authoring-v1.md) records shared event intent once.
 Each language supplies its own realization and timing. The
-[Tig binding map](tig-native-scene.md) can share pictures while overriding only
+[native binding map](tig-native-scene.md) can share pictures while overriding only
 declared language-specific assets. A missing selected variant refuses instead
 of silently using another language. The consumed recipe determines which edits
 invalidate each language's render.

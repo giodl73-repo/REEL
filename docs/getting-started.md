@@ -5,6 +5,12 @@ Rust and Git, with no media cache, provider account or renderer for the first tw
 steps. Run commands from the REEL repository root. Use a current stable Rust
 toolchain; [installation](setup/install.md) covers optional executables and platforms.
 
+> [!TIP]
+> First understand the shape of a production in the
+> [episode/cue walkthrough](guides/episodes-and-languages.md), or choose another
+> [illustrated guide](README.md#illustrated-guides). The fixture below demonstrates
+> validation and timing conform; it does not generate voices or pictures.
+
 ## Validate a small example
 
 ```sh
