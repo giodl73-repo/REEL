@@ -11,6 +11,7 @@ it does not discover a project or choose preview locations.
 cargo build --manifest-path crates/reel-workflow-ui/Cargo.toml --locked
 reel-workflow-ui capabilities
 reel-workflow-ui project-film REQUEST.json RAW_SHA256 REPOSITORY NEW_BOARD.json
+reel-workflow-ui project-native-film REQUEST.json RAW_SHA256 PACKET.json NATIVE_PROFILE.json NEW_BOARD.json
 reel-workflow-ui check BOARD.json RAW_SHA256
 reel-workflow-ui serve BOARD.json RAW_SHA256 --open
 ```
@@ -60,6 +61,12 @@ the exact Git commit. It reads only admitted committed controls, including exact
 source text and measured language-local alignment evidence. It does not inspect
 the working tree's replacements or open referenced media. Partial clones and
 missing historical metadata retain the inspector's refusal behavior.
+
+On Windows, `project-native-film` reads the same pinned request through the
+native film inspector. Its packet must declare each control artifact and match
+the inspection's project and source commit. The native profile resolves the
+exact bound records and streams. Media previews still use the board's explicit
+preview bindings.
 
 | Request field | Meaning |
 | --- | --- |
