@@ -1,4 +1,5 @@
 //! Private read-only production views. Observations are not approval/custody.
+pub mod film;
 #[cfg(windows)]
 pub mod host;
 pub mod model;

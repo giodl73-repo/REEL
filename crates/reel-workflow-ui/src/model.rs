@@ -16,6 +16,10 @@ pub struct Board {
     pub format: Format,
     pub source_commit: String,
     #[serde(default)]
+    pub projection_request: Option<Artifact>,
+    #[serde(default)]
+    pub approvals: Vec<ApprovalReference>,
+    #[serde(default)]
     pub synthetic: bool,
     pub languages: Vec<Language>,
     pub scenes: Vec<Scene>,
@@ -23,6 +27,12 @@ pub struct Board {
     pub cues: Vec<Cue>,
     pub media: BTreeMap<String, Media>,
     pub tasks: BTreeMap<String, Watch>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApprovalReference {
+    pub subject: Artifact,
+    pub evidence: Artifact,
 }
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
@@ -190,8 +200,16 @@ impl Board {
             || self.cues.len() > 2048
             || self.media.len() > 4096
             || self.tasks.len() > 128
+            || self.approvals.len() > 128
         {
             return Err(error(ErrorKind::Invalid, "board-shape"));
+        }
+        if let Some(request) = &self.projection_request {
+            artifact(request)?;
+        }
+        for approval in &self.approvals {
+            artifact(&approval.subject)?;
+            artifact(&approval.evidence)?;
         }
         let mut languages = BTreeSet::new();
         for language in &self.languages {

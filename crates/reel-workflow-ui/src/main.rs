@@ -3,7 +3,22 @@ fn run(args: &[String]) -> Result<()> {
     if args == ["capabilities"] {
         println!(
             "{}",
-            serde_json::json!({"read_only_board":cfg!(windows),"lazy_previews":cfg!(windows),"journal_observations":cfg!(windows),"native_custody_verification":false,"job_execution":false,"selection":false})
+            serde_json::json!({"film_metadata_projection":true,"read_only_board":cfg!(windows),"lazy_previews":cfg!(windows),"journal_observations":cfg!(windows),"native_custody_verification":false,"job_execution":false,"selection":false})
+        );
+        return Ok(());
+    }
+    if let [command, request, pin, repository, output] = args
+        && command == "project-film"
+    {
+        let board = reel_workflow_ui::film::export(
+            std::path::Path::new(request),
+            pin,
+            std::path::Path::new(repository),
+            std::path::Path::new(output),
+        )?;
+        println!(
+            "{}",
+            serde_json::json!({"ok":true,"board":board,"media_verified":false,"approvals_verified":false,"production_adopted":false})
         );
         return Ok(());
     }
@@ -77,7 +92,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] {
         println!(
-            "reel-workflow-ui capabilities\nreel-workflow-ui check BOARD SHA256\nreel-workflow-ui serve BOARD SHA256 [--open] [--port N] [--idle-seconds N] [--max-seconds N]\nWindows-owned read-only view. No job execution, selection, hydration or retirement."
+            "reel-workflow-ui capabilities\nreel-workflow-ui project-film REQUEST SHA256 REPOSITORY NEW_BOARD\nreel-workflow-ui check BOARD SHA256\nreel-workflow-ui serve BOARD SHA256 [--open] [--port N] [--idle-seconds N] [--max-seconds N]\nWindows-owned read-only view. No job execution, selection, hydration or retirement."
         );
         return std::process::ExitCode::SUCCESS;
     }
