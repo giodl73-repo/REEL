@@ -634,8 +634,8 @@ fn finish(
             &args.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
         )
     };
-    let done = if use_dispatch {
-        let dispatch_path = evidence.join("film-dispatch.json");
+    let dispatch = |action: &str| {
+        let dispatch_path = evidence.join(format!("film-dispatch-{action}.json"));
         let rebuild_request_pin = digest(&fs::read(evidence.join("rebuild-request.json")).unwrap());
         let export_pin = digest(&fs::read(evidence.join("bound/export.json")).unwrap());
         save(
@@ -650,7 +650,7 @@ fn finish(
                     "request_sha256": sha,
                     "ticket": ticket_path,
                     "ticket_sha256": ticket_sha,
-                    "action": "run",
+                    "action": action,
                 }}
             }),
         );
@@ -665,6 +665,9 @@ fn finish(
             ],
         );
         dispatched["editions"][request.packet.task.id.as_str()].clone()
+    };
+    let done = if use_dispatch {
+        dispatch("run")
     } else {
         action("run-film", true)
     };
@@ -738,7 +741,15 @@ fn finish(
         .unwrap()
         .modified()
         .unwrap();
-    action("resume-film", true);
+    if use_dispatch {
+        let resumed = dispatch("resume");
+        assert_eq!(resumed["retained_scene"], done["retained_scene"]);
+        let verified = dispatch("verify");
+        assert_eq!(verified["retained_verified"], true);
+        assert_eq!(verified["retained_scene"], done["retained_scene"]);
+    } else {
+        action("resume-film", true);
+    }
     assert_eq!(
         modified,
         fs::metadata(workspace.join("delivery/picture.mkv"))
