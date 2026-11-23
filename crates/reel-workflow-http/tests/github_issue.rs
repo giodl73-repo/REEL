@@ -59,6 +59,7 @@ fn exported_draft_adapter_checks_semantic_subject_before_preparing_an_issue() {
         method: d.method,
         observation: d.observation.clone(),
         evidence: d.evidence.clone(),
+        board_reference: None,
     };
     let identity =
         reel_workflow::canonical_digest(&(&d.review, &d.map, &d.receipt, &d.target, &d.finding_id))
@@ -74,6 +75,31 @@ fn exported_draft_adapter_checks_semantic_subject_before_preparing_an_issue() {
     d.key = key;
     let spec = Spec::from_draft("private/film".into(), &d).unwrap();
     assert_eq!(spec.issue.body, d.body);
+
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("draft.json");
+    let bytes = serde_json::to_vec_pretty(&d).unwrap();
+    std::fs::write(&path, &bytes).unwrap();
+    let pin = reel_workflow::digest(&bytes);
+    let prepare = |pin: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_reel-workflow-http"))
+            .args(["prepare-github-issue", "private/film"])
+            .arg(&path)
+            .arg(pin)
+            .output()
+            .unwrap()
+    };
+    let prepared = prepare(&pin);
+    assert!(prepared.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&prepared.stdout).unwrap(),
+        json!({"kind": "github-issue", "spec": spec})
+    );
+    std::fs::write(&path, [&bytes[..], b" "].concat()).unwrap();
+    let changed = prepare(&pin);
+    assert!(!changed.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&changed.stdout).unwrap();
+    assert_eq!(error["error"]["code"], "github-issue-draft-pin");
     d.frame = 2;
     assert!(Spec::from_draft("private/film".into(), &d).is_err());
     d.frame = 1;

@@ -57,6 +57,7 @@ fn run() -> Result<()> {
                 target.cel_id
             ),
             evidence: vec![],
+            board_reference: None,
         }],
     };
     let bindings = [

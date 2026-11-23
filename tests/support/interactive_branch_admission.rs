@@ -1,44 +1,8 @@
-//! Preparatory oracles for binding a node to an already checked selection.
-use anyhow::{Result, ensure};
-use reel::spoken_programme::checker::CheckedPackage;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Selection<'a> {
-    edition: &'a str,
-    language: &'a str,
-    module: &'a str,
-    programme_sha256: &'a str,
-    access_sha256: &'a str,
-    first_frame: u64,
-    end_frame: u64,
-}
-
-fn admit<'a>(requested: Selection<'a>, checked: &[Selection<'a>]) -> Result<Selection<'a>> {
-    let mut candidates = checked.iter().filter(|item| {
-        item.edition == requested.edition
-            && item.language == requested.language
-            && item.module == requested.module
-    });
-    let observed = candidates
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("missing checked edition/language/module selection"))?;
-    ensure!(candidates.next().is_none(), "ambiguous checked selection");
-    ensure!(
-        requested.programme_sha256 == observed.programme_sha256,
-        "checked programme identity differs"
-    );
-    ensure!(
-        requested.access_sha256 == observed.access_sha256,
-        "checked access identity differs"
-    );
-    ensure!(
-        requested.first_frame < requested.end_frame
-            && requested.first_frame == observed.first_frame
-            && requested.end_frame == observed.end_frame,
-        "checked media span differs"
-    );
-    Ok(*observed)
-}
+//! Tests for exact branch admission from verified records.
+use reel::spoken_programme::{
+    checker::CheckedPackage,
+    interactive::{Selection, admit_checked_selection, admit_selection as admit},
+};
 
 pub(super) fn assert_verified_bilingual_selections(package: &CheckedPackage) {
     assert!(package.summary().access_checked);
@@ -70,6 +34,18 @@ pub(super) fn assert_verified_bilingual_selections(package: &CheckedPackage) {
         ("es", 0, 168_000)
     );
     assert_eq!(admit(es, &checked).unwrap(), es);
+    admit_checked_selection(package, en).unwrap();
+    admit_checked_selection(package, es).unwrap();
+    assert!(
+        admit_checked_selection(
+            package,
+            Selection {
+                end_frame: en.end_frame,
+                ..es
+            }
+        )
+        .is_err()
+    );
     assert!(
         admit(
             Selection {
