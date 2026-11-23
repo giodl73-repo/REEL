@@ -301,27 +301,38 @@ fn station_request() -> (
 #[test]
 #[ignore = "explicit native buffer observation; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_observes_native_period_and_silent_callbacks() {
+    run_native_buffer_fixture("silent_native_buffer_fixture");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "explicit native playback observation; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_observes_callbacks_through_two_native_passes() {
+    run_native_buffer_fixture("playing_native_buffer_fixture");
+}
+
+#[cfg(windows)]
+fn run_native_buffer_fixture(child_test: &str) {
     use reel_assets::jobs::{QuietLimits, run_quiet};
     use std::time::Duration;
     let (path, _) = station_request();
     let root = tempfile::tempdir().unwrap();
     fs::copy(path, root.path().join("session.json")).unwrap();
-    run_quiet(
+    let result = run_quiet(
         &std::env::current_exe().unwrap(),
-        &[
-            "--ignored".into(),
-            "--exact".into(),
-            "silent_native_buffer_fixture".into(),
-        ],
+        &["--ignored".into(), "--exact".into(), child_test.into()],
         root.path(),
-        Duration::from_secs(8),
+        Duration::from_secs(35),
         QuietLimits {
             memory_bytes: 512 * 1024 * 1024,
             processes: 1,
         },
         || Ok(()),
-    )
-    .unwrap();
+    );
+    if let Err(error) = result {
+        let detail = fs::read_to_string(root.path().join("buffer-error.txt")).unwrap_or_default();
+        panic!("{error}: {detail}");
+    }
     println!(
         "{}",
         fs::read_to_string(root.path().join("buffer-observation.json")).unwrap()
@@ -332,16 +343,49 @@ fn actual_station_observes_native_period_and_silent_callbacks() {
 #[test]
 #[ignore = "contained child for the explicit silent native buffer test"]
 fn silent_native_buffer_fixture() {
+    native_buffer_fixture(false);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "contained child for the explicit native playback observation"]
+fn playing_native_buffer_fixture() {
+    native_buffer_fixture(true);
+}
+
+#[cfg(windows)]
+fn native_buffer_fixture(play: bool) {
     use reel::spoken_programme::installation::native::{
-        SessionRequest,
+        SessionRequest, callback_pair,
         output::{OutputClock, OutputEvent, OutputWorker},
+        source::{SourceEvent, SourceWorker},
     };
+    use reel::spoken_programme::installation::{Notice, State};
     use std::time::Duration;
+    std::panic::set_hook(Box::new(|failure| {
+        let _ = fs::write("buffer-error.txt", failure.to_string());
+    }));
     let request = SessionRequest::parse(&fs::read("session.json").unwrap()).unwrap();
     let clock = OutputClock::start().unwrap();
-    let mut output = OutputWorker::new(request.endpoint, clock).unwrap();
-    output.open(1, 2_000_000).unwrap();
-    let (period, sink) = loop {
+    let mut output = OutputWorker::new(request.endpoint.clone(), clock).unwrap();
+    let mut source = play.then(|| SourceWorker::new(request, clock, 20_000_000).unwrap());
+    let core = source.as_mut().map(|source| {
+        loop {
+            match source.event() {
+                Some(SourceEvent::Ready(core)) => break core,
+                Some(_) => panic!("checked station source did not reach Ready"),
+                None => {}
+            }
+            assert!(
+                clock.now_us().unwrap() < 20_000_000,
+                "station source deadline"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    });
+    let open_deadline = clock.now_us().unwrap() + 2_000_000;
+    output.open(1, open_deadline).unwrap();
+    let (period, mut sink) = loop {
         match output.event() {
             Some(OutputEvent::Opened {
                 generation: 1,
@@ -353,24 +397,57 @@ fn silent_native_buffer_fixture() {
             Some(_) => panic!("native stream did not open"),
             None => {}
         }
-        assert!(clock.now_us().unwrap() < 2_000_000, "native open deadline");
+        assert!(
+            clock.now_us().unwrap() < open_deadline,
+            "native open deadline"
+        );
         std::thread::sleep(Duration::from_millis(2));
     };
     while sink.stats().callbacks < 5 {
         assert!(
-            !sink.failed() && clock.now_us().unwrap() < 2_000_000,
+            !sink.failed() && clock.now_us().unwrap() < open_deadline,
             "silent callback deadline"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
-    let stats = sink.stats();
     assert!(sink.ready());
+    if let Some(mut core) = core {
+        let source_frames = core.source_frames();
+        assert_eq!(source_frames, 144_000);
+        core.enqueue("start").unwrap();
+        assert_eq!(
+            core.poll(clock.now_us().unwrap() / 1000, Notice::None).open,
+            Some(1)
+        );
+        let (mut control, callback) = callback_pair(core);
+        assert!(sink.attach(callback).is_ok(), "native callback handoff");
+        let playing_deadline = clock.now_us().unwrap() + 10_000_000;
+        loop {
+            if let Some(report) = control.report() {
+                assert_ne!(report.snapshot.state, State::Fault);
+                if report.snapshot.state == State::Completed {
+                    assert_eq!(report.snapshot.pass, 2);
+                    break;
+                }
+                continue;
+            }
+            assert!(
+                !sink.failed() && clock.now_us().unwrap() < playing_deadline,
+                "native playback deadline"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(sink.stats().submitted_source_frames, 2 * source_frames);
+    }
+    let stats = sink.stats();
     assert!((1..=2048).contains(&period));
     assert!((1..=2048).contains(&stats.largest_callback_frames));
-    assert_eq!(
-        (stats.owned_callbacks, stats.submitted_source_frames),
-        (0, 0)
-    );
+    if !play {
+        assert_eq!(
+            (stats.owned_callbacks, stats.submitted_source_frames),
+            (0, 0)
+        );
+    }
     let close_deadline = clock.now_us().unwrap() + 2_000_000;
     output.close(1, close_deadline).unwrap();
     loop {
@@ -392,7 +469,8 @@ fn silent_native_buffer_fixture() {
             "requested_frames": 480,
             "reported_period_frames": period,
             "largest_observed_callback_frames": stats.largest_callback_frames,
-            "silent_callbacks": stats.callbacks,
+            "callbacks": stats.callbacks,
+            "source_owned_callbacks": stats.owned_callbacks,
             "submitted_source_frames": stats.submitted_source_frames,
         }))
         .unwrap(),

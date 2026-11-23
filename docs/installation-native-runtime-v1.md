@@ -717,7 +717,13 @@ runs requested a 480-frame buffer, reported a 480-frame native period, and
 observed a largest callback of 1,056 frames among the first five callbacks.
 Each run submitted zero source frames and closed the stream. The callback
 size remained below the 2,048-frame limit. These observations cover silent
-startup and do not establish callback cadence across an entire session.
+startup. The separate contained
+`actual_station_observes_callbacks_through_two_native_passes` test attaches
+the transport after guarded original checks. The Dell run reported a
+480-frame period and a largest observed callback of 1,056 frames across
+630 callbacks. The source was attached for 625 callbacks, and both passes
+submitted exactly 288,000 source frames. These are native submission
+observations. Render-mix capture and physical timing remain separate.
 Keep the sidecar next to the PCM with the same basename. The analyzer binds
 the sidecar to the exact audio hash and length, checks packet coverage and
 timestamp continuity, then measures both source spans and the loop gap again
