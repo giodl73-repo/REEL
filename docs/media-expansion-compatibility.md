@@ -67,3 +67,20 @@ outputs while all three Spanish WAVs remained byte-for-byte identical. Every
 edition retained its duration. The retained baseline outputs still matched
 their recorded hashes after the replacement was produced in a separate test
 directory. This comparison covers the shared programme's WAV outputs.
+
+### Review by role
+
+This draft uses the repository's [review checklists](../.roles/ROLE.md).
+
+| Lens | Evidence in this draft and follow-up |
+| --- | --- |
+| Story and Editor | The authored edition order and chapter clocks are checked. Verify both interactive routes and their endings with the runtime replay. |
+| Animation | The shared companion renders have checked frame counts and PCM. The independent native regression checks the frame transitions. Creative visual review remains open. |
+| Sound and Vocal Adaptation | The fixture checks exact samples, language-local markers and transcript bindings. Listening, speaker transitions and language acceptance still require human review. |
+| Platform and Audience | The reading and lesson checks exercise text access. Interactive keyboard operation and live station usability still need their own evidence. |
+| Score and Arrangement | The lesson checks its editable model, exports and repeated passage occurrences. A music authority still needs to accept actual educational material. |
+| Rights and Provenance | The checks trace distinct source and output hashes and preserve the original fixture. Project rights, voice consent, permanent custody, and delivery authority require their own records where applicable. |
+
+Music Reconstruction is outside this draft's scope because the fixture uses
+authored synthetic signals and a test score with no source separation,
+reconstruction, or repair. Revisit the scope when qualifying those operations.
