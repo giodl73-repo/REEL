@@ -256,12 +256,12 @@ struct Owned {
     _controls: Vec<File>,
     _lease: capacity::Reservation,
 }
-fn open(
+pub(crate) fn validate_ticket(
     request: &Request,
     request_pin: &str,
     ticket_raw: &[u8],
     ticket_pin: &str,
-) -> Result<Owned> {
+) -> Result<Ticket> {
     if reel_workflow::digest(ticket_raw) != ticket_pin {
         return Err(error(ErrorKind::Integrity, "film-cli-ticket-pin"));
     }
@@ -274,6 +274,16 @@ fn open(
     {
         return Err(error(ErrorKind::Conflict, "film-cli-ticket-binding"));
     }
+    Ok(ticket)
+}
+
+fn open(
+    request: &Request,
+    request_pin: &str,
+    ticket_raw: &[u8],
+    ticket_pin: &str,
+) -> Result<Owned> {
+    let ticket = validate_ticket(request, request_pin, ticket_raw, ticket_pin)?;
     let parent = parent(request)?;
     if parent.path() != ticket.parent || parent.identity() != ticket.parent_identity {
         return Err(error(ErrorKind::Conflict, "film-cli-parent-replaced"));
@@ -337,6 +347,23 @@ pub enum Action {
     Close,
     RecoverClose,
 }
+
+fn retained_scene_evidence(
+    packet: &Packet,
+    result: &reel_workflow::ReturnedResult,
+    acknowledgement: &crate::retention::Acknowledgement,
+) -> Result<serde_json::Value> {
+    Ok(serde_json::json!({
+        "task_id": packet.task.id,
+        "task_key": result.task_key,
+        "attempt_id": result.attempt_id,
+        "language": packet.task.language,
+        "artifacts": result.artifacts,
+        "worker_receipt": result.worker_receipt,
+        "retained_acknowledgement": acknowledgement.artifact()?,
+    }))
+}
+
 pub fn execute(
     request: &Request,
     request_pin: &str,
@@ -380,9 +407,12 @@ pub fn execute(
                 )?
             };
             generated.ingest(&request.source, &request.admission)?;
-            generated.retain(&request.source, &request.admission, &request.retained)?;
+            let acknowledgement =
+                generated.retain(&request.source, &request.admission, &request.retained)?;
+            let evidence =
+                retained_scene_evidence(&request.packet, generated.result(), &acknowledgement)?;
             Ok(
-                serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false}),
+                serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false,"retained_scene":evidence}),
             )
         }
         _ => {
@@ -398,8 +428,9 @@ pub fn execute(
                     &result,
                     &ack,
                 )?;
+                let evidence = retained_scene_evidence(&request.packet, &result, &ack)?;
                 return Ok(
-                    serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false}),
+                    serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false,"retained_scene":evidence}),
                 );
             }
             let close_action = match action {

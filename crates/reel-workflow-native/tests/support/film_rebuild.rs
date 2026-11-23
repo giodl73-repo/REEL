@@ -374,7 +374,22 @@ fn cli_exports_exact_per_consumer_parents_without_native_effects_or_overwrite() 
         "{}",
         String::from_utf8_lossy(&status.stdout)
     );
+    let summary: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    let manifest = fs::read(output.join("export.json")).unwrap();
+    assert_eq!(summary["export_sha256"], digest(&manifest));
+    let export: serde_json::Value = serde_json::from_slice(&manifest).unwrap();
+    assert_eq!(export["request_sha256"], digest(&raw));
+    let tasks = export["render_tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 2);
+    let files = export["files"].as_object().unwrap();
+    assert_eq!(files.len(), 7);
+    for (name, pin) in files {
+        let bytes = fs::read(output.join(name)).unwrap();
+        assert_eq!(pin["sha256"], digest(&bytes));
+        assert_eq!(pin["bytes"], bytes.len());
+    }
     for lang in ["es", "en"] {
+        assert!(tasks.contains(&serde_json::json!(format!("scene-{lang}"))));
         let parents: upstream::Parents = serde_json::from_slice(
             &fs::read(output.join(format!("scene-{lang}-parents.json"))).unwrap(),
         )
@@ -387,6 +402,41 @@ fn cli_exports_exact_per_consumer_parents_without_native_effects_or_overwrite() 
     let saved = fs::read(output.join("bound.json")).unwrap();
     assert!(!call(&digest(&raw)).status.success());
     assert_eq!(saved, fs::read(output.join("bound.json")).unwrap());
+    let export_pin = digest(&manifest);
+    #[cfg(feature = "film")]
+    {
+        let dispatch = serde_json::to_vec(&serde_json::json!({
+            "schema": "reel.workflow-film-rebuild-dispatch.v1",
+            "export_directory": output,
+            "rebuild_request_sha256": digest(&raw),
+            "export_sha256": export_pin,
+            "editions": {},
+        }))
+        .unwrap();
+        let path = root.path().join("dispatch.json");
+        fs::write(&path, &dispatch).unwrap();
+        let refused = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+            .arg("dispatch-film-rebuild")
+            .arg(path)
+            .arg(digest(&dispatch))
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        let response: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+        assert_eq!(response["error"]["code"], "film-rebuild-dispatch-editions");
+    }
+    let verified = native::verify_export(&output, &digest(&raw), &export_pin).unwrap();
+    assert_eq!(
+        verified.into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from(["scene-en".into(), "scene-es".into()])
+    );
+    assert!(native::verify_export(&output, &digest(b"wrong"), &export_pin).is_err());
+    let packet_path = output.join("scene-en-packet.json");
+    let mut packet = fs::read(&packet_path).unwrap();
+    packet[0] ^= 1;
+    fs::write(packet_path, packet).unwrap();
+    assert!(native::verify_export(&output, &digest(&raw), &export_pin).is_err());
     assert_eq!(
         before,
         fs::read(case.profile.metadata_root.join("metadata.json")).unwrap()

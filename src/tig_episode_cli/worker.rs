@@ -173,13 +173,15 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
         .zip(&mut scene_sources)
         .enumerate()
         .map(|(i, ((spec, native), source))| {
-            ReferencePlan::compile(
+            let reference = ReferencePlan::compile(
                 source,
                 native,
                 &spec.output_id,
                 &spec.output_definition,
                 &preparation.join(format!("owned-scene-{i}")),
-            )
+            )?;
+            spec.check_master(&reference)?;
+            Ok(reference)
         })
         .collect::<Result<Vec<_>>>()?;
     let scene_resources = references

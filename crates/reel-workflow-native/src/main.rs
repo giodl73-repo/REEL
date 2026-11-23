@@ -64,14 +64,30 @@ fn new_receipt(
 fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
     match args {
         [command, request, pin, directory] if command == "prepare-film-rebuild" => {
-            reel_workflow_native::film_rebuild::export(
+            let export_sha256 = reel_workflow_native::film_rebuild::export(
                 Path::new(request),
                 pin,
                 Path::new(directory),
             )?;
             Ok(
-                serde_json::json!({"ok":true,"native_metadata_verified":true,"child_admitted":false,"consumers_rebuilt":false,"selection_verified":false}),
+                serde_json::json!({"ok":true,"export_sha256":export_sha256,"native_metadata_verified":true,"child_admitted":false,"consumers_rebuilt":false,"selection_verified":false}),
             )
+        }
+        #[cfg(all(windows, feature = "film"))]
+        [command, request, pin, apply]
+            if command == "dispatch-film-rebuild" && apply == "--apply" =>
+        {
+            reel_workflow_native::film_rebuild::dispatch::execute(Path::new(request), pin)
+        }
+        [command, directory, request_pin, export_pin]
+            if command == "verify-film-rebuild-export" =>
+        {
+            let render_tasks = reel_workflow_native::film_rebuild::verify_export(
+                Path::new(directory),
+                request_pin,
+                export_pin,
+            )?;
+            Ok(serde_json::json!({"ok":true,"render_tasks":render_tasks}))
         }
         #[cfg(all(windows, feature = "film"))]
         [command, request, pin, output, apply]
@@ -137,7 +153,7 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
             Ok(serde_json::json!({"film_process_child_verified": true, "task_completed": false}))
         }
         [command] if command == "capabilities" => Ok(
-            serde_json::json!({"native_snapshot_binding":true,"native_film_rebuild_binding":true,"still_control_verification":cfg!(all(windows,feature="film")),"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"retained_child_inputs":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
+            serde_json::json!({"native_snapshot_binding":true,"native_film_rebuild_binding":true,"film_rebuild_export_verification":true,"owned_film_rebuild_dispatch":cfg!(all(windows,feature="film")),"still_control_verification":cfg!(all(windows,feature="film")),"native_byte_scope":"windows-ntfs","native_streaming_reader":cfg!(windows),"native_film_metadata_inspection":cfg!(windows),"retained_child_inputs":cfg!(windows),"bounded_manual_handoff":cfg!(windows),"retained_close_recovery":cfg!(windows),"contained_film_process_port":cfg!(all(windows, feature = "film")),"owned_film_dispatch":cfg!(all(windows, feature = "film")),"producer_execution":cfg!(all(windows, feature = "film")),"episode_scale_execution_qualified":false,"selection":false,"scratch_retirement":false}),
         ),
         [command, packet, source, request, output] if command == "inspect-film" => {
             let packet = read_control(Path::new(packet))?;
@@ -549,7 +565,9 @@ fn main() -> ExitCode {
         println!(concat!(
             "reel-workflow-native capabilities\n",
             "reel-workflow-native prepare-film-rebuild REQUEST SHA256 NEW_DIRECTORY\n",
+            "reel-workflow-native verify-film-rebuild-export DIRECTORY REQUEST_SHA256 EXPORT_SHA256\n",
             "Optional Windows film feature:\n",
+            "reel-workflow-native dispatch-film-rebuild DISPATCH SHA256 --apply\n",
             "reel-workflow-native prepare-film REQUEST REQUEST_SHA NEW_TICKET --apply\n",
             "reel-workflow-native run-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
             "reel-workflow-native resume-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",

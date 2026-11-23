@@ -8,6 +8,25 @@ use reel_workflow::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::Path;
+
+const MAX_EXPORT_BYTES: usize = 16 * 1024 * 1024;
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExportFile {
+    sha256: String,
+    bytes: usize,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct ExportManifest {
+    schema: String,
+    request_sha256: String,
+    render_tasks: Vec<String>,
+    files: BTreeMap<String, ExportFile>,
+}
 
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -184,7 +203,7 @@ pub fn bind(request: &Request) -> Result<Bound> {
 
 /// Private, create-only metadata package. Every file is prepared before the
 /// destination is created; interrupted writes remain preserved for recovery.
-pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) -> Result<()> {
+pub fn export(path: &Path, pin: &str, directory: &Path) -> Result<String> {
     use std::{
         fs::{self, OpenOptions},
         io::Write,
@@ -223,10 +242,29 @@ pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) ->
             )?,
         );
     }
-    if files
-        .values()
-        .any(|v| v.len() > reel_workflow::MAX_CONTROL_BYTES)
-        || files.values().map(Vec::len).sum::<usize>() > 16 * 1024 * 1024
+    let inventory = files
+        .iter()
+        .map(|(name, raw)| {
+            (
+                name.clone(),
+                ExportFile {
+                    sha256: digest(raw),
+                    bytes: raw.len(),
+                },
+            )
+        })
+        .collect();
+    let manifest = crate::admission::encode(&ExportManifest {
+        schema: "reel.workflow-native-film-rebuild-export.v1".into(),
+        request_sha256: pin.into(),
+        render_tasks: bound.prepared.render_tasks,
+        files: inventory,
+    })?;
+    if manifest.len() > reel_workflow::MAX_CONTROL_BYTES
+        || files
+            .values()
+            .any(|v| v.len() > reel_workflow::MAX_CONTROL_BYTES)
+        || files.values().map(Vec::len).sum::<usize>() + manifest.len() > MAX_EXPORT_BYTES
     {
         return Err(error(
             ErrorKind::Budget,
@@ -234,7 +272,8 @@ pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) ->
         ));
     }
     fs::create_dir(directory).map_err(crate::io_error)?;
-    for (name, raw) in files {
+    let manifest_pin = digest(&manifest);
+    for (name, raw) in files.into_iter().chain([("export.json".into(), manifest)]) {
         let mut file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -244,5 +283,81 @@ pub fn export(path: &std::path::Path, pin: &str, directory: &std::path::Path) ->
             .and_then(|_| file.sync_all())
             .map_err(crate::io_error)?;
     }
-    Ok(())
+    Ok(manifest_pin)
 }
+
+/// Check the complete export before dispatch. The returned task order is
+/// bound to both the original request and the published manifest.
+pub fn verify_export(directory: &Path, request_pin: &str, export_pin: &str) -> Result<Vec<String>> {
+    Ok(verified_manifest(directory, request_pin, export_pin)?.render_tasks)
+}
+
+fn verified_manifest(
+    directory: &Path,
+    request_pin: &str,
+    export_pin: &str,
+) -> Result<ExportManifest> {
+    let limit = reel_workflow::MAX_CONTROL_BYTES;
+    let (raw, _held) = crate::staging::read_held(&directory.join("export.json"), limit as u64)?;
+    if digest(&raw) != export_pin {
+        return Err(error(
+            ErrorKind::Integrity,
+            "native-film-rebuild-export-pin",
+        ));
+    }
+    let manifest: ExportManifest = reel_workflow::decode(&raw)?;
+    if manifest.schema != "reel.workflow-native-film-rebuild-export.v1"
+        || manifest.request_sha256 != request_pin
+        || manifest.render_tasks.is_empty()
+        || manifest.render_tasks.len() > 128
+    {
+        return Err(error(
+            ErrorKind::Invalid,
+            "native-film-rebuild-export-manifest",
+        ));
+    }
+    let mut names = BTreeSet::from(["bound.json".to_owned()]);
+    for id in &manifest.render_tasks {
+        if !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_' | b'.'))
+            || id.is_empty()
+            || id.len() > 128
+            || matches!(id.as_str(), "." | "..")
+            || !names.insert(format!("{id}-packet.json"))
+        {
+            return Err(error(ErrorKind::Invalid, "native-film-rebuild-export-task"));
+        }
+        names.insert(format!("{id}-source.json"));
+        names.insert(format!("{id}-parents.json"));
+    }
+    if names.iter().ne(manifest.files.keys()) {
+        return Err(error(
+            ErrorKind::Conflict,
+            "native-film-rebuild-export-files",
+        ));
+    }
+    let mut total = raw.len();
+    for (name, expected) in &manifest.files {
+        if expected.bytes > limit || expected.bytes > MAX_EXPORT_BYTES - total {
+            return Err(error(
+                ErrorKind::Budget,
+                "native-film-rebuild-package-bytes",
+            ));
+        }
+        let (bytes, _held) =
+            crate::staging::read_held(&directory.join(name), expected.bytes as u64)?;
+        if bytes.len() != expected.bytes || digest(&bytes) != expected.sha256 {
+            return Err(error(
+                ErrorKind::Integrity,
+                "native-film-rebuild-export-file",
+            ));
+        }
+        total += bytes.len();
+    }
+    Ok(manifest)
+}
+
+#[cfg(all(windows, feature = "film"))]
+#[path = "film_rebuild/dispatch.rs"]
+pub mod dispatch;
