@@ -548,6 +548,9 @@ impl ConsoleForeground {
     pub fn final_displayed(&self) -> bool {
         self.parent.final_displayed()
     }
+    pub(super) fn failed(&self) -> bool {
+        self.parent.failed()
+    }
     pub fn local_event(&mut self) -> Option<ParentEvent> {
         self.parent.local_event()
     }

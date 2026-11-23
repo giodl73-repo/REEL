@@ -56,11 +56,19 @@ fn load<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T> {
 fn session(path: &Path) -> Result<native::SessionRequest> {
     native::SessionRequest::parse(&bytes(path, native::MAX_SESSION_REQUEST_BYTES)?)
 }
-fn run() -> Result<()> {
+fn run() -> Result<std::process::ExitCode> {
     match Args::parse().command {
         #[cfg(windows)]
         Action::Run { request } => {
-            native::worker::run_foreground(&bytes(&request, native::MAX_SESSION_REQUEST_BYTES)?)?
+            use native::worker::ForegroundOutcome;
+            let outcome = native::worker::run_foreground(&bytes(
+                &request,
+                native::MAX_SESSION_REQUEST_BYTES,
+            )?)?;
+            return Ok(match outcome {
+                ForegroundOutcome::Closed => std::process::ExitCode::SUCCESS,
+                ForegroundOutcome::FaultClosed => std::process::ExitCode::from(2),
+            });
         }
         Action::ValidateSession { request } => {
             session(&request)?;
@@ -116,11 +124,14 @@ fn run() -> Result<()> {
             )?;
         }
     }
-    Ok(())
+    Ok(std::process::ExitCode::SUCCESS)
 }
-fn main() {
-    if run().is_err() {
-        eprintln!("installation operation refused; no playback qualification");
-        std::process::exit(1)
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(code) => code,
+        Err(_) => {
+            eprintln!("installation operation refused; no playback qualification");
+            std::process::ExitCode::FAILURE
+        }
     }
 }

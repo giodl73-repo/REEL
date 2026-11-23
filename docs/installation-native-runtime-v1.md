@@ -503,6 +503,9 @@ existing Job Object runner and drives the attached console. The foreground
 uses the runner's held PID to authenticate the channel and shares the Quit
 deadline with the runner. The runtime binding and private bootstrap files stay
 owned until the runner returns from reaping the child.
+The command exits with status 0 after a session closes without a fault. Status
+2 means a session fault was displayed and cleanup finished. Status 1 means
+startup, communication, or cleanup failed.
 The runner samples both processes' Windows peak working sets and rejects a
 combined total above 512 MiB. The foreground checks the total again after
 console shutdown using the recorded worker peak. Summing the separate peaks

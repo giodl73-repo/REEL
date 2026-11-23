@@ -140,7 +140,10 @@ fn actual_run_displays_missing_source_fault_and_exits_on_cooked_quit() {
         drop(input);
         drop(terminal);
         reader.join().unwrap();
-        assert!(result.0.is_ok(), "{:?}", result.0);
+        let error = result
+            .0
+            .expect_err("a closed source fault must remain visible in the exit status");
+        assert!(error.starts_with("Job step exited 2;"), "{error}");
         result
             .1
             .expect("foreground displayed source fault")

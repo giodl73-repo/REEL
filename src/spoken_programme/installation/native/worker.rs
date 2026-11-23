@@ -39,8 +39,13 @@ pub fn run_worker(raw: &[u8], bootstrap: WorkerBootstrap) -> Result<()> {
         .deliver(bootstrap.invitation.server_process_id)
 }
 
+pub enum ForegroundOutcome {
+    Closed,
+    FaultClosed,
+}
+
 /// Launch the pinned worker and drive the attached foreground console.
-pub fn run_foreground(raw: &[u8]) -> Result<()> {
+pub fn run_foreground(raw: &[u8]) -> Result<ForegroundOutcome> {
     use super::{
         console::ConsoleForeground,
         parent::{CleanupWatch, ParentEvent, ParentSession},
@@ -158,6 +163,7 @@ pub fn run_foreground(raw: &[u8]) -> Result<()> {
         job.join()
             .map_err(|_| anyhow::anyhow!("installation process owner panicked"))?
             .map_err(anyhow::Error::msg)?;
+        let faulted = foreground.failed();
         foreground.shutdown()?;
         let foreground_peak =
             current_peak_working_set_bytes().map_err(|error| anyhow::anyhow!("{error}"))?;
@@ -167,7 +173,12 @@ pub fn run_foreground(raw: &[u8]) -> Result<()> {
             "installation working-set measurement unavailable"
         );
         check_working_set(foreground_peak, worker_peak)?;
-        cleanup.get().unwrap().check()
+        cleanup.get().unwrap().check()?;
+        Ok(if faulted {
+            ForegroundOutcome::FaultClosed
+        } else {
+            ForegroundOutcome::Closed
+        })
     })
 }
 
