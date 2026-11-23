@@ -23,6 +23,16 @@ state, not payload custody or an end-to-end bilingual protected render. Actual
 retained child rendering is qualified separately in the retained-child adapter;
 the complete automatic repair application remains open.
 
+The first explicit protected repair run retained and closed both new manual
+parents and admitted the film child, then refused during preparation before
+workspace creation. The derivation pass retained the candidate job's byte gate;
+the following bind attempted a second open of that same gate. The CLI now ends
+the control byte-reading pass before binding/running, preserving the original
+snapshot and durable child claims. The following pass reopens and checks exact
+pins. This follows the existing renderer's control-to-file-provider handoff;
+it adds no byte cache or vendor change. Continuation uses the original admitted
+receipt, source, request, renderer and attempt; the failed empty ticket remains.
+
 Validation: 56 default native tests and strict Clippy passed. The film-enabled
 suite passed 71 tests; after the final intent-recording and prerequisite changes,
 all nine focused film integration tests and strict film Clippy passed again.
