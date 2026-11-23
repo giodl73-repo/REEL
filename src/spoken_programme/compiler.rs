@@ -213,7 +213,7 @@ fn at<T>(result: Result<T>, kind: &'static str, index: usize) -> Result<T> {
     result.map_err(|error| anyhow::anyhow!("spoken {kind} index {index}: {error}"))
 }
 
-fn selected_ids(document: &Document) -> BTreeSet<String> {
+pub(super) fn selected_ids(document: &Document) -> BTreeSet<String> {
     document
         .editions
         .iter()
@@ -718,7 +718,7 @@ pub fn compile_file(
     compile_file_for_editions(declaration, output, profile, &[])
 }
 
-fn select_editions(mut plan: CompiledPlan, ids: &[String]) -> Result<CompiledPlan> {
+pub(super) fn select_editions(mut plan: CompiledPlan, ids: &[String]) -> Result<CompiledPlan> {
     if ids.is_empty() {
         return Ok(plan);
     }

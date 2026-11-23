@@ -21,6 +21,8 @@ pub mod lesson;
 pub mod producer;
 #[cfg(feature = "print")]
 pub mod reading;
+#[cfg(feature = "tig-publication")]
+pub mod workflow;
 
 pub const SCHEMA: &str = "reel.spoken-edition.v1";
 pub const VALIDATION_SCHEMA: &str = "reel.spoken-edition-validation.v1";
