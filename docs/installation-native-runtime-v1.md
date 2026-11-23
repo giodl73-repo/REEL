@@ -742,6 +742,11 @@ variable. It verifies that the trace and recording came from the same
 session request. The Start-to-first-marker check gives a conservative
 onset bound at the render mix because the marker follows the source's
 initial silence. It allows up to two seconds and needs both clock files.
+For a dedicated Stop capture, the same analyzer requires the first source
+marker before Stop and packet coverage through the next 250 ms. It measures
+from before sending Stop to the first frame of sustained digital silence.
+Missing packets or a recording that ends before that window cannot establish
+quiescence. This is a render-mix measurement.
 
 `actual_station_status_acknowledgement_meets_outer_deadline` times from
 before typing Status into the pseudoconsole to the reader observing its

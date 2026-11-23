@@ -106,11 +106,7 @@ fn frame_ns(frames: usize) -> u64 {
     frames as u64 * 1_000_000_000 / RATE as u64
 }
 
-fn measure_capture_clock(
-    clock: &CaptureClock,
-    bytes: &[u8],
-    markers: [usize; 4],
-) -> Result<(u64, [u64; 2], u64)> {
+fn validate_capture_clock(clock: &CaptureClock, bytes: &[u8]) -> Result<()> {
     ensure!(
         clock.sample_rate == RATE
             && clock.channels == 2
@@ -133,7 +129,9 @@ fn measure_capture_clock(
         if let Some(previous) = previous {
             let elapsed = packet.capture_qpc_ns.checked_sub(previous.capture_qpc_ns);
             ensure!(
-                elapsed.is_some_and(|time| time.abs_diff(frame_ns(previous.frames)) <= 2_000_000),
+                elapsed.is_some_and(
+                    |time| time > 0 && time.abs_diff(frame_ns(previous.frames)) <= 2_000_000
+                ),
                 "capture packet clock discontinuity"
             );
         }
@@ -144,16 +142,30 @@ fn measure_capture_clock(
         offset == clock.total_frames,
         "capture packet coverage differs"
     );
+    Ok(())
+}
+
+fn frame_qpc(clock: &CaptureClock, frame: usize) -> Result<u64> {
+    ensure!(frame < clock.total_frames, "frame exceeds capture");
+    let index = clock
+        .packets
+        .partition_point(|packet| packet.offset_frames <= frame);
+    let packet = &clock.packets[index - 1];
+    packet
+        .capture_qpc_ns
+        .checked_add(frame_ns(frame - packet.offset_frames))
+        .ok_or_else(|| anyhow::anyhow!("capture frame timestamp overflow"))
+}
+
+fn measure_capture_clock(
+    clock: &CaptureClock,
+    bytes: &[u8],
+    markers: [usize; 4],
+) -> Result<(u64, [u64; 2], u64)> {
+    validate_capture_clock(clock, bytes)?;
     let mut marker_clock = [0; 4];
     for (marker, time) in markers.into_iter().zip(&mut marker_clock) {
-        let index = clock
-            .packets
-            .partition_point(|packet| packet.offset_frames <= marker);
-        let packet = &clock.packets[index - 1];
-        *time = packet
-            .capture_qpc_ns
-            .checked_add(frame_ns(marker - packet.offset_frames))
-            .ok_or_else(|| anyhow::anyhow!("capture marker timestamp overflow"))?;
+        *time = frame_qpc(clock, marker)?;
     }
     let [head_a, tail_a, head_b, tail_b] = marker_clock;
     let gap = head_b
@@ -169,6 +181,56 @@ fn measure_capture_clock(
             .ok_or_else(|| anyhow::anyhow!("second capture span reversed"))?,
     ];
     Ok((gap, spans, head_a))
+}
+
+fn stop_to_quiet_bound(
+    trace: &ConsoleTrace,
+    clock: &CaptureClock,
+    frames: &[[f32; 2]],
+) -> Result<u64> {
+    ensure!(
+        trace.schema == "reel.installation-station-console-trace.v1"
+            && trace.clock == "windows-qpc-nanoseconds"
+            && trace.process_exited_successfully
+            && clock.request_sha256.as_deref() == Some(trace.request_sha256.as_str()),
+        "console trace and capture session differ"
+    );
+    let mut stops = trace.steps.iter().filter(|step| step.command == "stop\r");
+    let sent = stops
+        .next()
+        .and_then(|step| step.sent_qpc_ns)
+        .ok_or_else(|| anyhow::anyhow!("console trace lacks Stop time"))?;
+    ensure!(
+        sent > 0 && stops.next().is_none(),
+        "ambiguous Stop observation"
+    );
+    const LIMIT_NS: u64 = 250_000_000;
+    let end = frame_qpc(clock, frames.len().saturating_sub(1))?;
+    ensure!(
+        end.saturating_sub(sent) >= LIMIT_NS,
+        "capture ended before the quiescence window"
+    );
+    let marker = frames
+        .windows(MARKER_FRAMES)
+        .position(|window| marker_at(window) == Some(Marker::First))
+        .ok_or_else(|| anyhow::anyhow!("capture lacks the source marker before Stop"))?;
+    ensure!(
+        frame_qpc(clock, marker)? < sent,
+        "source marker did not precede Stop"
+    );
+    ensure!(
+        frames.iter().flatten().all(|sample| sample.is_finite()),
+        "capture contains a nonfinite sample"
+    );
+    let last_sound = frames
+        .iter()
+        .rposition(|frame| frame.iter().any(|sample| *sample != 0.0))
+        .ok_or_else(|| anyhow::anyhow!("capture contains no source audio"))?;
+    ensure!(
+        last_sound + 1 < frames.len(),
+        "capture contains no trailing silence"
+    );
+    Ok(frame_qpc(clock, last_sound + 1)?.saturating_sub(sent))
 }
 
 fn start_to_marker_bound(
@@ -272,9 +334,31 @@ fn station_capture_measurement_detects_markers_and_applies_both_limits() {
     );
     trace.request_sha256 = "other-request".into();
     assert!(start_to_marker_bound(&trace, &clock, first_marker_ns).is_err());
+    trace.request_sha256 = "fixture-request".into();
+    trace.steps.push(ConsoleStep {
+        command: "stop\r".into(),
+        sent_qpc_ns: Some(1 + frame_ns(9_600)),
+    });
+    frames[11_039] = [0.001, -0.001];
+    frames[11_040..].fill([0.0; 2]);
+    assert_eq!(
+        stop_to_quiet_bound(&trace, &clock, &frames).unwrap(),
+        30_000_000
+    );
     clock.packets[10].capture_qpc_ns += 3_000_000;
     clock.packets[10].callback_qpc_ns += 3_000_000;
     assert!(measure_capture_clock(&clock, &bytes, offsets).is_err());
+}
+
+fn load_capture_json<T: serde::de::DeserializeOwned>(path: &std::path::Path, limit: usize) -> T {
+    let mut raw = Vec::new();
+    std::fs::File::open(path)
+        .unwrap()
+        .take(limit as u64 + 1)
+        .read_to_end(&mut raw)
+        .unwrap();
+    assert!(raw.len() <= limit, "capture metadata too large");
+    serde_json::from_slice(&raw).unwrap()
 }
 
 #[test]
@@ -299,6 +383,25 @@ fn measure_retained_station_capture() {
             ]
         })
         .collect();
+    let clock_path = std::path::Path::new(&path).with_extension("clock.json");
+    let clock: Option<CaptureClock> = clock_path
+        .is_file()
+        .then(|| load_capture_json(&clock_path, 2_000_000));
+    let trace: Option<ConsoleTrace> = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE")
+        .map(|path| load_capture_json(std::path::Path::new(&path), 65_536));
+    assert!(
+        trace.is_none() || clock.is_some(),
+        "console alignment requires a capture clock sidecar"
+    );
+    if let (Some(clock), Some(trace)) = (&clock, &trace)
+        && trace.steps.iter().any(|step| step.command == "stop\r")
+    {
+        validate_capture_clock(clock, &bytes).unwrap();
+        let quiet = stop_to_quiet_bound(trace, clock, &frames).unwrap();
+        println!("Stop sent to captured digital silence: {quiet} ns");
+        assert!(quiet <= 250_000_000);
+        return;
+    }
     let markers = marker_offsets(&frames).unwrap();
     let (gap, spans) = measure(markers).unwrap();
     println!(
@@ -308,17 +411,7 @@ fn measure_retained_station_capture() {
         spans
     );
     assert!(capture_passes(gap, spans), "capture failed timing gates");
-    let clock_path = std::path::Path::new(&path).with_extension("clock.json");
-    let trace_path = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE");
-    if clock_path.is_file() {
-        let mut raw = Vec::new();
-        std::fs::File::open(clock_path)
-            .unwrap()
-            .take(2_000_001)
-            .read_to_end(&mut raw)
-            .unwrap();
-        assert!(raw.len() <= 2_000_000, "capture clock sidecar too large");
-        let clock: CaptureClock = serde_json::from_slice(&raw).unwrap();
+    if let Some(clock) = clock {
         let (gap_ns, spans_ns, first_marker_ns) =
             measure_capture_clock(&clock, &bytes, markers).unwrap();
         println!("capture QPC loop gap {gap_ns} ns; source spans {spans_ns:?} ns");
@@ -328,24 +421,12 @@ fn measure_retained_station_capture() {
                 .into_iter()
                 .all(|span| span.abs_diff(frame_ns(LAST_MARKER - FIRST_MARKER)) <= 20_000_000)
         );
-        if let Some(trace_path) = trace_path {
-            let mut raw = Vec::new();
-            std::fs::File::open(trace_path)
-                .unwrap()
-                .take(65_537)
-                .read_to_end(&mut raw)
-                .unwrap();
-            assert!(raw.len() <= 65_536, "console trace too large");
-            let trace: ConsoleTrace = serde_json::from_slice(&raw).unwrap();
+        if let Some(trace) = trace {
             let onset_bound = start_to_marker_bound(&trace, &clock, first_marker_ns).unwrap();
             println!("Start sent to first captured source marker: {onset_bound} ns");
             assert!(onset_bound <= 2_000_000_000);
         }
     } else {
-        assert!(
-            trace_path.is_none(),
-            "console alignment requires a capture clock sidecar"
-        );
         println!("sample positions only; no capture clock sidecar");
     }
 }
