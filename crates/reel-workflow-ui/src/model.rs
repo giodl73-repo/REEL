@@ -39,6 +39,7 @@ pub struct ApprovalReference {
 pub enum Format {
     Film,
     Comic,
+    Spoken,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
