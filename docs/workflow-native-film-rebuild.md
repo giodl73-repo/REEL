@@ -47,8 +47,9 @@ and stops at the first failure. After interruption, preserve the original
 requests and tickets, resume an interrupted edition, verify a completed
 edition, and run any edition that has yet to start.
 
-Each successful edition reports `retained_scene` with the task key, attempt,
-output pins, worker receipt and retained acknowledgement. Use these pins as
+Each successful edition reports `retained_scene` with the task ID, task key,
+attempt, language, output pins, worker receipt and retained acknowledgement.
+Use these pins as
 inputs to the episode segment binding. The episode worker still independently
 checks the selected master against the current language and scene controls.
 

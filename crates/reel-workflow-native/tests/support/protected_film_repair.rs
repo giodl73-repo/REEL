@@ -681,6 +681,11 @@ fn finish(
         .join("work");
     let result: ReturnedResult = load(workspace.join("workflow-result.json"));
     if use_dispatch {
+        assert_eq!(done["retained_scene"]["task_id"], request.packet.task.id);
+        assert_eq!(
+            done["retained_scene"]["language"],
+            serde_json::to_value(&request.packet.task.language).unwrap()
+        );
         assert_eq!(
             done["retained_scene"]["artifacts"],
             serde_json::to_value(&result.artifacts).unwrap()

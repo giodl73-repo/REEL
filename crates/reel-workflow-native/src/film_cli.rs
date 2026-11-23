@@ -349,12 +349,15 @@ pub enum Action {
 }
 
 fn retained_scene_evidence(
+    packet: &Packet,
     result: &reel_workflow::ReturnedResult,
     acknowledgement: &crate::retention::Acknowledgement,
 ) -> Result<serde_json::Value> {
     Ok(serde_json::json!({
+        "task_id": packet.task.id,
         "task_key": result.task_key,
         "attempt_id": result.attempt_id,
+        "language": packet.task.language,
         "artifacts": result.artifacts,
         "worker_receipt": result.worker_receipt,
         "retained_acknowledgement": acknowledgement.artifact()?,
@@ -406,7 +409,8 @@ pub fn execute(
             generated.ingest(&request.source, &request.admission)?;
             let acknowledgement =
                 generated.retain(&request.source, &request.admission, &request.retained)?;
-            let evidence = retained_scene_evidence(generated.result(), &acknowledgement)?;
+            let evidence =
+                retained_scene_evidence(&request.packet, generated.result(), &acknowledgement)?;
             Ok(
                 serde_json::json!({"ok":true,"task_completed":true,"retained_owner_acknowledged":true,"selected":false,"scratch_retired":false,"capacity_released":false,"retained_scene":evidence}),
             )
@@ -424,7 +428,7 @@ pub fn execute(
                     &result,
                     &ack,
                 )?;
-                let evidence = retained_scene_evidence(&result, &ack)?;
+                let evidence = retained_scene_evidence(&request.packet, &result, &ack)?;
                 return Ok(
                     serde_json::json!({"ok":true,"retained_verified":true,"selected":false,"scratch_retired":false,"retained_scene":evidence}),
                 );
