@@ -41,8 +41,10 @@ These are private machine controls, not shareable reports.
 the exported render task IDs. Each edition supplies `request`,
 `request_sha256`, `ticket`, `ticket_sha256`, and `action` (`run`, `resume`,
 or `verify`). Prepare and persist the owned requests and tickets first.
-The dispatcher checks every edition's exported packet, source and ticket
-binding before it starts the first render. It uses the export's task order
+The dispatcher checks every edition's exported packet and source, then
+reopens all original workspace tickets and holds their existing reservations
+before it starts the first render. An unavailable or replaced workspace
+prevents execution of the batch. It uses the export's task order
 and stops at the first failure. After interruption, preserve the original
 requests and tickets, resume an interrupted edition, verify a completed
 edition, and run any edition that has yet to start.

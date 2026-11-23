@@ -80,12 +80,6 @@ pub fn execute(path: &Path, pin: &str) -> Result<serde_json::Value> {
             ));
         }
         let (ticket, held_ticket) = film_cli::read_ticket(&entry.ticket)?;
-        film_cli::validate_ticket(
-            &request,
-            &entry.request_sha256,
-            &ticket,
-            &entry.ticket_sha256,
-        )?;
         total += held_request.metadata().map_err(crate::io_error)?.len() + ticket.len() as u64;
         if total > MAX_EXPORT_BYTES as u64 {
             return Err(error(
@@ -93,23 +87,23 @@ pub fn execute(path: &Path, pin: &str) -> Result<serde_json::Value> {
                 "film-rebuild-dispatch-control-bytes",
             ));
         }
-        controls.push((id, entry, request, ticket, held_request, held_ticket));
+        let owned = film_cli::open(
+            &request,
+            &entry.request_sha256,
+            &ticket,
+            &entry.ticket_sha256,
+        )?;
+        controls.push((id, entry, request, owned, held_request, held_ticket));
     }
 
     let mut editions = BTreeMap::new();
-    for (id, entry, request, ticket, _held_request, _held_ticket) in controls {
+    for (id, entry, request, owned, _held_request, _held_ticket) in controls {
         let action = match entry.action {
             Action::Run => film_cli::Action::Run,
             Action::Resume => film_cli::Action::Resume,
             Action::Verify => film_cli::Action::Verify,
         };
-        let outcome = film_cli::execute(
-            &request,
-            &entry.request_sha256,
-            &ticket,
-            &entry.ticket_sha256,
-            action,
-        )?;
+        let outcome = film_cli::execute_owned(&request, owned, action)?;
         editions.insert(id, outcome);
     }
     Ok(serde_json::json!({"ok":true,"editions":editions}))
