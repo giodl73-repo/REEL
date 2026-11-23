@@ -21,7 +21,7 @@ records the expected visits and sample ranges for the local test.
 Sample ranges are half-open and use 48 kHz edition-local clocks. Bind a visual
 companion for the worked example only when its receipt matches that exact
 edition and interval. The [companion guide](semantic-visual-companion-v1.md)
-describes the separate phrase and frame evidence. Source fixture audio contains
+describes the separate phrase and frame evidence. Branch placement verifies the companion edition, source audio and transcript identities before mapping anchors to local audio frames inside the selected interval. Source fixture audio contains
 controlled signals and the test transcript derives from the fixture script.
 
 Run both routes in both languages. Repeat each input trace and compare visit
