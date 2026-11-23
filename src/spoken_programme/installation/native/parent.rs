@@ -53,7 +53,10 @@ struct Credit {
 enum DisplayKind {
     Transcript(String),
     Ack(u64, u64),
-    Final,
+    Final {
+        generation: u64,
+        report_counter: i64,
+    },
     Observation,
 }
 struct PendingDisplay {
@@ -590,7 +593,10 @@ impl ParentSession {
                 ensure!(self.active, "installation core end before Ready");
                 self.snapshot(*snapshot)?;
                 self.final_report()?;
-                DisplayKind::Final
+                DisplayKind::Final {
+                    generation: snapshot.generation,
+                    report_counter: *observed_counter,
+                }
             }
             Output::PreparationEnded {
                 phase,
@@ -602,7 +608,10 @@ impl ParentSession {
                     "installation preparation end context"
                 );
                 self.final_report()?;
-                DisplayKind::Final
+                DisplayKind::Final {
+                    generation: 0,
+                    report_counter: *observed_counter,
+                }
             }
             Output::ResourcesClosed {
                 generation,
@@ -614,7 +623,10 @@ impl ParentSession {
                     "installation resource closure context"
                 );
                 self.final_report()?;
-                DisplayKind::Final
+                DisplayKind::Final {
+                    generation: *generation,
+                    report_counter: *observed_counter,
+                }
             }
         };
         self.last_ticket = self
@@ -814,7 +826,11 @@ impl ParentSession {
                 credit.shown = Some(at);
                 credit.lease.mark_shown();
             }
-            DisplayKind::Final => {
+            DisplayKind::Final {
+                generation,
+                report_counter,
+            } => {
+                self.send(generation, Input::FinalShown { report_counter })?;
                 self.final_displayed = true;
                 self.input.close();
                 self.credits.clear();

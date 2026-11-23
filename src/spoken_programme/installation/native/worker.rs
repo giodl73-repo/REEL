@@ -53,6 +53,54 @@ pub struct WorkerClosure {
     pub generation: u64,
     _runtime: Arc<RuntimeBinding>,
 }
+impl WorkerClosure {
+    /// Deliver the actual close observation within the owner's existing
+    /// deadline. Keep the pipe alive until the matching display receipt.
+    pub fn deliver(mut self, parent_pid: u32, deadline: Instant) -> Result<()> {
+        use super::protocol::Input;
+        let report_counter = match &self.report {
+            Output::Ended {
+                observed_counter, ..
+            }
+            | Output::PreparationEnded {
+                observed_counter, ..
+            }
+            | Output::ResourcesClosed {
+                observed_counter, ..
+            } => *observed_counter,
+            _ => anyhow::bail!("installation invalid final report"),
+        };
+        ensure!(
+            Instant::now() < deadline && self.channel.verify_peer(parent_pid)?,
+            "installation final delivery unavailable"
+        );
+        self.channel.send(self.generation, &self.report.bytes()?)?;
+        loop {
+            ensure!(
+                Instant::now() < deadline && self.channel.verify_peer(parent_pid)?,
+                "installation final delivery deadline or peer failure"
+            );
+            if let Some(packet) = self.channel.receive() {
+                match Input::parse(&packet)? {
+                    Input::FinalShown {
+                        report_counter: shown,
+                    } if shown == report_counter && packet.generation() == self.generation => break,
+                    // Quit's display can complete while source/output are joining.
+                    Input::AckShown { .. } => {}
+                    _ => anyhow::bail!("installation unexpected final delivery receipt"),
+                }
+            } else {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+        self.channel.shutdown()?;
+        ensure!(
+            Instant::now() <= deadline,
+            "installation final shutdown deadline"
+        );
+        Ok(())
+    }
+}
 
 impl WorkerSession {
     pub fn new(
@@ -589,6 +637,15 @@ mod tests {
                 ..
             }
         ));
+        if mode == 0 {
+            closure
+                .deliver(
+                    invitation.server_process_id,
+                    Instant::now() + Duration::from_secs(2),
+                )
+                .unwrap();
+            return;
+        }
         closure
             .channel
             .send(closure.generation, &closure.report.bytes().unwrap())
@@ -762,11 +819,6 @@ mod tests {
                         && input_pool.occupied() == 0
                         && input_pool.closed()
                 );
-                std::fs::write(
-                    root.path().join("observed.marker"),
-                    b"actual foreground observed closure",
-                )
-                .unwrap();
                 let result = job.join().unwrap();
                 assert!(result.is_ok(), "{result:?}");
                 foreground.shutdown_channel().unwrap();

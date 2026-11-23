@@ -898,7 +898,11 @@ mod tests {
             );
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(peer.receive().is_none());
+        let packet = super::super::parent::tests::receive(&mut peer);
+        assert!(matches!(
+            super::super::protocol::Input::parse(&packet).unwrap(),
+            super::super::protocol::Input::FinalShown { report_counter } if report_counter == at
+        ));
         owner.shutdown().unwrap();
         let surface = ConsoleSurface::open().unwrap();
         let mut renderer = ConsoleRenderer::start(surface).unwrap();

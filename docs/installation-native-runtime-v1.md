@@ -483,6 +483,11 @@ barriers and drains output independently before closing it. This follows the
 [Windows pseudoconsole session API](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session).
 No second process launcher, visible console window or media device is started.
 
+After source and output teardown, the worker can send its final report and
+hold the channel open for `FinalShown`. The foreground sends that receipt
+after rendering succeeds. The worker checks the report counter and generation
+before closing IPC within the deadline supplied by its owner.
+
 The reader and renderer own their blocking operations on separate threads.
 `ParentSession::tick_with_renderer` polls the renderer and acknowledges each
 ticket only after a successful console operation. The headless fixture verifies

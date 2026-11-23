@@ -29,6 +29,9 @@ pub enum Input {
         id: u64,
         observed_counter: i64,
     },
+    FinalShown {
+        report_counter: i64,
+    },
 }
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -128,6 +131,7 @@ impl Input {
     }
     fn validate(&self) -> Result<()> {
         let valid = match self {
+            Self::FinalShown { report_counter } => *report_counter > 0,
             Self::Authorize {
                 request_sha256,
                 runtime_sha256,
@@ -492,6 +496,7 @@ impl WorkerGate {
             "installation message clock context"
         );
         match Input::parse(packet)? {
+            Input::FinalShown { .. } => anyhow::bail!("installation final display before closure"),
             Input::AckShown {
                 id,
                 observed_counter,
