@@ -18,12 +18,15 @@ $expected = @(
     'reel-workflow-native.exe'
     'reel-workflow-http.exe'
 )
-if ($manifest.schema -cnotin @('reel.workflow-package.v1', 'reel.workflow-package.v2') -or
+if ($manifest.schema -cnotin @('reel.workflow-package.v1', 'reel.workflow-package.v2', 'reel.workflow-package.v3') -or
     $manifest.source_commit -ne $SourceCommit) {
     throw 'Unexpected package schema or source commit.'
 }
-if ($manifest.schema -ceq 'reel.workflow-package.v2') {
+if ($manifest.schema -cne 'reel.workflow-package.v1') {
     $expected += 'reel-episode-captions.exe'
+}
+if ($manifest.schema -ceq 'reel.workflow-package.v3') {
+    $expected += 'reel-workflow-ui.exe'
 }
 $names = @($manifest.files | ForEach-Object { $_.name } | Sort-Object)
 if (($names -join ',') -cne (($expected | Sort-Object) -join ',')) {
