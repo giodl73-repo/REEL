@@ -809,6 +809,8 @@ For Restart, use `actual_station_restart_leaves_a_fresh_onset_observation_window
 in a separate capture. The fixture holds the original and restarted playback
 long enough for each head marker, then quits before the tail marker. The
 analyzer requires exactly two head markers, one before Restart and one after.
+It applies the 35-second aggregate Restart onset limit, which includes the
+required fresh source check. The two-second onset limit above applies to Start.
 The CA-2890 playback-only rehearsal reached visible Playing after Restart in
 507.99 ms. The render-mix measurement still needs an isolated recording.
 For a dedicated Pause or Stop capture, the same analyzer requires the first

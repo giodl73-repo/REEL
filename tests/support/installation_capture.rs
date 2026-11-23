@@ -454,7 +454,10 @@ fn measure_retained_station_capture() {
             validate_capture_clock(clock, &bytes).unwrap();
             let onset = restart_to_marker_bound(trace, clock, &frames).unwrap();
             println!("Restart sent to fresh captured source marker: {onset} ns");
-            assert!(onset <= 2_000_000_000);
+            assert!(
+                onset <= 35_000_000_000,
+                "Restart exceeded its aggregate onset deadline"
+            );
             return;
         }
         let mut commands = trace
