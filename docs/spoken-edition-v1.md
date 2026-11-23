@@ -77,3 +77,16 @@ assembly, M04 independently checks media and matching text, and M05 proves
 retention/selective invalidation through admitted asset interfaces. Real
 language, word-fidelity, naturalness, authority and delivery decisions retain
 their separate gates throughout.
+
+Compare two staged revisions of the same declaration after a take selection
+changes. The compiler resolves alignment evidence beside each declaration.
+
+```sh
+reel spoken-edition-impact previous/edition.json current/edition.json --profile spoken
+```
+
+The private report gives exact consumed recipe hashes and one action per
+edition. `build` identifies a new edition, `rebuild` a changed recipe and
+`removed` an edition absent from the current declaration. `reuse` is eligible
+when a prior checked, retained result matches the current recipe and delivery
+settings. The report opens alignment metadata and writes no media or selections.

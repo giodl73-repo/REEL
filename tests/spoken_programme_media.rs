@@ -558,6 +558,60 @@ fn processing_targets_gains_and_envelopes_are_strict() {
 }
 
 #[test]
+fn cli_spoken_impact_rebuilds_only_editions_using_the_changed_english_take() {
+    let before = Fixture::new();
+    let mut after = Fixture::new();
+    let number = after
+        .document
+        .performances
+        .iter()
+        .position(|take| take.id == "en-opening")
+        .unwrap();
+    after.signals[number][5000] += 1;
+    after.sync();
+    let write_declaration = |fixture: &Fixture| {
+        let path = fixture.temp.path().join("declaration.json");
+        fs::write(&path, serde_json::to_vec(&fixture.document).unwrap()).unwrap();
+        path
+    };
+    let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("spoken-edition-impact")
+        .arg(write_declaration(&before))
+        .arg(write_declaration(&after))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["schema"], "reel.spoken-edition-impact.v1");
+    assert_eq!(report["reuse_requires_checked_retained_output"], true);
+    let editions = report["editions"].as_array().unwrap();
+    assert_eq!(editions.len(), 4);
+    for (edition, action) in [
+        ("en-executive", "rebuild"),
+        ("en-technical", "rebuild"),
+        ("es-executive", "reuse"),
+        ("es-technical", "reuse"),
+    ] {
+        let row = editions
+            .iter()
+            .find(|row| row["edition_id"] == edition)
+            .unwrap();
+        assert_eq!(row["action"], action);
+        assert_eq!(
+            row["previous_recipe_sha256"] == row["current_recipe_sha256"],
+            action == "reuse"
+        );
+    }
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(!stdout.contains("take-0.wav"));
+    assert!(!stdout.contains("alignment-0.json"));
+}
+
+#[test]
 fn cli_compiles_produces_and_refuses_overwrite() {
     let mut f = Fixture::new();
     f.document.id = "PRIVATE-PROGRAMME-CANARY".into();
