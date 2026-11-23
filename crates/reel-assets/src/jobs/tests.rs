@@ -902,6 +902,91 @@ fn checkpoint_resume_keeps_recipe_and_canonical_seed_immutable_and_retires_new_j
 }
 
 #[test]
+fn admitted_checkpoint_resume_requires_exact_pins_and_retains_through_its_sink() {
+    struct Authority {
+        pins: BTreeMap<String, u64>,
+        admitted: std::cell::RefCell<BTreeSet<String>>,
+    }
+    impl ResourceAuthority for Authority {
+        fn require(&self, role: ResourceRole, hash: &str, bytes: u64) -> Result<()> {
+            if role == ResourceRole::Checkpoint {
+                if self.pins.get(hash) != Some(&bytes) {
+                    return Err("checkpoint refused by caller".into());
+                }
+                self.admitted.borrow_mut().insert(hash.into());
+            }
+            Ok(())
+        }
+    }
+    #[derive(Default)]
+    struct Sink {
+        result: Option<(String, bool)>,
+    }
+    impl RetentionSink for Sink {
+        fn retain(&mut self, batch: &RetainedJob) -> Result<()> {
+            self.result = Some((batch.request().sha256().into(), batch.succeeded()));
+            Ok(())
+        }
+    }
+
+    let f = Fixture::new();
+    let (manifest, descriptor, seed) = checkpoint_fixture(&f);
+    let cfg = config(f.root()).unwrap();
+    let request = fs::read(&manifest).unwrap();
+    let raw_descriptor = fs::read(&descriptor).unwrap();
+    let request_hash = seed["job_sha256"].as_str().unwrap();
+    let checkpoint_hash = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+        .as_str()
+        .unwrap();
+    let mut authority = Authority {
+        pins: BTreeMap::from([
+            (request_hash.into(), request.len() as u64),
+            (
+                format!("{:x}", Sha256::digest(&raw_descriptor)),
+                raw_descriptor.len() as u64,
+            ),
+        ]),
+        admitted: Default::default(),
+    };
+    let mut sink = Sink::default();
+    let refused = resume_admitted(
+        f.root(),
+        &manifest,
+        &descriptor,
+        &mut RunContext {
+            config: &cfg,
+            authority: &authority,
+            retention: &mut sink,
+        },
+    )
+    .unwrap_err();
+    assert!(refused.to_string().contains("checkpoint refused by caller"));
+    assert!(sink.result.is_none());
+    no_scratch(&f);
+
+    authority.pins.insert(checkpoint_hash.into(), 10);
+    let result = resume_admitted(
+        f.root(),
+        &manifest,
+        &descriptor,
+        &mut RunContext {
+            config: &cfg,
+            authority: &authority,
+            retention: &mut sink,
+        },
+    )
+    .unwrap();
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(result["workspace_retained"], false);
+    assert_eq!(sink.result, Some((request_hash.into(), true)));
+    assert_eq!(
+        *authority.admitted.borrow(),
+        authority.pins.keys().cloned().collect()
+    );
+    no_scratch(&f);
+}
+
+#[test]
 fn checkpoint_resume_rejects_changed_recipe_scope_escape_and_corruption() {
     for mode in [
         "changed-recipe",
