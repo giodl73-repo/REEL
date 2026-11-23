@@ -782,6 +782,44 @@ mod tests {
             )
         }
     }
+    #[test]
+    fn renderer_shutdown_cancels_and_joins_a_blocked_windows_write() {
+        use windows::Win32::Foundation::ERROR_OPERATION_ABORTED;
+
+        let (read, mut write) = pipe();
+        let (requests, input) = std::sync::mpsc::sync_channel(1);
+        let (output, rendered) = std::sync::mpsc::sync_channel(1);
+        let (started, writing) = std::sync::mpsc::channel();
+        let (finished, joined) = std::sync::mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            input.recv().unwrap();
+            let bytes = vec![b'x'; 1024 * 1024];
+            started.send(()).unwrap();
+            let error = write.write_all(&bytes).unwrap_err();
+            assert_eq!(error.raw_os_error(), Some(ERROR_OPERATION_ABORTED.0 as i32));
+            drop(output);
+        });
+        // Keep the pipe unread. Closing it on timeout lets the test fail
+        // without leaving the fixture's writer blocked indefinitely.
+        let watchdog = std::thread::spawn(move || {
+            let result = joined.recv_timeout(Duration::from_secs(2));
+            drop(read);
+            result
+        });
+        let mut renderer = ConsoleRenderer {
+            requests: Some(requests),
+            rendered,
+            thread: Some(thread),
+            pending: false,
+        };
+        renderer.queue(RenderRequest::Status("fixture")).unwrap();
+        writing.recv_timeout(Duration::from_secs(1)).unwrap();
+        let result = renderer.shutdown();
+        let _ = finished.send(());
+        watchdog.join().unwrap().unwrap();
+        result.unwrap();
+        assert!(renderer.completion().is_err());
+    }
     impl Capture {
         fn new() -> Self {
             let (input, writer) = pipe();
