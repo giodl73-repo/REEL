@@ -26,14 +26,29 @@ Use the existing protected composition path for the resulting controls and
 guarded inputs. Reuse unaffected scene and presentation components through
 their existing verification paths.
 
-The acceptance fixture needs distinct ES and EN scene contracts and recordings,
-a shared repaired cel, and an unaffected component. The fixture should verify
-both actual episode conforms, their unchanged segment order, the exact reused
-components, language-specific frame/sample receipts and captions derived from
-those receipts. Reject a result from another language, a stale baseline
-component, a mismatched worker receipt or missing retained custody before
-assembly. Recovery must reopen the original assembly attempt and its outputs.
+## What the episode worker now verifies
 
-The first fixture can use short episodes. S5 acceptance additionally needs
-the existing producer's long-running resource and capacity path, including
-the multi-gigabyte opening and ending, and the required delivery editions.
+The protected selected-master tests run the repair and episode assembly
+separately for Spanish and English. Each verifies the accepted language,
+unchanged scene sample and frame counts, byte-identical dialogue, music,
+effects and mix, and exactly one changed episode component.
+The English lifecycle also assembles an episode using its own cue and
+alignment. These are independent synthetic projects.
+
+## Shared repair across editions
+
+Use one committed baseline and one retained image candidate to prepare
+all affected language tasks. The [native rebuild binder](workflow-native-film-rebuild.md)
+already emits the exact packets and source declarations for those tasks.
+The caller still supplies each owned dispatch request and recovery ticket.
+Use each render's retained result to bind the corresponding episode segment
+before compiling its episode controls. Reopen an existing ticket on
+interruption and bind any completed result by its original operation.
+Withhold each downstream consumer until its new exact inputs are available.
+
+The remaining fixture should exercise that sequence in one project with
+distinct Spanish and English cue clocks and at least one unaffected
+component. Check exact reuse, unchanged segment order, rejection of
+wrong-language or stale components, and captions derived from each retained
+conform. S5 acceptance also requires large opening and ending masters,
+long-running recovery and the project's delivery editions.
