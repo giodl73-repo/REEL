@@ -179,6 +179,7 @@ fn actual_station_start_and_stop_acknowledgements_meet_outer_deadline() {
         45,
     );
     assert_acknowledgement_time("Start", elapsed[1]);
+    assert_playing_time("Start", elapsed[2], 2);
     assert_acknowledgement_time("Stop", elapsed[3]);
 }
 
@@ -197,9 +198,14 @@ fn actual_station_restart_acknowledges_and_returns_to_pass_one() {
         50,
     );
     assert_acknowledgement_time("Restart", elapsed[3]);
-    let reopened = elapsed[4].expect("Restart playback observation missing");
-    println!("Restart sent to visible Playing: {reopened:?}");
-    assert!(reopened <= std::time::Duration::from_secs(35));
+    assert_playing_time("Restart", elapsed[4], 35);
+}
+
+#[cfg(windows)]
+fn assert_playing_time(command: &str, duration: Option<std::time::Duration>, limit_seconds: u64) {
+    let duration = duration.expect("playback observation missing");
+    println!("{command} sent to visible Playing: {duration:?}");
+    assert!(duration <= std::time::Duration::from_secs(limit_seconds));
 }
 
 #[cfg(windows)]

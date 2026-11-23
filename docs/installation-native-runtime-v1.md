@@ -738,6 +738,8 @@ measured 20.3 ms for the numbered Start reply and 34.9 ms for the numbered
 Stop reply on the pinned Dell session. Start's numbered reply records
 Starting. Stop's reply records Stopped. Physical onset and quiescence still
 require independently synchronized capture.
+On a repeat run the console reported Playing 101.0 ms after Start. The
+numbered Start and Stop replies took 14.2 ms and 25.2 ms on that run.
 
 `actual_station_restart_acknowledges_and_returns_to_pass_one` exercises a
 fresh check and native reopen after Stop. On the pinned Dell session,
