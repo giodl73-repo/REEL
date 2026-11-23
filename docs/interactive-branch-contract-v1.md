@@ -96,5 +96,8 @@ release approval require their own evidence.
 
 The local `interactive_branch_contract` test fixture exercises the graph
 shape, including missing targets, unreachable nodes, ambiguous choices,
-cycles and language coverage. Its edition IDs are test labels. Checked
-edition identity and access spans still require the final M13 admission tests.
+cycles and language coverage. The `interactive_branch_admission` fixture
+uses separate synthetic programme and access identities and unequal EN/ES
+spans. It rejects mismatched identity or span, missing editions and
+ambiguous checked records. The fixture models checked records in memory.
+Final M13 admission tests still need to use actual upstream verifier results.
