@@ -215,6 +215,10 @@ starting assembly.
   to the shared runner, up to its finite 24-hour maximum. Ordinary runner
   requests that omit that limit keep their one-hour default. A long episode
   deadline never changes another job's limit or its cache capacity admission.
+  A registered shared-runner recovery descriptor can extend a selected step
+  past two hours only within the original pinned recipe's declared limit.
+  This limit applies when reopening a registered checkpoint. The managed
+  episode worker still assembles in a single step.
   The private cache policy's `max_object_bytes` also caps an admitted operation;
   it must cover the complete workspace budget, not only the largest output.
   This consistency check happens before opening source/runtime stores or

@@ -138,6 +138,9 @@ impl Seed {
             return Err("Invalid checkpoint identity, coverage or resume step".into());
         }
         let windows = &checkpoint.step_timeout_seconds;
+        // Legacy recipes retain their two-hour recovery allowance. A longer
+        // window must fit the limit already declared by the pinned recipe.
+        let maximum_window = job.step_timeout_limit_seconds.max(7200);
         let resource_schema = matches!(
             checkpoint.schema.as_str(),
             "reel.native-job-resume.v3" | "reel.native-job-execution-window.v2"
@@ -166,10 +169,9 @@ impl Seed {
                         && checkpoint.metadata_outputs.is_empty())))
             || windows.iter().any(|(index, seconds)| {
                 *index < checkpoint.start_step
-                    || job
-                        .steps
-                        .get(*index)
-                        .is_none_or(|step| *seconds <= step.timeout_seconds || *seconds > 7200)
+                    || job.steps.get(*index).is_none_or(|step| {
+                        *seconds <= step.timeout_seconds || *seconds > maximum_window
+                    })
             })
         {
             return Err("Invalid explicitly scoped recovery execution window".into());
