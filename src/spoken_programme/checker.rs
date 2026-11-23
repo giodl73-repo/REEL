@@ -592,11 +592,14 @@ pub struct FileCheckRequest<'a> {
 }
 
 pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
-    Ok(check_file_package(paths)?.summary)
+    Ok(check_file_package(paths, &producer::current_runtime()?)?.summary)
 }
 
 /// Check the original controls and return the verified records for local consumers.
-pub fn check_file_package(paths: FileCheckRequest<'_>) -> Result<CheckedPackage> {
+pub fn check_file_package(
+    paths: FileCheckRequest<'_>,
+    runtime: &CompilerIdentity,
+) -> Result<CheckedPackage> {
     require(
         paths.access.is_none() || paths.write_access.is_none(),
         "spoken access modes conflict",
@@ -615,7 +618,6 @@ pub fn check_file_package(paths: FileCheckRequest<'_>) -> Result<CheckedPackage>
         })
         .transpose()?
         .unwrap_or_else(ProcessingPolicy::identity);
-    let runtime = producer::current_runtime()?;
     tick()?;
     let mut checked = check(
         CheckRequest {
@@ -623,7 +625,7 @@ pub fn check_file_package(paths: FileCheckRequest<'_>) -> Result<CheckedPackage>
             plan_bytes: &plan,
             receipt_bytes: &receipt,
             processing: &processing,
-            expected_runtime: &runtime,
+            expected_runtime: runtime,
         },
         paths.source_root,
         paths.candidate,

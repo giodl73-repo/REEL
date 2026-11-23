@@ -270,7 +270,7 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
     assert_eq!(result.access().sample_rate, fixture.sample_rate);
     use reel::spoken_programme::interactive::{Graph, Selection, Session, demo};
 
-    let graph: Graph = serde_json::from_value(serde_json::json!({
+    let graph_json = serde_json::json!({
         "entry": "opening",
         "nodes": [
             {"kind":"playback","id":"opening","next":"choose","selections":[
@@ -286,7 +286,8 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                 {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
             {"kind":"end","id":"end"}
         ]
-    })).unwrap();
+    });
+    let graph: Graph = serde_json::from_value(graph_json.clone()).unwrap();
     let mut bindings = BTreeMap::new();
     for (language, selections) in &fixture.selections {
         for (node, authored) in selections {
@@ -311,6 +312,62 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                 },
             );
         }
+    }
+
+    #[cfg(all(windows, feature = "installation-native"))]
+    {
+        let manifest = f.temp.path().join("interactive.json");
+        let declaration = f.temp.path().join("interactive-declaration.json");
+        let plan = f.temp.path().join("interactive-plan.json");
+        let authored = bindings
+            .iter()
+            .map(|((node, language), binding)| {
+                json!({
+                    "node": node, "language": language,
+                    "edition": binding.edition, "module": binding.module,
+                    "programme_sha256": binding.programme_sha256,
+                    "access_sha256": binding.access_sha256,
+                    "first_frame": binding.first_frame, "end_frame": binding.end_frame
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            &manifest,
+            serde_json::to_vec(&json!({
+                "graph": graph_json, "bindings": authored,
+                "ending":{"en":"End of briefing","es":"Fin del informe"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(&declaration, serde_json::to_vec(&f.document).unwrap()).unwrap();
+        fs::write(&plan, f.plan()).unwrap();
+        let output = std::process::Command::new(env!("CARGO_BIN_EXE_reel-interactive"))
+            .args(["--check", "--language", "es"])
+            .arg("--demo")
+            .arg(&manifest)
+            .arg("--declaration")
+            .arg(&declaration)
+            .arg("--plan")
+            .arg(&plan)
+            .arg("--source-root")
+            .arg(f.temp.path())
+            .arg("--candidate")
+            .arg(f.output())
+            .arg("--access")
+            .arg(&root)
+            .arg("--compiler-producer")
+            .arg(std::env::current_exe().unwrap())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Checked the authored bilingual demo")
+        );
     }
 
     for language in ["en", "es"] {

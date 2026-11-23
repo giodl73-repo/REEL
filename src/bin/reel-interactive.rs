@@ -6,6 +6,7 @@ mod windows_demo {
     use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
     use reel::spoken_programme::{
         checker::{FileCheckRequest, check_file_package},
+        compiler::CompilerIdentity,
         interactive::demo::{self, Demo},
     };
     use std::{
@@ -38,7 +39,11 @@ mod windows_demo {
         #[arg(long)]
         access: PathBuf,
         #[arg(long)]
-        endpoint: String,
+        compiler_producer: PathBuf,
+        #[arg(long, required_unless_present = "check", conflicts_with = "check")]
+        endpoint: Option<String>,
+        #[arg(long)]
+        check: bool,
         #[arg(long, value_parser = ["en", "es"])]
         language: String,
     }
@@ -133,17 +138,37 @@ mod windows_demo {
             .read_to_end(&mut bytes)?;
         ensure!(bytes.len() <= 256 * 1024, "demo manifest is too large");
         let demo: Demo = serde_json::from_slice(&bytes)?;
-        let package = check_file_package(FileCheckRequest {
-            declaration: &args.declaration,
-            plan: &args.plan,
-            processing: args.processing.as_deref(),
-            source_root: &args.source_root,
-            candidate: &args.candidate,
-            access: Some(&args.access),
-            write_access: None,
-        })?;
+        ensure!(
+            args.compiler_producer.is_absolute(),
+            "compiler/producer path must be absolute"
+        );
+        let identity = reel::media_runtime::ByteIdentity::observe_file(&args.compiler_producer)?;
+        let runtime = CompilerIdentity {
+            sha256: identity.sha256,
+            bytes: identity.bytes,
+        };
+        let package = check_file_package(
+            FileCheckRequest {
+                declaration: &args.declaration,
+                plan: &args.plan,
+                processing: args.processing.as_deref(),
+                source_root: &args.source_root,
+                candidate: &args.candidate,
+                access: Some(&args.access),
+                write_access: None,
+            },
+            &runtime,
+        )?;
         let mut session = demo.start(&package, &args.language)?;
-        let mut sink = Sink::open(&args.endpoint)?;
+        if args.check {
+            println!("Checked the authored bilingual demo");
+            return Ok(());
+        }
+        let mut sink = Sink::open(
+            args.endpoint
+                .as_deref()
+                .context("output endpoint required")?,
+        )?;
         let visit = Arc::new(AtomicU64::new(session.visit()));
         let input_visit = visit.clone();
         let (send, receive) = mpsc::sync_channel(16);

@@ -267,17 +267,23 @@ fn explicit_control_copy_is_exact_and_never_replaces_an_existing_payload() {
 #[test]
 #[cfg(all(windows, feature = "tig-publication"))]
 fn managed_control_edit_retains_both_objects_before_an_isolated_git_proposal() {
-    managed_control_edit(false);
+    managed_control_edit(false, false);
 }
 
 #[test]
 #[cfg(feature = "tig-publication")]
 fn frozen_job_dependencies_preserve_roles_and_platform_admission() {
-    managed_control_edit(true);
+    managed_control_edit(true, false);
+}
+
+#[test]
+#[cfg(all(windows, feature = "tig-publication"))]
+fn frozen_job_resumes_enrolled_checkpoint_without_replaying_first_step() {
+    managed_control_edit(true, true);
 }
 
 #[cfg(feature = "tig-publication")]
-fn managed_control_edit(with_dependencies: bool) {
+fn managed_control_edit(with_dependencies: bool, with_checkpoint: bool) {
     use reel::tig_job_runner::{self, Profile as Runner};
     use reel::tig_scene_production::jobs::{Coordination, Identity};
     use std::collections::{BTreeMap, BTreeSet};
@@ -387,22 +393,47 @@ fn managed_control_edit(with_dependencies: bool) {
             );
         }
     }
-    let dependencies = job::Dependencies {
-        composition: &composition,
-        evidence: &evidence,
-    };
-    let dependency_json = json!({"composition":composition,"evidence":evidence});
     let mut inputs = json!({});
     if with_dependencies {
         files.remove("replacement.json");
         files.remove("edit.json");
         inputs = json!({"replacement.json":composition_object,"edit.json":evidence_object});
     }
-    let manifest = json!({"budget_bytes":worker_object.bytes+4*1024*1024,"scratch_bytes":65536,
+    let mut manifest = json!({"budget_bytes":worker_object.bytes+4*1024*1024,"scratch_bytes":65536,
         "inputs":inputs,"tools":{},"installed_tools":{"worker":{"path":worker,"sha256":worker_object.sha256,"bytes":worker_object.bytes}},
         "files":files,"steps":[{"tool":"worker","args":["--control-edit","worker-profile.json","candidate.tig"],"timeout_seconds":30}],
         "outputs":{"record":{"path":"candidate.tig","max_bytes":65536},"control":{"path":"retained-control.json","max_bytes":4096}}});
+    if with_checkpoint {
+        manifest["steps"].as_array_mut().unwrap().insert(
+            0,
+            json!({
+                "tool":"worker","args":["--refuse-if-run"],"timeout_seconds":30
+            }),
+        );
+    }
     let request = serde_json::to_vec(&manifest).unwrap();
+    let checkpoint_path = root.join("checkpoint.json");
+    if with_checkpoint {
+        let descriptor = serde_json::to_vec(&json!({
+            "schema":"reel.native-job-resume.v1",
+            "job_sha256":Object::from_bytes(&request).sha256,
+            "source_job_id":"job-fixture",
+            "start_step":1,
+            "files":{"recovery/seed.json":evidence_object}
+        }))
+        .unwrap();
+        fs::write(&checkpoint_path, &descriptor).unwrap();
+        evidence.insert(
+            LogicalPath::parse("resume").unwrap(),
+            Object::from_bytes(&descriptor),
+        );
+    }
+    let dependencies = job::Dependencies {
+        composition: &composition,
+        evidence: &evidence,
+    };
+    let dependency_json = json!({"composition":composition,"evidence":evidence});
+
     let producer = serde_json::to_vec(&json!({"schema":"synthetic.control-ingress.v1","worker":worker_object,"request":Object::from_bytes(&request)})).unwrap();
     let record = snapshot.resolve_id("control/one").unwrap();
     let definition = record.definition().object.clone();
@@ -587,6 +618,16 @@ fn managed_control_edit(with_dependencies: bool) {
     config.capacity.minimum_free_basis_points = 0;
     let manifest_path = root.join("job.json");
     fs::write(&manifest_path, &request).unwrap();
+    if with_checkpoint {
+        for input in [&manifest_path, &checkpoint_path] {
+            let bytes = fs::read(input).unwrap();
+            let oid = Object::from_bytes(&bytes).sha256;
+            let digest = oid.as_str();
+            let path = cache.join("objects/sha256").join(&digest[..2]).join(digest);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, bytes).unwrap();
+        }
+    }
     // Independently capture into an empty metadata store. The expected roots
     // above were made through public APIs; this CLI must reproduce them without
     // borrowing their stored metadata or reading the deliberately absent media.
@@ -769,11 +810,12 @@ fn managed_control_edit(with_dependencies: bool) {
     let frozen_path = root.join("frozen.json");
     let invoke = |profile: &Value| {
         fs::write(&frozen_path, serde_json::to_vec(profile).unwrap()).unwrap();
-        Command::new(env!("CARGO_BIN_EXE_reel-tig-job"))
-            .arg("run-frozen")
-            .arg(&frozen_path)
-            .output()
-            .unwrap()
+        let mut command = Command::new(env!("CARGO_BIN_EXE_reel-tig-job"));
+        command.arg("run-frozen").arg(&frozen_path);
+        if with_checkpoint {
+            command.arg("--checkpoint").arg(&checkpoint_path);
+        }
+        command.output().unwrap()
     };
     for changed in [
         "owner",
@@ -838,6 +880,18 @@ fn managed_control_edit(with_dependencies: bool) {
         let reopened = SourceJournal::open(&owners, &before).unwrap();
         assert_eq!(reopened.checkpoint(), before);
     }
+    if with_checkpoint {
+        let exact = fs::read(&checkpoint_path).unwrap();
+        let mut foreign = exact.clone();
+        foreign.push(b' ');
+        fs::write(&checkpoint_path, foreign).unwrap();
+        assert!(!invoke(&frozen).status.success());
+        assert_eq!(
+            SourceJournal::open(&owners, &before).unwrap().checkpoint(),
+            before
+        );
+        fs::write(&checkpoint_path, exact).unwrap();
+    }
     let offline_repo = root.join("source-offline");
     fs::rename(&repo_root, &offline_repo).unwrap();
     let executed = invoke(&frozen);
@@ -854,6 +908,13 @@ fn managed_control_edit(with_dependencies: bool) {
     if with_dependencies {
         assert_eq!(result["dependency_roles_admitted"], true);
         assert_eq!(result["original_producer_currency"], false);
+    }
+    if with_checkpoint {
+        assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+        assert_eq!(
+            result["manifest_sha256"],
+            json!(Object::from_bytes(&request).sha256)
+        );
     }
     let record_bytes = fs::read(result["outputs"]["record"]["path"].as_str().unwrap()).unwrap();
     let control_bytes = fs::read(result["outputs"]["control"]["path"].as_str().unwrap()).unwrap();
