@@ -698,6 +698,12 @@ The controller retains the latest cursor internally and avoids sending that
 duplicate console row. Other runs missed Ready or exited before the numbered
 Pause reply. Repeatability and physical capture remain open.
 
+The final Stopped row retains the numbered Quit reply. Three pinned Dell
+runs displayed that reply within 22.3–31.2 ms and confirmed process exit
+within 180.3–619.5 ms of sending Quit. Separate live Ctrl+C and cooked EOF
+runs confirmed exit within 402.4 ms and 226.8 ms. These are console and
+process observations. Physical audio quiescence remains a capture gate.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 
