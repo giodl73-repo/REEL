@@ -24,3 +24,14 @@ all published relationships, exercise a changed take and refused input, and
 link accessibility evidence. A quiet-seam derivative needs an authored and
 checked relationship to the selected source. Listening, device acceptance,
 authority and project adoption each require their own evidence.
+
+### Installation seam in the shared-source run
+
+The baseline fixture starts each take with 2,400 silent samples at 48 kHz.
+The installation contract requires 4,800 silent sample frames at both ends of
+the admitted range. For the shared-source run, author a new synthetic take
+version with sufficient leading silence, then compile and check its affected
+editions. Use the newly checked chapter bounds for the installation selection.
+Retain the baseline fixture and version history so the changed source and its
+consuming sample intervals can be compared directly. Obtain the station and
+listening evidence for the selected version separately.
