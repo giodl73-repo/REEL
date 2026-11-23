@@ -81,6 +81,20 @@ checks the upstream producer's present currency nor grants creative approval.
 reel-tig-job run-frozen PRIVATE_PROFILE
 ```
 
+For a job enrolled with dependency evidence, resume with:
+
+```text
+reel-tig-job run-frozen PRIVATE_PROFILE --checkpoint ABSOLUTE_CHECKPOINT_JSON
+```
+
+The descriptor and every seed object must already be enrolled as evidence in
+the profile's exact frozen job context. The original manifest, descriptor, and
+seed bytes must exist in the active admitted cache. Resume checks the original
+recipe hash, owner, revision, and resource roles before execution. It runs from
+the descriptor's declared step and retains the resulting evidence before
+retiring scratch. This command consumes an enrolled checkpoint. Producing
+mid-render checkpoints from the native episode worker is a separate operation.
+
 This command replays an already enrolled generic job through the existing managed
 runner. An operator must already have frozen, finished, reopened and owner-adopted
 its job context. It neither enrolls a job nor initializes stores. An authored
