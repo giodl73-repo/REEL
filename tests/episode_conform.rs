@@ -932,14 +932,46 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
 
     // Bounded normalization batches reuse issued intermediates and still feed
     // the ordinary preparation/finish checks; incomplete custody is not a movie.
-    let batched = root.join("batched");
+    let batched = root.join("job-batched");
     fs::create_dir(&batched).unwrap();
-    let closed_job: serde_json::Value =
+    let mut closed_job: serde_json::Value =
         serde_json::from_slice(&fs::read(phased.join("job.json")).unwrap()).unwrap();
     for name in closed_job["inputs"].as_object().unwrap().keys() {
         fs::copy(phased.join(name), batched.join(name)).unwrap();
     }
-    fs::copy(phased.join("job.json"), batched.join("job.json")).unwrap();
+    let executable = Path::new(env!("CARGO_BIN_EXE_reel-episode-conform"));
+    let tool_bytes = fs::read(executable).unwrap();
+    let tool_pin = reel_workflow::digest(&tool_bytes);
+    let batch_args = serde_json::json!([
+        "prepare-batch",
+        "conform.json",
+        "--input-root",
+        ".",
+        "--asset-root",
+        ".",
+        "--output-dir",
+        "prepared",
+        "--max-segments",
+        "2"
+    ]);
+    closed_job["installed_tools"] = serde_json::json!({
+        "conform":{"path":executable,"sha256":tool_pin,"bytes":tool_bytes.len()}
+    });
+    closed_job["steps"] = serde_json::json!([
+        {"tool":"conform","args":batch_args,"timeout_seconds":120},
+        {"tool":"conform","args":batch_args,"timeout_seconds":120},
+        {"tool":"conform","args":batch_args,"timeout_seconds":120},
+        {"tool":"conform","args":["assemble-preparation","prepared","--asset-root","."],"timeout_seconds":120},
+        {"tool":"conform","args":["finish","prepared","--input-root",".","--asset-root",".","--output-dir","final"],"timeout_seconds":120}
+    ]);
+    closed_job["budget_bytes"] = serde_json::json!(320 * 1024 * 1024);
+    closed_job["scratch_bytes"] = serde_json::json!(192 * 1024 * 1024);
+    closed_job["prepare_output_parents"] = serde_json::json!(false);
+    closed_job["outputs"] = serde_json::json!({
+        "receipt":{"path":"final/receipt.json","max_bytes":1024 * 1024},
+        "movie":{"path":"final/episode.mp4","max_bytes":16 * 1024 * 1024}
+    });
+    write(&batched.join("job.json"), &closed_job);
     let batched_prepared = batched.join("prepared");
     let run_batch = || {
         Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
@@ -972,6 +1004,47 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         "{}",
         String::from_utf8_lossy(&first_batch.stderr)
     );
+    let describe_resume = |step: &str| {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg("describe-resume")
+            .arg(&batched_prepared)
+            .arg("--asset-root")
+            .arg(&batched)
+            .arg("--start-step")
+            .arg(step)
+            .output()
+            .unwrap()
+    };
+    let descriptor = describe_resume("1");
+    assert!(
+        descriptor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&descriptor.stderr)
+    );
+    let descriptor: serde_json::Value = serde_json::from_slice(&descriptor.stdout).unwrap();
+    assert_eq!(descriptor["schema"], "reel.native-job-resume.v1");
+    assert_eq!(descriptor["source_job_id"], "job-batched");
+    assert_eq!(descriptor["start_step"], 1);
+    assert_eq!(
+        descriptor["job_sha256"],
+        reference(&batched, "job.json")["sha256"]
+    );
+    let files = descriptor["files"].as_object().unwrap();
+    assert_eq!(files.len(), 3);
+    for (name, pin) in files {
+        assert!(name.starts_with("prepared/"));
+        assert_eq!(pin["sha256"], reference(&batched, name)["sha256"]);
+        assert_eq!(pin["bytes"], reference(&batched, name)["bytes"]);
+    }
+    assert!(!describe_resume("5").status.success());
+    #[cfg(windows)]
+    resume_verified_batch(
+        root,
+        &batched,
+        &closed_job,
+        &descriptor,
+        (&tool_pin, tool_bytes.len() as u64),
+    );
     let progress_file = batched_prepared.join("normalization-progress.json");
     let progress_bytes = fs::read(&progress_file).unwrap();
     let mut progress: serde_json::Value = serde_json::from_slice(&progress_bytes).unwrap();
@@ -988,6 +1061,7 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     let last = corrupted.len() - 1;
     corrupted[last] ^= 1;
     fs::write(&intermediate, corrupted).unwrap();
+    assert!(!describe_resume("1").status.success());
     assert!(!run_batch().status.success());
     fs::write(&intermediate, &normalized_bytes).unwrap();
     let original_mtime = fs::metadata(&intermediate).unwrap().modified().unwrap();
@@ -1076,4 +1150,101 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         .unwrap();
     assert!(!stale_source.status.success());
     assert!(!root.join("stale-source-output").exists());
+}
+
+#[cfg(windows)]
+fn resume_verified_batch(
+    root: &Path,
+    original: &Path,
+    job: &serde_json::Value,
+    descriptor: &serde_json::Value,
+    tool: (&str, u64),
+) {
+    use reel_assets::jobs::{
+        ResourceAuthority, ResourceRole, RetainedJob, RetentionSink, RunContext,
+    };
+    use std::collections::BTreeMap;
+
+    struct Authority(BTreeMap<String, u64>);
+    impl ResourceAuthority for Authority {
+        fn require(&self, _: ResourceRole, sha256: &str, bytes: u64) -> reel_assets::Result<()> {
+            if self.0.get(sha256) != Some(&bytes) {
+                return Err("fixture object is not enrolled".into());
+            }
+            Ok(())
+        }
+    }
+
+    struct Sink(bool);
+    impl RetentionSink for Sink {
+        fn retain(&mut self, job: &RetainedJob) -> reel_assets::Result<()> {
+            self.0 = job.succeeded();
+            Ok(())
+        }
+    }
+
+    let workspace = root.join("checkpoint-replay");
+    let cache = workspace.join("active");
+    let storage = cache.join("objects/sha256");
+    let coordination = workspace.join("coordination");
+    fs::create_dir_all(&storage).unwrap();
+    fs::create_dir_all(&coordination).unwrap();
+    let config = reel_assets::Config {
+        path_policy: reel_assets::PathPolicy::ConfiguredLocalRoots,
+        cache_roots: vec![cache],
+        coordination_root: Some(coordination),
+        capacity: reel_assets::admission::Policy {
+            minimum_free_bytes: 0,
+            minimum_free_basis_points: 0,
+            max_object_bytes: 320 * 1024 * 1024,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let descriptor_path = workspace.join("resume.json");
+    write(&descriptor_path, descriptor);
+    let mut authority = Authority(BTreeMap::from([(tool.0.into(), tool.1)]));
+    let mut enroll = |path: &Path| {
+        let bytes = fs::read(path).unwrap();
+        let digest = reel_workflow::digest(&bytes);
+        let destination = storage.join(&digest[..2]).join(&digest);
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(destination, &bytes).unwrap();
+        authority.0.insert(digest, bytes.len() as u64);
+    };
+    let request = original.join("job.json");
+    enroll(&request);
+    enroll(&descriptor_path);
+    for name in job["inputs"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .chain(descriptor["files"].as_object().unwrap().keys())
+    {
+        enroll(&original.join(name));
+    }
+
+    let mut sink = Sink(false);
+    let result = reel_assets::jobs::resume_admitted(
+        &workspace,
+        &request,
+        &descriptor_path,
+        &mut RunContext {
+            config: &config,
+            authority: &authority,
+            retention: &mut sink,
+        },
+    )
+    .unwrap();
+    assert!(sink.0);
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(result["workspace_retained"], false);
+    let receipt = fs::read(result["outputs"]["receipt"]["path"].as_str().unwrap()).unwrap();
+    let receipt: serde_json::Value = serde_json::from_slice(&receipt).unwrap();
+    assert_eq!(receipt["decoded_master_matches_ordered_segments"], true);
+    assert!(
+        original
+            .join("prepared/normalization-progress.json")
+            .is_file()
+    );
 }
