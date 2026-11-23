@@ -137,6 +137,33 @@ fn publish(prepared: &api::Prepared<'_>, output: &Path) -> Result<api::Summary> 
     )
 }
 
+pub(super) fn check_shared_programme_lesson(
+    reading: &reading_api::Prepared<'_>,
+    book: &Path,
+    output: &Path,
+) {
+    let mut score = rendered_score(480, 500_000);
+    let request = request(&mut score, book, 480);
+    let book_sha256 = hash(&fs::read(book.join("reading.json")).unwrap());
+    let assets = score.temp.path().to_path_buf();
+    let prepared = api::prepare(
+        request,
+        api::Inputs {
+            reading,
+            reading_directory: book,
+            assets: &assets,
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    let summary = publish(&prepared, output).unwrap();
+    api::check(&prepared, output, Duration::from_secs(30)).unwrap();
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("lesson.json")).unwrap()).unwrap();
+    assert_eq!(index["request"]["reading_index"]["sha256"], book_sha256);
+    assert_eq!((summary.editions, summary.occurrences), (2, 3));
+}
+
 #[test]
 #[ignore = "bounded reading/notation fixture; explicitly invoked on both hosted operating systems"]
 fn actual_score_exports_and_bilingual_lesson_follow_pickup_repeat_goldens() {

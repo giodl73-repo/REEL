@@ -232,8 +232,8 @@ fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
 
 #[cfg(feature = "print")]
 #[test]
-#[ignore = "explicit shared-source reading and installation fixture using a local test font"]
-fn reading_and_installation_use_the_same_checked_programme() {
+#[ignore = "explicit shared-source reading, lesson and installation fixture using a local test font"]
+fn reading_lesson_and_installation_use_the_same_checked_programme() {
     let shared = shared_quiet_programme();
     let mut opening_frames = Vec::new();
     for language in ["en", "es"] {
@@ -268,6 +268,8 @@ fn reading_and_installation_use_the_same_checked_programme() {
         assert_eq!(edition["chapters"][0]["start_sample"], 0);
         assert_eq!(edition["chapters"][0]["end_sample"], frames);
     }
+    let lesson = reading.f.temp.path().join("shared-lesson");
+    super::lesson::check_shared_programme_lesson(&prepared, &output, &lesson);
 }
 
 #[cfg(all(windows, feature = "installation-native"))]
