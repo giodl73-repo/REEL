@@ -319,6 +319,7 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                 let mut session =
                     Session::start(&graph, &result, bindings.clone(), language).unwrap();
                 let opening = session.visit();
+                let mut delivered = Vec::new();
                 let mut visits = Vec::new();
                 while let Some(node) = session.node() {
                     let node = node.to_owned();
@@ -336,7 +337,18 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                             assert!(session.set_paused(visit, false));
                             assert!(!session.observe(opening, span.end_frame));
                         }
-                        assert!(session.observe(visit, span.end_frame));
+                        let mut pcm = Vec::new();
+                        while session.visit() == visit {
+                            let count = session
+                                .deliver(&result, &f.output(), 8192, |chunk| {
+                                    pcm.extend_from_slice(chunk);
+                                    Ok(())
+                                })
+                                .unwrap();
+                            assert!((1..=8192).contains(&count));
+                        }
+                        assert_eq!(pcm.len() as u64, (span.end_frame - span.first_frame) * 6);
+                        delivered.push(hash(&pcm));
                     } else if node == "choose" {
                         let emitted = if by_position {
                             session.choices()[usize::from(choice == "summary")]
@@ -361,10 +373,10 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
                 session.close();
                 assert_eq!(session.node(), None);
                 assert_eq!(session.frame(), None);
-                visits
+                (visits, delivered)
             };
-            let visits = replay(false);
-            assert_eq!(visits, replay(true));
+            let (visits, delivered) = replay(false);
+            assert_eq!((visits.clone(), delivered), replay(true));
             assert_eq!(
                 visits.iter().map(|(node, _)| node).collect::<Vec<_>>(),
                 expected.iter().collect::<Vec<_>>()

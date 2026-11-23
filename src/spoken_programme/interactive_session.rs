@@ -1,5 +1,7 @@
 //! Local, in-memory interaction state driven by confirmed media observations.
+use super::playback::Playback;
 use super::{Graph, Node, Selection, admit_checked_selection, validate};
+use crate::scene_delivery::InputFiles;
 use crate::spoken_programme::checker::CheckedPackage;
 use anyhow::{Result, anyhow, ensure};
 use std::collections::BTreeMap;
@@ -12,6 +14,7 @@ pub struct Session<'a> {
     visit: u64,
     frame: Option<u64>,
     paused: bool,
+    playback: Playback,
     repeats: BTreeMap<(&'a str, &'a str), u16>,
 }
 
@@ -53,6 +56,7 @@ impl<'a> Session<'a> {
             visit: 0,
             frame: None,
             paused: false,
+            playback: Playback::default(),
             repeats: BTreeMap::new(),
         };
         session.enter(&graph.entry);
@@ -120,6 +124,10 @@ impl<'a> Session<'a> {
         true
     }
 
+    pub fn is_paused(&self) -> bool {
+        self.paused
+    }
+
     pub fn set_paused(&mut self, visit: u64, paused: bool) -> bool {
         if visit != self.visit || self.frame.is_none() {
             return false;
@@ -173,7 +181,22 @@ impl<'a> Session<'a> {
         Ok(())
     }
 
+    /// Submit checked PCM to a local sink and advance only after it accepts the chunk.
+    pub fn deliver(
+        &mut self,
+        package: &CheckedPackage,
+        candidate: &(impl InputFiles + ?Sized),
+        max_frames: usize,
+        submit: impl FnMut(&[u8]) -> Result<()>,
+    ) -> Result<usize> {
+        let mut playback = std::mem::take(&mut self.playback);
+        let result = playback.deliver(self, package, candidate, max_frames, submit);
+        self.playback = playback;
+        result
+    }
+
     pub fn close(&mut self) {
+        self.playback = Playback::default();
         self.node = None;
         self.frame = None;
         self.paused = false;

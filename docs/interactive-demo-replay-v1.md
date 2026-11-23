@@ -32,4 +32,4 @@ Changing language should create a fresh opening visit with fresh choices.
 Removing the selected branch or its exact access binding should prevent
 execution. Closing the active session should discard its interaction state.
 
-The local session reducer admits every authored binding through the checked programme API before entering the graph. Its replay test drives both routes with confirmed frame observations, tests the shared choice IDs, and compares exact admitted artifacts across repeated runs. A playback adapter must supply those observations from actual media consumption.
+The local session reducer admits every authored binding through the checked programme API before entering the graph. Its replay test drives both routes with confirmed frame observations, tests the shared choice IDs, and compares exact admitted artifacts across repeated runs. The local PCM adapter reopens the checked WAVE at each playback visit, submits exact stereo PCM24 spans to a sink, and advances only after the sink acknowledges a chunk. The test sink records delivered byte counts and digests. Speaker playback and keyboard handling still need a local frontend.
