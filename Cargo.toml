@@ -48,16 +48,23 @@ image = { version = "0.25.9", default-features = false, features = ["png", "pnm"
 same-file = "1.0.6"
 reel-music = { path = "crates/reel-music" }
 reel-assembly = { path = "crates/reel-assembly" }
+reel-publication = { path = "crates/reel-publication" }
 reel-assets = { path = "crates/reel-assets", optional = true }
 reel-print = { path = "crates/reel-print", optional = true }
 flate2 = "1"
+rtrb = { version = "=0.4.1", optional = true }
 
 tig-core = { path = "vendor/tig/crates/tig-core", optional = true }
 tig-assets = { path = "vendor/tig/crates/tig-assets", optional = true }
 tig-git = { path = "vendor/tig/crates/tig-git", features = ["assets"], optional = true }
 tig-store = { path = "vendor/tig/crates/tig-store", optional = true }
 
+[target.'cfg(windows)'.dependencies]
+cpal = { version = "=0.18.2", default-features = false, optional = true }
+windows = { version = "=0.62.2", optional = true, features = ["Win32_Foundation", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Properties", "Win32_System_SystemInformation", "Win32_System_Threading", "Wdk_System_SystemServices"] }
+
 [features]
+installation-native = ["dep:rtrb", "dep:cpal", "dep:windows", "dep:reel-assets"]
 song-provider = ["dep:reel-assets"]
 print = ["dep:reel-print"]
 test-fixtures = []
@@ -70,6 +77,11 @@ tig-history = ["tig-publication", "tig-git/schema"]
 name = "reel-tig-scene"
 path = "src/bin/reel-tig-scene.rs"
 required-features = ["tig"]
+
+[[bin]]
+name = "reel-installation"
+path = "src/bin/reel-installation.rs"
+required-features = ["installation-native"]
 
 [[bin]]
 name = "reel-tig-speech"
@@ -138,6 +150,7 @@ resolver = "3"
 
 [dev-dependencies]
 reel-assets = { path = "crates/reel-assets" }
+reel-workflow = { path = "crates/reel-workflow" }
 flate2 = "1"
 
 # Repeated immutable-media/runtime hashing should not dominate qualification.

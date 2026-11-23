@@ -2,7 +2,7 @@
 use super::*;
 use reel_assets::admission;
 
-fn report_parent<'a>(p: &Profile, output: &'a Path) -> Result<&'a Path> {
+pub(super) fn report_parent<'a>(p: &Profile, output: &'a Path) -> Result<&'a Path> {
     if !output.is_absolute() || output.file_name().is_none() || output.symlink_metadata().is_ok() {
         bail!("episode preparation report requires a new absolute file");
     }

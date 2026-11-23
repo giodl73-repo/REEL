@@ -545,6 +545,22 @@ fn run_cli() -> Result<()> {
             let report = reel::scene_review::check(&contract, &asset_root, &output_dir)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        Command::SceneDeliveryDeriveStill {
+            job,
+            job_sha256,
+            replacement,
+            replacement_sha256,
+            output_path,
+        } => {
+            let receipt = reel::scene_delivery::repair::write_candidate(
+                &job,
+                &job_sha256,
+                &replacement,
+                &replacement_sha256,
+                &output_path,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&receipt)?);
+        }
         Command::SceneDeliveryPlan {
             job,
             asset_root,
@@ -2850,6 +2866,18 @@ enum Command {
         asset_root: PathBuf,
         #[arg(long)]
         output_dir: PathBuf,
+    },
+    /// Derive NEW still-replacement controls with exact old subjects; never select or render.
+    SceneDeliveryDeriveStill {
+        job: PathBuf,
+        #[arg(long)]
+        job_sha256: String,
+        #[arg(long)]
+        replacement: PathBuf,
+        #[arg(long)]
+        replacement_sha256: String,
+        #[arg(long)]
+        output_path: PathBuf,
     },
     /// Plan scene delivery directly from compiled semantic timing and verified inputs.
     SceneDeliveryPlan {

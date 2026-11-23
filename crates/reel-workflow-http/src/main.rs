@@ -2,7 +2,7 @@ use reel_workflow::{Error, ErrorKind, Result};
 fn run(args: &[String]) -> Result<serde_json::Value> {
     match args {
         [command] if command == "capabilities" => Ok(
-            serde_json::json!({"http_transport":true,"owned_cli":cfg!(windows),"workflow_proxy":true,"native_admission":false,"native_retention":false,"task_completion":false,"speech_adapter":false}),
+            serde_json::json!({"http_transport":true,"owned_cli":cfg!(windows),"workflow_proxy":true,"github_issue_submission":cfg!(windows),"native_admission":false,"native_retention":false,"task_completion":false,"speech_adapter":false}),
         ),
         #[cfg(windows)]
         [command, request, pin, apply] if command == "post" && apply == "--apply" => {

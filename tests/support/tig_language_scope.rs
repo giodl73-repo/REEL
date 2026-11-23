@@ -36,18 +36,21 @@ fn save_commit(f: &mut Fixture) {
     );
     f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
 }
-fn bilingual() -> (Fixture, reel::tig_scene::Request) {
+pub(super) fn bilingual() -> (Fixture, reel::tig_scene::Request) {
+    bilingual_with_english_samples(48000)
+}
+pub(super) fn bilingual_with_english_samples(samples: u32) -> (Fixture, reel::tig_scene::Request) {
     let (mut f, mut request) = native_scene_fixture();
     let mut voice = load(&f, "records/cue-main.tig");
     voice["id"] = "cue/english".into();
-    let mut bytes = wav();
+    let mut bytes = wav_samples(samples);
     *bytes.last_mut().unwrap() = 17;
     let take = cached(&f, &bytes);
     voice["selected"] = json!(take);
     write(f.root(), "records/cue-english.tig", &voice);
     let mut alignment = load(&f, "records/alignment.tig");
     alignment["id"] = "alignment/english".into();
-    let bytes = serde_json::to_vec(&json!({"schema":"reel.scene-native-alignment.v1","language":"en","cue_id":"en-1","selected_take_sha256":take.sha256,"sample_rate":48000,"cue_end_sample":48000,"semantic_markers":{"first-line":0,"second-line":24000}})).unwrap();
+    let bytes = serde_json::to_vec(&json!({"schema":"reel.scene-native-alignment.v1","language":"en","cue_id":"en-1","selected_take_sha256":take.sha256,"sample_rate":48000,"cue_end_sample":samples,"semantic_markers":{"first-line":0,"second-line":24000}})).unwrap();
     alignment["streams"][0]["object"] = json!(cached(&f, &bytes));
     write(f.root(), "records/alignment-english.tig", &alignment);
     let mut parent = load(&f, "records/scene.tig");

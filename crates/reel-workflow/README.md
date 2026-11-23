@@ -9,6 +9,10 @@ The [existing-film inspection adapter](../../docs/workflow-film-inspection.md)
 adds read-only sidecars for pinned native v2 scene metadata. It reuses
 `reel-assembly`, with no native SDK or media-renderer dependency.
 
+The [film findings adapter](../../docs/workflow-film-findings.md) checks exact
+review/movie/map pins and exports private issue drafts. It submits no issue,
+executes no repair and grants no selection, viewing or authority claim.
+
 Run the synthetic example from the repository root:
 
 ```text
@@ -73,6 +77,11 @@ preserved for diagnosis rather than silently repaired. File handles prevent
 sharing writes during checks on Windows; portable checks do not promise an
 immutable snapshot against concurrent writers on other platforms, nor does any
 candidate record make mutable external paths durable.
+
+Candidate still-control derivation and affected-language render planning are
+documented in [film rebuild preparation](../../docs/workflow-film-rebuild.md).
+The planner exports metadata; native admission, selection and completed renders
+remain separate.
 
 Validation:
 
