@@ -1,0 +1,102 @@
+# Spoken source across delivery formats
+
+This guide follows the synthetic programme used for engineering qualification. Project adoption, listening and station review have separate evidence.
+
+The [bilingual fixture](media-expansion-spoken-fixture.md) authors `opening`,
+`detail` and `closing` once as module identities. Each language selects its
+own script and takes. The executive edition omits `detail`, and the technical
+edition includes it. A delivery package can reference a checked edition and
+its local sample bounds while keeping its own artifact identity.
+
+```mermaid
+flowchart LR
+    opening["Authored opening module"] --> en["EN script and selected performance"]
+    opening --> es["ES script and selected performance"]
+    en --> editions["Checked edition WAV and transcript"]
+    es --> editions
+    editions --> chapters["Exact chapter sample spans"]
+    chapters --> reading["Narrated reading and lesson"]
+    chapters --> branch["Interactive choice and replay"]
+    editions --> visual["Companion SVG and event clock"]
+    editions --> player["Opening-only edition for offline player"]
+```
+
+The opening keeps its authored module identity across delivery. Each branch
+selects an exact edition and span. Its transcript and the companion's event
+clock follow that edition. The offline player consumes a whole opening-only
+edition whose source samples match the opening chapter in the executive edition.
+
+| Delivery | What it binds | Current evidence and remaining work |
+| --- | --- | --- |
+| [Spoken edition](spoken-edition-check-v1.md) | Selected language, exact takes, PCM, transcript and module chapters | Controlled English and Spanish fixtures check independent PCM and transcript derivation. [History](spoken-edition-history-v1.md) covers exact retained identities. |
+| [Narrated reading](narrated-reading-v1.md) | Checked chapter intervals and authored page/text spans | M08 merged with engineering evidence for the reading index. The final cross-format run must link the index to the selected common edition. |
+| [Lesson and rehearsal](lesson-rehearsal-v1.md) | Explanation, selected audio, editable score, notation exports and passage occurrence | M09 merged with checked lesson fixtures. The final run must demonstrate the common edition relationship and preserve the score and occurrence identities. |
+| [Visual companion](semantic-visual-companion-v1.md) | Authored events, exact edition phrases and the matching visual clock | M10 merged with a one-language replacement case. The final run must bind the common selection and verify the unchanged language's evidence. |
+| [Offline installation](offline-installation-v1.md) | One whole checked edition, matching text and an enrolled runtime and endpoint | The six-edition fixture admits dedicated opening-only editions. Live disconnect, isolated capture and operator review remain in [station qualification](https://github.com/giodl73-repo/REEL/pull/442). |
+| [Interactive branches](interactive-branch-contract-v1.md) | Authored routes and exact edition, module, media and access bindings | The shared-source fixture now replays both routes in both languages through the M14 PCM sink. It compares exact audio before and after a selective English opening replacement. [M14 replay evidence](interactive-demo-replay-v1.md) covers local keyboard/text commands and synthetic playback. |
+
+The final run should retain the original edition and each derivative by its
+own checked identity. It should follow at least one selected module through
+all published relationships, exercise a changed take and refused input, and
+link accessibility evidence. A quiet-seam derivative needs an authored and
+checked relationship to the selected source. Listening, device acceptance,
+authority and project adoption each require their own evidence.
+
+### Installation seam in the shared-source run
+
+The baseline fixture starts each take with 2,400 silent samples at 48 kHz.
+The installation contract requires 4,800 silent sample frames at both ends of
+the admitted range. For the shared-source run, author a new synthetic take
+version with sufficient leading silence, then compile and check its affected
+editions. The baseline executive transcripts exceed the terminal line profile
+even after the audio seam is fixed. Author a dedicated opening-only edition
+per language in the same programme, selecting the same checked opening take
+as the executive edition. Installation then admits a whole edition and the
+other deliveries can continue to follow the shared module and its chapter
+bounds.
+The [existing installation test fixture](../tests/support/spoken_installation.rs)
+already generates a quiet-seam variant and uses stereo markers to identify
+its boundaries. Its shortened, opening-only programme covers the station
+profile. Reuse that signal construction for the selected take while preserving
+the full shared programme needed by the other deliveries.
+Retain the baseline fixture and version history so the changed source and its
+consuming sample intervals can be compared directly. Obtain the station and
+listening evidence for the selected version separately.
+
+At `5116136`, the locked spoken programme test admitted the two dedicated
+editions from a six-edition fixture. Their wave hashes differed from the
+executive outputs, while their opening source and selected PCM hashes matched.
+The English executive transcript was refused under the same terminal limits.
+This verifies the relationship and admission without opening an audio device.
+
+At `0259f94`, a single locked test used the six-edition programme to check the
+reading index, lesson package, companion packages and installation admission.
+Reading carried the exact programme receipt and access manifest hashes. The
+lesson carried the reading-index hash. Each companion kept the exact audio and
+transcript hashes of its installation opening, with separate visual evidence.
+The run checked local packages. A separate Windows browser test at `825dcb7`
+rendered the same fixture's opening companions as 72 EN frames and 84 ES
+frames. Both outputs preserved the checked PCM hash. The later replay run checked both branch paths. Station qualification remains open.
+
+At `afe51bc`, an English opening replacement changed the three English WAV
+outputs while all three Spanish WAVs remained byte-for-byte identical. Every
+edition retained its duration. The retained baseline outputs still matched
+their recorded hashes after the replacement was produced in a separate test
+directory. This comparison covers the shared programme's WAV outputs.
+
+### Review by role
+
+This draft uses the repository's [review checklists](../.roles/ROLE.md).
+
+| Lens | Evidence in this draft and follow-up |
+| --- | --- |
+| Story and Editor | The authored edition order and chapter clocks are checked. Verify both interactive routes and their endings with the runtime replay. |
+| Animation | The shared companion renders have checked frame counts and PCM. The independent native regression checks the frame transitions. Creative visual review remains open. |
+| Sound and Vocal Adaptation | The fixture checks exact samples, language-local markers and transcript bindings. Listening, speaker transitions and language acceptance still require human review. |
+| Platform and Audience | The reading and lesson checks exercise text access. Interactive keyboard operation and live station usability still need their own evidence. |
+| Score and Arrangement | The lesson checks its editable model, exports and repeated passage occurrences. A music authority still needs to accept actual educational material. |
+| Rights and Provenance | The checks trace distinct source and output hashes and preserve the original fixture. Project rights, voice consent, permanent custody, and delivery authority require their own records where applicable. |
+
+Music Reconstruction is outside this draft's scope because the fixture uses
+authored synthetic signals and a test score with no source separation,
+reconstruction, or repair. Revisit the scope when qualifying those operations.

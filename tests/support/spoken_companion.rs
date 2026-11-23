@@ -26,6 +26,17 @@ impl InputFiles for BrowserFixture {
 }
 impl BrowserFixture {
     fn new(f: &CompanionFixture, c: &api::Composition, forge: bool) -> Self {
+        Self::from_source(&f.root, &f.candidate, &f.receipt, &f.request.svg, c, forge)
+    }
+
+    fn from_source(
+        root: &Path,
+        candidate: &Path,
+        receipt: &[u8],
+        svg_source: &FileRef,
+        c: &api::Composition,
+        forge: bool,
+    ) -> Self {
         let controls = tempfile::tempdir().unwrap();
         let mut clock = c.clock_bytes().to_vec();
         if forge {
@@ -33,7 +44,7 @@ impl BrowserFixture {
             v["anchors"][1]["sample"] = json!(v["anchors"][1]["sample"].as_u64().unwrap() + 2000);
             clock = serde_json::to_vec_pretty(&v).unwrap();
         }
-        let receipt: producer::ProductionReceipt = serde_json::from_slice(&f.receipt).unwrap();
+        let receipt: producer::ProductionReceipt = serde_json::from_slice(receipt).unwrap();
         let original_wave = receipt
             .editions
             .iter()
@@ -43,7 +54,7 @@ impl BrowserFixture {
             .clone();
         let svg = FileRef {
             path: "admitted/svg".into(),
-            ..f.request.svg.clone()
+            ..svg_source.clone()
         };
         let wave = FileRef {
             path: format!("admitted/audio/{}", c.edition_id()).into(),
@@ -52,11 +63,11 @@ impl BrowserFixture {
         let mut paths = BTreeMap::new();
         let mut inputs = BTreeMap::new();
         for (alias, file, path) in [
-            ("opening.svg", svg, f.root.join(&f.request.svg.path)),
+            ("opening.svg", svg, root.join(&svg_source.path)),
             (
                 "audio.wav",
                 wave.clone(),
-                f.candidate.join(&original_wave.path),
+                candidate.join(&original_wave.path),
             ),
             (
                 "clock.json",
@@ -138,6 +149,83 @@ fn pin(path: impl Into<PathBuf>, raw: &[u8]) -> FileRef {
         bytes: raw.len() as u64,
     }
 }
+fn composition_request(root: &Path, edition_kind: &str) -> api::Request {
+    let svg=br##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect id="r" width="8" height="8" fill="red"/><script>addEventListener('reelframe',e=>{const a=e.detail.sourceClock.anchorFrames,f=e.detail.frame;document.getElementById('r').setAttribute('fill',f&lt;a[1]?'red':f&lt;a[2]?'lime':'blue')})</script></svg>"##;
+    fs::write(root.join("fixture-private-canary.svg"), svg).unwrap();
+    api::Request {
+        schema: api::SCHEMA.into(),
+        edition_ids: ["en", "es"]
+            .map(|language| format!("{language}-{edition_kind}"))
+            .to_vec(),
+        svg: pin("fixture-private-canary.svg", svg),
+        width: 8,
+        height: 8,
+        events: [("follow-rhythm", "first"), ("begin-again", "second")]
+            .into_iter()
+            .map(|(id, marker)| api::Event {
+                id: id.into(),
+                bindings: ["en", "es"]
+                    .into_iter()
+                    .map(|language| api::Binding {
+                        edition_id: format!("{language}-{edition_kind}"),
+                        anchor: api::Anchor::EngineeringMarker {
+                            performance_id: format!("{language}-opening"),
+                            marker_id: marker.into(),
+                        },
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+#[cfg(feature = "print")]
+pub(super) fn check_shared_opening_companion(
+    inputs: reel::spoken_programme::installation::Inputs<'_>,
+    root: &Path,
+) {
+    let visuals = root.to_path_buf();
+    let access: checker::AccessPackage = serde_json::from_slice(inputs.access_manifest).unwrap();
+    let prepared = api::prepare(
+        composition_request(root, "installation"),
+        api::Inputs {
+            spoken: inputs.spoken,
+            sources: inputs.sources,
+            candidate: inputs.candidate,
+            visuals: &visuals,
+            access: inputs.access,
+            access_manifest: inputs.access_manifest,
+        },
+        Duration::from_secs(30),
+    )
+    .unwrap();
+    for composition in prepared.compositions() {
+        let edition = access
+            .editions
+            .iter()
+            .find(|edition| edition.edition_id == composition.edition_id())
+            .unwrap();
+        let evidence: serde_json::Value =
+            serde_json::from_slice(composition.evidence_bytes()).unwrap();
+        assert_eq!(evidence["access"]["wave"]["sha256"], edition.wave.sha256);
+        assert_eq!(
+            evidence["access"]["transcript"]["sha256"],
+            edition.transcript.sha256
+        );
+    }
+    let output = root.join("shared-companion");
+    api::produce(
+        &prepared,
+        &output,
+        producer::ProductionControl {
+            timeout: Duration::from_secs(30),
+            cancellation: || Ok(()),
+        },
+    )
+    .unwrap();
+    api::check(&prepared, &output, Duration::from_secs(30)).unwrap();
+}
+
 impl CompanionFixture {
     fn new(v2: bool) -> Self {
         Self::with_trim(v2, 0)
@@ -226,31 +314,7 @@ impl CompanionFixture {
         let access = f.temp.path().join("access");
         checker::write_access(&mut checked, &access, || Ok(())).unwrap();
         let access_manifest = fs::read(access.join("access.json")).unwrap();
-        let svg=br##"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect id="r" width="8" height="8" fill="red"/><script>addEventListener('reelframe',e=>{const a=e.detail.sourceClock.anchorFrames,f=e.detail.frame;document.getElementById('r').setAttribute('fill',f&lt;a[1]?'red':f&lt;a[2]?'lime':'blue')})</script></svg>"##;
-        fs::write(f.temp.path().join("fixture-private-canary.svg"), svg).unwrap();
-        let request = api::Request {
-            schema: api::SCHEMA.into(),
-            edition_ids: vec!["en-technical".into(), "es-technical".into()],
-            svg: pin("fixture-private-canary.svg", svg),
-            width: 8,
-            height: 8,
-            events: [("follow-rhythm", "first"), ("begin-again", "second")]
-                .into_iter()
-                .map(|(id, marker)| api::Event {
-                    id: id.into(),
-                    bindings: ["en", "es"]
-                        .into_iter()
-                        .map(|language| api::Binding {
-                            edition_id: format!("{language}-technical"),
-                            anchor: api::Anchor::EngineeringMarker {
-                                performance_id: format!("{language}-opening"),
-                                marker_id: marker.into(),
-                            },
-                        })
-                        .collect(),
-                })
-                .collect(),
-        };
+        let request = composition_request(f.temp.path(), "technical");
         let root = f.temp.path().to_path_buf();
         let candidate = f.output();
         Self {
@@ -773,7 +837,7 @@ fn nonintegral_duration_and_rehashed_false_candidate_receipt_refuse() {
 }
 
 #[cfg(windows)]
-mod native {
+pub(super) mod native {
     use super::*;
     use reel::media_runtime::{Bindings, BoundPrograms, BoundTool, ByteIdentity};
     fn runtime() -> &'static (BoundPrograms, BoundTool, PathBuf) {
@@ -807,6 +871,72 @@ mod native {
                 ffmpeg.path,
             )
         })
+    }
+
+    #[test]
+    #[ignore = "explicit native browser render of the shared programme openings"]
+    fn shared_installation_openings_render_with_exact_pcm() {
+        crate::installation::shared_installation_openings_render_with_exact_pcm();
+    }
+
+    pub(crate) fn render_shared_openings(
+        inputs: reel::spoken_programme::installation::Inputs<'_>,
+        root: &Path,
+        candidate: &Path,
+    ) {
+        let request = composition_request(root, "installation");
+        let visuals = root.to_path_buf();
+        let prepared = api::prepare(
+            request.clone(),
+            api::Inputs {
+                spoken: inputs.spoken,
+                sources: inputs.sources,
+                candidate: inputs.candidate,
+                visuals: &visuals,
+                access: inputs.access,
+                access_manifest: inputs.access_manifest,
+            },
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let receipt: producer::ProductionReceipt =
+            serde_json::from_slice(inputs.spoken.receipt_bytes).unwrap();
+        let (programs, browser, _) = runtime();
+        assert_eq!(prepared.compositions().len(), 2);
+        for (composition, expected_frames) in prepared.compositions().iter().zip([72, 84]) {
+            let files = BrowserFixture::from_source(
+                root,
+                candidate,
+                inputs.spoken.receipt_bytes,
+                &request.svg,
+                composition,
+                false,
+            );
+            let workspace = tempfile::tempdir().unwrap();
+            let output = workspace.path().join("shared-opening.mkv");
+            let rendered = api::render(
+                &prepared,
+                composition.edition_id(),
+                &files.plan,
+                &files,
+                programs,
+                browser,
+                workspace.path(),
+                &output,
+                || Ok(()),
+            )
+            .unwrap();
+            let edition = receipt
+                .editions
+                .iter()
+                .find(|edition| edition.edition_id == composition.edition_id())
+                .unwrap();
+            assert_eq!(rendered.frames, expected_frames);
+            assert_eq!(
+                rendered.pcm_sha256.as_deref(),
+                Some(edition.pcm_sha256.as_str())
+            );
+        }
     }
     #[test]
     #[ignore = "explicit bounded native browser qualification in Windows core shard 2"]

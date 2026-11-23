@@ -59,6 +59,9 @@ impl InstallationFixture {
             }
         }
         f.signals[0][5000 * 2..5000 * 2 + 5].copy_from_slice(&[-32768, -1, 0, 1, 32767]);
+        Self::from_programme(f)
+    }
+    fn from_programme(mut f: Fixture) -> Self {
         f.sync();
         let root = f.temp.path().to_owned();
         let candidate = f.output();
@@ -144,6 +147,285 @@ fn selection() -> api::Selection {
         edition_id: "en-technical".into(),
         passes: 1,
     }
+}
+
+fn shared_quiet_programme(english_replacement: bool) -> InstallationFixture {
+    let mut f = Fixture::new();
+    for (language, index) in [("en", 0), ("es", 3)] {
+        f.signals[index][..4800 * 2].fill(0);
+        let (first, second) = if language == "en" {
+            (48_000, 96_000)
+        } else {
+            (60_000, 120_000)
+        };
+        f.document.performances[index].markers = [("first", first), ("second", second)]
+            .map(|(id, start_sample)| reel::cue_relative::CueMarker {
+                id: id.into(),
+                kind: reel::cue_relative::MarkerKind::Phrase,
+                start_sample,
+                end_sample: start_sample + 2_000,
+            })
+            .to_vec();
+        let mut edition = f
+            .document
+            .editions
+            .iter()
+            .find(|edition| edition.id == format!("{language}-executive"))
+            .unwrap()
+            .clone();
+        edition.id = format!("{language}-installation");
+        edition.required_modules = vec!["opening".into()];
+        edition.selections.truncate(1);
+        edition.joins.clear();
+        f.document.performances[index]
+            .scope
+            .edition_ids
+            .push(edition.id.clone());
+        f.document.editions.push(edition);
+    }
+    if english_replacement {
+        f.signals[0][10_000] += 1;
+    }
+    InstallationFixture::from_programme(f)
+}
+
+#[test]
+fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
+    let shared = shared_quiet_programme(false);
+    assert_eq!(shared.f.document.editions.len(), 6);
+    let receipt: producer::ProductionReceipt = serde_json::from_slice(&shared.receipt).unwrap();
+    for (language, expected_frames) in [("en", 144_000), ("es", 168_000)] {
+        let edition_id = format!("{language}-installation");
+        let executive_id = format!("{language}-executive");
+        let installation = receipt
+            .editions
+            .iter()
+            .find(|e| e.edition_id == edition_id)
+            .unwrap();
+        let executive = receipt
+            .editions
+            .iter()
+            .find(|e| e.edition_id == executive_id)
+            .unwrap();
+        assert_ne!(installation.wave.sha256, executive.wave.sha256);
+        assert_eq!(installation.takes.len(), 1);
+        assert_eq!(
+            installation.takes[0].source.sha256,
+            executive.takes[0].source.sha256
+        );
+        assert_eq!(
+            installation.takes[0].selected_pcm_sha256,
+            executive.takes[0].selected_pcm_sha256
+        );
+        let prepared = api::prepare(
+            &api::Selection {
+                edition_id,
+                passes: 1,
+            },
+            shared.inputs(),
+            control(),
+        )
+        .unwrap();
+        assert_eq!(prepared.summary().source_frames, expected_frames);
+        assert!(prepared.summary().original_pcm_and_access_checked);
+        assert!(!prepared.transcript().is_empty());
+    }
+    let refused = api::prepare(
+        &api::Selection {
+            edition_id: "en-executive".into(),
+            passes: 1,
+        },
+        shared.inputs(),
+        control(),
+    )
+    .err()
+    .expect("the long executive transcript must be refused");
+    assert_eq!(
+        refused.to_string(),
+        "installation transcript terminal line profile"
+    );
+}
+
+#[test]
+#[ignore = "explicit retained-version comparison for the shared synthetic programme"]
+fn replacing_the_shared_english_opening_preserves_spanish_pcm() {
+    let original = shared_quiet_programme(false);
+    let replacement = shared_quiet_programme(true);
+    let before: producer::ProductionReceipt = serde_json::from_slice(&original.receipt).unwrap();
+    let after: producer::ProductionReceipt = serde_json::from_slice(&replacement.receipt).unwrap();
+    assert_eq!((before.editions.len(), after.editions.len()), (6, 6));
+    for edition in &before.editions {
+        let changed = after
+            .editions
+            .iter()
+            .find(|item| item.edition_id == edition.edition_id)
+            .unwrap();
+        let retained = fs::read(original.candidate.join(&edition.wave.path)).unwrap();
+        assert_eq!(hash(&retained), edition.wave.sha256);
+        assert_eq!(edition.samples, changed.samples);
+        if edition.edition_id.starts_with("es-") {
+            assert_eq!(edition.wave.sha256, changed.wave.sha256);
+            assert_eq!(
+                retained,
+                fs::read(replacement.candidate.join(&changed.wave.path)).unwrap()
+            );
+        } else {
+            assert_ne!(edition.wave.sha256, changed.wave.sha256);
+        }
+    }
+}
+
+#[cfg(all(windows, feature = "tig-publication"))]
+pub(super) fn shared_installation_openings_render_with_exact_pcm() {
+    let shared = shared_quiet_programme(false);
+    super::companion::native::render_shared_openings(
+        shared.inputs(),
+        &shared.root,
+        &shared.candidate,
+    );
+}
+
+#[cfg(feature = "print")]
+fn shared_interactive_routes(shared: &InstallationFixture) -> Vec<(String, String, Vec<String>)> {
+    use reel::spoken_programme::interactive::{Graph, Selection, Session};
+    let inputs = shared.inputs();
+    let mut checked =
+        checker::check(inputs.spoken, inputs.sources, inputs.candidate, control()).unwrap();
+    checker::verify_access(&mut checked, inputs.access_manifest, inputs.access, || {
+        Ok(())
+    })
+    .unwrap();
+    let graph: Graph = serde_json::from_value(json!({
+        "entry":"opening",
+        "nodes":[
+            {"kind":"playback","id":"opening","next":"choice","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"choice","id":"choice","choices":[
+                {"id":"detail","target":"detail","labels":{"en":"Detail","es":"Detalle"}},
+                {"id":"summary","target":"summary","labels":{"en":"Summary","es":"Resumen"}}]},
+            {"kind":"playback","id":"detail","next":"end","selections":[
+                {"language":"en","edition":"en-technical"},{"language":"es","edition":"es-technical"}]},
+            {"kind":"playback","id":"summary","next":"end","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"end","id":"end"}
+        ]
+    })).unwrap();
+    let mut bindings = std::collections::BTreeMap::new();
+    for language in ["en", "es"] {
+        for (node, edition_name, module) in [
+            ("opening", "executive", "opening"),
+            ("detail", "technical", "detail"),
+            ("summary", "executive", "closing"),
+        ] {
+            let edition = checked
+                .access()
+                .editions
+                .iter()
+                .find(|edition| edition.edition_id == format!("{language}-{edition_name}"))
+                .unwrap();
+            let chapter = edition
+                .chapters
+                .iter()
+                .find(|chapter| chapter.module_id == module)
+                .unwrap();
+            bindings.insert(
+                (node, language),
+                Selection {
+                    edition: &edition.edition_id,
+                    language,
+                    module,
+                    programme_sha256: &edition.wave.sha256,
+                    access_sha256: &edition.transcript.sha256,
+                    first_frame: chapter.start_sample,
+                    end_frame: chapter.end_sample,
+                },
+            );
+        }
+    }
+    let mut routes = Vec::new();
+    for language in ["en", "es"] {
+        for choice in ["detail", "summary"] {
+            let replay = || {
+                let mut session =
+                    Session::start(&graph, &checked, bindings.clone(), language).unwrap();
+                let mut hashes = Vec::new();
+                for expected in ["opening", choice] {
+                    assert_eq!(session.node(), Some(expected));
+                    let span = session.selection().unwrap();
+                    let count = session
+                        .deliver(&checked, inputs.candidate, usize::MAX, |pcm| {
+                            hashes.push(hash(pcm));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(count as u64, span.end_frame - span.first_frame);
+                    if expected == "opening" {
+                        assert_eq!(session.node(), Some("choice"));
+                        assert!(session.choose(session.visit(), choice));
+                    }
+                }
+                assert!(session.is_ended());
+                hashes
+            };
+            let hashes = replay();
+            assert_eq!(hashes, replay());
+            routes.push((language.to_owned(), choice.to_owned(), hashes));
+        }
+    }
+    routes
+}
+
+#[cfg(feature = "print")]
+#[test]
+#[ignore = "explicit shared-source reading, lesson and installation fixture using a local test font"]
+fn reading_lesson_and_installation_use_the_same_checked_programme() {
+    let shared = shared_quiet_programme(false);
+    let original_routes = shared_interactive_routes(&shared);
+    let replacement_routes = shared_interactive_routes(&shared_quiet_programme(true));
+    for ((language, route, original), (next_language, next_route, replacement)) in
+        original_routes.iter().zip(&replacement_routes)
+    {
+        assert_eq!((language, route), (next_language, next_route));
+        assert_eq!(original[0] == replacement[0], language == "es");
+        assert_eq!(original[1], replacement[1]);
+    }
+    let mut opening_frames = Vec::new();
+    for language in ["en", "es"] {
+        let prepared = api::prepare(
+            &api::Selection {
+                edition_id: format!("{language}-installation"),
+                passes: 1,
+            },
+            shared.inputs(),
+            control(),
+        )
+        .unwrap();
+        opening_frames.push(prepared.summary().source_frames);
+    }
+    let receipt = hash(&shared.receipt);
+    let access = hash(&shared.access_manifest);
+    #[cfg(feature = "tig-publication")]
+    super::companion::check_shared_opening_companion(shared.inputs(), &shared.root);
+    let reading = super::reading::ReadingFixture::from_fixture(shared.f);
+    let prepared = reading.prepare().unwrap();
+    let output = reading.f.temp.path().join("shared-reading");
+    super::reading::publish(&prepared, &output).unwrap();
+    reel::spoken_programme::reading::check(&prepared, &output, Duration::from_secs(30)).unwrap();
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(output.join("reading.json")).unwrap()).unwrap();
+    assert_eq!(index["request"]["dialogue_receipt"]["sha256"], receipt);
+    assert_eq!(index["request"]["access"]["sha256"], access);
+    for (edition, frames) in index["editions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .zip(opening_frames)
+    {
+        assert_eq!(edition["chapters"][0]["start_sample"], 0);
+        assert_eq!(edition["chapters"][0]["end_sample"], frames);
+    }
+    let lesson = reading.f.temp.path().join("shared-lesson");
+    super::lesson::check_shared_programme_lesson(&prepared, &output, &lesson);
 }
 
 #[cfg(all(windows, feature = "installation-native"))]

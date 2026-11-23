@@ -29,6 +29,7 @@ editions and a finished programme to its source and review evidence.
 | [Animation and picture](docs/guides/animation-and-effects.md) | Cels, semantic triggers for picture changes, exposure sheets, sprite choreography, camera tracks, VFX and frame-clock SVG/browser compositions |
 | [Voice and sound](docs/guides/voice-and-sound.md) | Dialogue/narration cues, selected performances and phrase alignment; Sonic effects, dialogue/score mixing, dynamic EQ and audio stems |
 | [Music](docs/guides/music-and-albums.md) | Local generation adapters, auditions and repair, editable note/lyric models, arrangement and score workflows, album mastering and companion videos |
+| [Spoken programmes](docs/media-expansion-compatibility.md) | Reuse authored modules across technical, executive and language editions, with checked audio and transcripts for reading, lessons, visual companions, offline playback and branching demos |
 | [Comic layers](docs/guides/comic-layers.md) | Editable artwork and lettering, panel/reading order and issue editions; publication adapters are in active workflow development |
 | [Languages and publishing](docs/guides/editions-and-delivery.md) | Shared pictures with language-local performances, captions, chapters, print collections, source and delivery histories |
 | [Production engineering](docs/guides/assets-and-revisions.md) | Exact input/runtime pins, dependency-aware change planning, bounded managed jobs, retained recovery, independent frame/sample checks and git-asset integration |
