@@ -1,8 +1,6 @@
 # Authored branches for spoken programmes
 
-M13 design draft on stacked parent `a73f3a9bdde11318e09d5b41f31fe779d8eb9a46`.
-The [PR plan](media-expansion-pr-plan.md) requires merged M12 evidence before
-final checks and merge. This draft records contract decisions and test oracles.
+The [PR plan](media-expansion-pr-plan.md) places M13 after the merged operator runtime and tracks station qualification separately.
 
 ## One route, two language editions
 
@@ -139,5 +137,4 @@ uses separate synthetic programme and access identities and unequal EN/ES
 spans. It rejects mismatched identity or span, missing editions and
 ambiguous checked records. The spoken programme media suite also feeds the
 admission fixture the existing checker's results for synthesized fixture PCM
-and verified EN/ES transcripts. Final M13 still needs this binding at the
-branch entry point after its merged dependency is available.
+and verified EN/ES transcripts. The shared branch contract exposes graph validation and exact checked-selection admission for the M14 runtime.

@@ -391,6 +391,60 @@ impl CompanionFixture {
 fn bilingual_markers_use_sealed_audio_and_keep_text_access_signal_basis() {
     let f = CompanionFixture::new(false);
     let p = api::prepare(f.request.clone(), f.inputs(), Duration::from_secs(30)).unwrap();
+    use reel::spoken_programme::interactive::{Selection, companion_placements};
+
+    let inputs = f.inputs();
+    let mut checked = checker::check(
+        inputs.spoken,
+        inputs.sources,
+        inputs.candidate,
+        producer::ProductionControl {
+            timeout: Duration::from_secs(30),
+            cancellation: || Ok(()),
+        },
+    )
+    .unwrap();
+    checker::verify_access(&mut checked, inputs.access_manifest, inputs.access, || {
+        Ok(())
+    })
+    .unwrap();
+    for composition in p.compositions() {
+        let edition = checked
+            .access()
+            .editions
+            .iter()
+            .find(|edition| edition.edition_id == composition.edition_id())
+            .unwrap();
+        let chapter = &edition.chapters[0];
+        let span = Selection {
+            edition: &edition.edition_id,
+            language: &edition.language,
+            module: &chapter.module_id,
+            programme_sha256: &edition.wave.sha256,
+            access_sha256: &edition.transcript.sha256,
+            first_frame: chapter.start_sample,
+            end_frame: chapter.end_sample,
+        };
+        let placements = companion_placements(&checked, span, composition).unwrap();
+        let expected = if edition.language == "en" {
+            [0, 48000, 96000]
+        } else {
+            [0, 60000, 120000]
+        };
+        assert_eq!(
+            placements
+                .iter()
+                .map(|event| event.frame)
+                .collect::<Vec<_>>(),
+            expected
+        );
+        let other = p
+            .compositions()
+            .iter()
+            .find(|other| other.edition_id() != span.edition)
+            .unwrap();
+        assert!(companion_placements(&checked, span, other).is_err());
+    }
     for (c, expected) in p
         .compositions()
         .iter()

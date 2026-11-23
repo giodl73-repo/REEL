@@ -902,6 +902,91 @@ fn checkpoint_resume_keeps_recipe_and_canonical_seed_immutable_and_retires_new_j
 }
 
 #[test]
+fn admitted_checkpoint_resume_requires_exact_pins_and_retains_through_its_sink() {
+    struct Authority {
+        pins: BTreeMap<String, u64>,
+        admitted: std::cell::RefCell<BTreeSet<String>>,
+    }
+    impl ResourceAuthority for Authority {
+        fn require(&self, role: ResourceRole, hash: &str, bytes: u64) -> Result<()> {
+            if role == ResourceRole::Checkpoint {
+                if self.pins.get(hash) != Some(&bytes) {
+                    return Err("checkpoint refused by caller".into());
+                }
+                self.admitted.borrow_mut().insert(hash.into());
+            }
+            Ok(())
+        }
+    }
+    #[derive(Default)]
+    struct Sink {
+        result: Option<(String, bool)>,
+    }
+    impl RetentionSink for Sink {
+        fn retain(&mut self, batch: &RetainedJob) -> Result<()> {
+            self.result = Some((batch.request().sha256().into(), batch.succeeded()));
+            Ok(())
+        }
+    }
+
+    let f = Fixture::new();
+    let (manifest, descriptor, seed) = checkpoint_fixture(&f);
+    let cfg = config(f.root()).unwrap();
+    let request = fs::read(&manifest).unwrap();
+    let raw_descriptor = fs::read(&descriptor).unwrap();
+    let request_hash = seed["job_sha256"].as_str().unwrap();
+    let checkpoint_hash = seed["files"]["prepared/checkpoint.bin"]["sha256"]
+        .as_str()
+        .unwrap();
+    let mut authority = Authority {
+        pins: BTreeMap::from([
+            (request_hash.into(), request.len() as u64),
+            (
+                format!("{:x}", Sha256::digest(&raw_descriptor)),
+                raw_descriptor.len() as u64,
+            ),
+        ]),
+        admitted: Default::default(),
+    };
+    let mut sink = Sink::default();
+    let refused = resume_admitted(
+        f.root(),
+        &manifest,
+        &descriptor,
+        &mut RunContext {
+            config: &cfg,
+            authority: &authority,
+            retention: &mut sink,
+        },
+    )
+    .unwrap_err();
+    assert!(refused.to_string().contains("checkpoint refused by caller"));
+    assert!(sink.result.is_none());
+    no_scratch(&f);
+
+    authority.pins.insert(checkpoint_hash.into(), 10);
+    let result = resume_admitted(
+        f.root(),
+        &manifest,
+        &descriptor,
+        &mut RunContext {
+            config: &cfg,
+            authority: &authority,
+            retention: &mut sink,
+        },
+    )
+    .unwrap();
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(result["workspace_retained"], false);
+    assert_eq!(sink.result, Some((request_hash.into(), true)));
+    assert_eq!(
+        *authority.admitted.borrow(),
+        authority.pins.keys().cloned().collect()
+    );
+    no_scratch(&f);
+}
+
+#[test]
 fn checkpoint_resume_rejects_changed_recipe_scope_escape_and_corruption() {
     for mode in [
         "changed-recipe",
@@ -1018,6 +1103,44 @@ fn recovery_window_rejects_implicit_unbounded_or_unrelated_step_changes() {
         );
         no_scratch(&f);
     }
+}
+
+#[test]
+fn registered_recovery_window_reuses_the_five_hour_recipe_limit() {
+    let f = Fixture::new();
+    let (manifest, seed_path, mut seed) = checkpoint_fixture(&f);
+    let mut job = load(&manifest).unwrap();
+    job["step_timeout_limit_seconds"] = json!(5 * 60 * 60);
+    let bytes = serde_json::to_vec(&job).unwrap();
+    fs::write(&manifest, &bytes).unwrap();
+    seed["job_sha256"] = json!(f.put(&bytes, true));
+    seed["schema"] = json!("reel.native-job-resume.v2");
+
+    let register = |timeout: u64| {
+        let mut seed = seed.clone();
+        seed["step_timeout_seconds"] = json!({"1": timeout});
+        let descriptor = serde_json::to_vec(&seed).unwrap();
+        fs::write(&seed_path, &descriptor).unwrap();
+        f.put(&descriptor, true);
+    };
+    register(18_001);
+    let error = resume(f.root(), &manifest, &seed_path).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("scoped recovery execution window")
+    );
+    no_scratch(&f);
+
+    register(18_000);
+    let result = resume(f.root(), &manifest, &seed_path).unwrap();
+    assert_eq!(result["checkpoint_resume"]["first_executed_step"], 1);
+    assert_eq!(
+        result["checkpoint_resume"]["effective_step_timeout_seconds"]["1"],
+        18_000
+    );
+    assert_eq!(fs::read(&manifest).unwrap(), bytes);
+    no_scratch(&f);
 }
 
 #[test]

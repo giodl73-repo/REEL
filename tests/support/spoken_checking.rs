@@ -240,6 +240,195 @@ fn branch_admission_uses_verified_bilingual_records() {
 }
 
 #[test]
+fn interactive_replay_routes_pin_verified_edition_chapters() {
+    #[derive(serde::Deserialize)]
+    struct ReplaySelection {
+        edition: String,
+        module: String,
+        samples: [u64; 2],
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ReplayFixture {
+        sample_rate: u32,
+        selections: BTreeMap<String, BTreeMap<String, ReplaySelection>>,
+        expected_visits_by_choice: BTreeMap<String, Vec<String>>,
+    }
+
+    let fixture: ReplayFixture = serde_json::from_str(include_str!(
+        "../fixtures/spoken-programme/interactive-replay.json"
+    ))
+    .unwrap();
+    let f = lexical_fixture();
+    let policy = ProcessingPolicy::identity();
+    f.produce(&policy).unwrap();
+    let mut result = checked(&f, &policy).unwrap();
+    let root = f.temp.path().join("replay-access");
+    checker::write_access(&mut result, &root, || Ok(())).unwrap();
+    let manifest = fs::read(root.join("access.json")).unwrap();
+    checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
+    assert_eq!(result.access().sample_rate, fixture.sample_rate);
+    use reel::spoken_programme::interactive::{Graph, Selection, Session, demo};
+
+    let graph: Graph = serde_json::from_value(serde_json::json!({
+        "entry": "opening",
+        "nodes": [
+            {"kind":"playback","id":"opening","next":"choose","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"choice","id":"choose","choices":[
+                {"id":"example","target":"example","labels":{"en":"Worked example","es":"Ejemplo resuelto"}},
+                {"id":"summary","target":"summary","labels":{"en":"Summary","es":"Resumen"}}]},
+            {"kind":"playback","id":"example","next":"example-closing","selections":[
+                {"language":"en","edition":"en-technical"},{"language":"es","edition":"es-technical"}]},
+            {"kind":"playback","id":"example-closing","next":"end","selections":[
+                {"language":"en","edition":"en-technical"},{"language":"es","edition":"es-technical"}]},
+            {"kind":"playback","id":"summary","next":"end","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"end","id":"end"}
+        ]
+    })).unwrap();
+    let mut bindings = BTreeMap::new();
+    for (language, selections) in &fixture.selections {
+        for (node, authored) in selections {
+            let edition = result
+                .access()
+                .editions
+                .iter()
+                .find(|edition| {
+                    edition.edition_id == authored.edition && edition.language == *language
+                })
+                .unwrap();
+            bindings.insert(
+                (node.as_str(), language.as_str()),
+                Selection {
+                    edition: &authored.edition,
+                    language,
+                    module: &authored.module,
+                    programme_sha256: &edition.wave.sha256,
+                    access_sha256: &edition.transcript.sha256,
+                    first_frame: authored.samples[0],
+                    end_frame: authored.samples[1],
+                },
+            );
+        }
+    }
+
+    for language in ["en", "es"] {
+        for (choice, expected) in &fixture.expected_visits_by_choice {
+            let replay = |by_position: bool| {
+                let mut session =
+                    Session::start(&graph, &result, bindings.clone(), language).unwrap();
+                let opening = session.visit();
+                let mut delivered = Vec::new();
+                let mut visits = Vec::new();
+                while let Some(node) = session.node() {
+                    let node = node.to_owned();
+                    let visit = session.visit();
+                    let selection = session.selection();
+                    visits.push((node.clone(), selection));
+                    if let Some(span) = selection {
+                        assert_eq!(session.frame(), Some(span.first_frame));
+                        let transcript = demo::transcript(&session, &result).unwrap();
+                        assert!(transcript.iter().any(|entry| !entry.text.trim().is_empty()));
+                        assert!(
+                            transcript
+                                .iter()
+                                .all(|entry| entry.start_sample < span.end_frame
+                                    && entry.end_sample > span.first_frame)
+                        );
+                        if node == "example" {
+                            assert!(session.observe(visit, span.first_frame + 1));
+                            assert!(session.set_paused(visit, true));
+                            assert!(!session.observe(visit, span.end_frame));
+                            assert!(!session.seek(visit, span.end_frame));
+                            assert!(session.seek(visit, span.first_frame));
+                            assert!(session.set_paused(visit, false));
+                            assert!(!session.observe(opening, span.end_frame));
+                        }
+                        let mut pcm = Vec::new();
+                        while session.visit() == visit {
+                            let count = session
+                                .deliver(&result, &f.output(), 8192, |chunk| {
+                                    pcm.extend_from_slice(chunk);
+                                    Ok(())
+                                })
+                                .unwrap();
+                            assert!((1..=8192).contains(&count));
+                        }
+                        assert_eq!(pcm.len() as u64, (span.end_frame - span.first_frame) * 6);
+                        let edition = result
+                            .access()
+                            .editions
+                            .iter()
+                            .find(|edition| edition.edition_id == span.edition)
+                            .unwrap();
+                        let original = fs::read(f.output().join(&edition.wave.path)).unwrap();
+                        assert_eq!(&original[36..40], b"data");
+                        let first = 44 + span.first_frame as usize * 6;
+                        let end = 44 + span.end_frame as usize * 6;
+                        assert_eq!(pcm, original[first..end]);
+                        delivered.push(hash(&pcm));
+                    } else if node == "choose" {
+                        if by_position {
+                            assert!(!demo::command(&mut session, opening, "activate").unwrap());
+                            assert_eq!(session.focused_choice().unwrap().0, "example");
+                            if choice == "summary" {
+                                assert!(demo::command(&mut session, visit, "next").unwrap());
+                                assert!(demo::command(&mut session, visit, "previous").unwrap());
+                                assert_eq!(session.focused_choice().unwrap().0, "example");
+                                assert!(demo::command(&mut session, visit, "next").unwrap());
+                            }
+                            assert_eq!(session.focused_choice().unwrap().0, choice);
+                            assert!(demo::command(&mut session, visit, "activate").unwrap());
+                        } else {
+                            assert!(
+                                demo::command(&mut session, visit, &format!("choose {choice}"))
+                                    .unwrap()
+                            );
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                assert!(session.selection().is_none());
+                assert_eq!(session.node(), Some("end"));
+                let old_visit = session.visit();
+                let other_language = if language == "en" { "es" } else { "en" };
+                session.restart_in(other_language).unwrap();
+                assert_eq!(session.node(), Some("opening"));
+                assert_eq!(session.selection().unwrap().language, other_language);
+                assert!(!session.observe(old_visit, 0));
+                session.close();
+                assert_eq!(session.node(), None);
+                assert_eq!(session.frame(), None);
+                (visits, delivered)
+            };
+            let (visits, delivered) = replay(false);
+            assert_eq!((visits.clone(), delivered), replay(true));
+            assert_eq!(
+                visits.iter().map(|(node, _)| node).collect::<Vec<_>>(),
+                expected.iter().collect::<Vec<_>>()
+            );
+        }
+    }
+    let mut interrupted = Session::start(&graph, &result, bindings.clone(), "en").unwrap();
+    assert!(
+        interrupted
+            .deliver(&result, &f.output(), 8192, |_| {
+                anyhow::bail!("local sink failed")
+            })
+            .is_err()
+    );
+    assert_eq!(interrupted.node(), None);
+    let mut missing = bindings.clone();
+    missing.remove(&("summary", "es"));
+    assert!(Session::start(&graph, &result, missing, "en").is_err());
+    let mut stale = bindings;
+    stale.get_mut(&("summary", "es")).unwrap().access_sha256 = "";
+    assert!(Session::start(&graph, &result, stale, "es").is_err());
+}
+
+#[test]
 fn access_rehashes_cannot_change_words_roles_chapters_or_bindings() {
     let f = lexical_fixture();
     let policy = ProcessingPolicy::identity();

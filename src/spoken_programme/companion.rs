@@ -78,6 +78,7 @@ pub struct Composition {
     manifest: BrowserCompositionManifest,
     svg: FileRef,
     wave: FileRef,
+    access_sha256: String,
     clock: Vec<u8>,
     evidence: Vec<u8>,
 }
@@ -87,6 +88,9 @@ impl Composition {
     }
     pub fn manifest(&self) -> &BrowserCompositionManifest {
         &self.manifest
+    }
+    pub(crate) fn access_sha256(&self) -> &str {
+        &self.access_sha256
     }
     pub fn clock_bytes(&self) -> &[u8] {
         &self.clock
@@ -461,6 +465,7 @@ fn derive(
             manifest,
             svg: request.svg.clone(),
             wave: access.wave.clone(),
+            access_sha256: access.transcript.sha256.clone(),
             clock,
             evidence,
         });
