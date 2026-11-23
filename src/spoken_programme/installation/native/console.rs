@@ -524,6 +524,7 @@ type Rendered = (DisplayTicket, Option<LayoutObservation>);
 /// Owns the console side of a foreground session. Opening and shutdown run
 /// outside the controller loop. The process owner retains worker reaping.
 pub struct ConsoleForeground {
+    command_refused: bool,
     reader: ConsoleReader,
     renderer: ConsoleRenderer,
     environment: Arc<Environment>,
@@ -540,6 +541,7 @@ impl ConsoleForeground {
         let reader = surface.start_reader(sender)?;
         let renderer = ConsoleRenderer::start(surface)?;
         Ok(Self {
+            command_refused: false,
             reader,
             renderer,
             environment,
@@ -552,20 +554,30 @@ impl ConsoleForeground {
         self.parent.stop_input_at_lifetime()?;
         self.parent.poll_console_interrupt(&self.interrupt)?;
         if !self.parent.quit_requested() {
-            self.parent
+            self.command_refused |= self
+                .parent
                 .poll_console_input(&mut self.input, &mut self.reader)?;
         }
         self.parent.tick_with_renderer(&mut self.renderer)?;
-        if !self.parent.quit_requested()
-            && !self.renderer.pending()
-            && self.reader.invalid.swap(false, Ordering::AcqRel)
-        {
-            let status = if self.parent.failed() {
-                "Fault | Invalid command"
+        if !self.parent.quit_requested() && !self.renderer.pending() {
+            let status = if std::mem::take(&mut self.command_refused) {
+                Some(if self.parent.failed() {
+                    "Fault | Command unavailable"
+                } else {
+                    "Command unavailable"
+                })
+            } else if self.reader.invalid.swap(false, Ordering::AcqRel) {
+                Some(if self.parent.failed() {
+                    "Fault | Invalid command"
+                } else {
+                    "Invalid command"
+                })
             } else {
-                "Invalid command"
+                None
             };
-            self.renderer.queue(RenderRequest::Status(status))?;
+            if let Some(status) = status {
+                self.renderer.queue(RenderRequest::Status(status))?;
+            }
         }
         Ok(())
     }

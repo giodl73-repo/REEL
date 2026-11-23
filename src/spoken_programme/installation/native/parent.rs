@@ -248,6 +248,13 @@ impl ParentSession {
     /// Adopts the exact input reservation, receipt and generation; never
     /// reserves a second slot or retags a queued line for a newer generation.
     pub fn accept(&mut self, reserved: QueuedCommand) -> Result<Option<u64>> {
+        self.adopt_command(reserved, false).map(|(id, _)| id)
+    }
+    fn adopt_command(
+        &mut self,
+        reserved: QueuedCommand,
+        console: bool,
+    ) -> Result<(Option<u64>, bool)> {
         let (command, received_counter, generation, lease) = match reserved.unpack(&self.input) {
             Ok(parts) => parts,
             Err(error) => {
@@ -259,14 +266,19 @@ impl ParentSession {
             self.fault();
         }
         if self.local_command(command, received_counter)? {
-            return Ok(None);
+            return Ok((None, false));
         }
-        self.command_available(command)?;
+        if let Err(error) = self.command_available(command) {
+            if console && !self.protocol_fault {
+                return Ok((None, true));
+            }
+            return Err(error);
+        }
         let result = self.submit(command, received_counter, generation, lease);
         if result.is_err() {
             self.fault();
         }
-        result.map(Some)
+        result.map(|id| (Some(id), false))
     }
     fn local_command(&mut self, command: Command, receipt: i64) -> Result<bool> {
         if command == Command::Status
@@ -764,15 +776,16 @@ impl ParentSession {
         &mut self,
         input: &mut InputReceiver,
         reader: &mut ConsoleReader,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         // Check termination before draining so all lines published by the
         // finished thread precede its EOF in this poll.
         let finished = reader.finished();
+        let mut refused = false;
         for _ in 0..8 {
             let Some(command) = input.receive() else {
                 break;
             };
-            self.accept(command)?;
+            refused |= self.adopt_command(command, true)?.1;
         }
         if finished {
             match reader.shutdown() {
@@ -786,7 +799,7 @@ impl ParentSession {
                 }
             }
         }
-        Ok(())
+        Ok(refused)
     }
     /// Poll before reader results so an interrupt wins over a native read
     /// cancellation. The owner still joins the reader off the control loop.
@@ -1607,6 +1620,27 @@ pub(super) mod tests {
             f.parent
                 .command(Command::Start, counter().unwrap())
                 .is_err()
+        );
+    }
+    #[test]
+    fn cooked_command_refusal_in_worker_fault_preserves_status_and_quit() {
+        let mut f = fixture();
+        f.parent.worker_fault = true;
+        let pool = f.parent.command_pool();
+        let command = pool.command(Command::Start, counter().unwrap()).unwrap();
+        assert_eq!(f.parent.adopt_command(command, true).unwrap(), (None, true));
+        assert_eq!(pool.occupied(), 0);
+        assert!(f.peer.receive().is_none());
+        assert!(!f.parent.protocol_fault);
+        assert_eq!(
+            f.parent
+                .command(Command::Status, counter().unwrap())
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            f.parent.command(Command::Quit, counter().unwrap()).unwrap(),
+            Some(2)
         );
     }
     #[test]
