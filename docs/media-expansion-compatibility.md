@@ -51,3 +51,11 @@ editions from a six-edition fixture. Their wave hashes differed from the
 executive outputs, while their opening source and selected PCM hashes matched.
 The English executive transcript was refused under the same terminal limits.
 This verifies the relationship and admission without opening an audio device.
+
+At `0259f94`, a single locked test used the six-edition programme to check the
+reading index, lesson package, companion packages and installation admission.
+Reading carried the exact programme receipt and access manifest hashes. The
+lesson carried the reading-index hash. Each companion kept the exact audio and
+transcript hashes of its installation opening, with separate visual evidence.
+The run checked local packages. Browser execution, interactive replay and
+station qualification still require their own runs.
