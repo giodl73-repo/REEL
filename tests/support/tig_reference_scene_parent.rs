@@ -24,6 +24,98 @@ fn english_repaired_master_assembles_on_its_own_cue_clock() {
     exercise_repaired_master(Project::from_scene_fixture(bootstrap, request));
 }
 
+#[test]
+#[ignore = "requires native FFmpeg and a temporary bilingual scene project"]
+fn one_shared_cel_repairs_both_language_renders_with_exact_audio() {
+    let (bootstrap, request) = crate::language_scope::bilingual();
+    let mut p = Project::from_scene_fixture(bootstrap, request);
+    let scene_path = "records/scene-scene-b.tig";
+    let mut scene_record = read(p.repo.path().join(scene_path));
+    let scene_pin: Object = serde_json::from_value(scene_record["selected"].clone()).unwrap();
+    let mut scene = read(object_file(&p.hot(), &scene_pin));
+    scene["languages"]["es"]["events"]
+        .as_array_mut()
+        .unwrap()
+        .truncate(1);
+    scene_record["selected"] = json!(p.publish("hot", &serde_json::to_vec(&scene).unwrap()));
+    write(p.repo.path(), scene_path, &scene_record);
+    p.commit("complete both language controls for the same scene");
+
+    let mut baseline = Vec::new();
+    for language in ["es", "en"] {
+        let mut request: tig_scene::Request =
+            serde_json::from_value(serde_json::to_value(&p.requests[2]).unwrap()).unwrap();
+        request.language = language.into();
+        let controls = p.data.path().join(format!("baseline-{language}"));
+        let mut source = p.source();
+        tig_scene::compile(&mut source, &request, &controls).unwrap();
+        let path = controls.join("delivery/job.json");
+        let job = reel::tig_inputs::read_job(&path).unwrap();
+        assert_eq!(job.pictures.len(), 1);
+        let output = controls.join("render");
+        let inputs = source.prepare(&job).unwrap();
+        reel::scene_delivery::render_with_inputs(&path, &p.programs.with_inputs(&inputs), &output)
+            .unwrap();
+        baseline.push((language, job, controls, output));
+    }
+    assert_ne!(
+        baseline[0].1.audio[0].source.sha256,
+        baseline[1].1.audio[0].source.sha256
+    );
+    assert_eq!(
+        baseline[0].1.pictures[0].source,
+        baseline[1].1.pictures[0].source
+    );
+
+    let new_picture = p.publish("hot", &picture([0, 255, 0]));
+    let file = "records/cel-b.tig";
+    let mut selected = read(p.repo.path().join(file));
+    selected["selected"] = json!(new_picture);
+    write(p.repo.path(), file, &selected);
+    p.commit("select one shared repair");
+    for (language, job, controls, original) in baseline {
+        let candidate = reel::scene_delivery::repair::derive(
+            &job,
+            &reel::scene_delivery::repair::StillReplacement {
+                schema: "reel.scene-still-replacement.v1".into(),
+                attachments: vec![job.pictures[0].attachment_id.clone()],
+                expected: job.pictures[0].source.clone(),
+                replacement: reel::scene_delivery::FileRef {
+                    path: job.pictures[0].source.path.clone(),
+                    sha256: new_picture.sha256.as_str().into(),
+                    bytes: new_picture.bytes,
+                },
+            },
+        )
+        .unwrap();
+        let path = controls.join("delivery/job-repaired.json");
+        fs::write(&path, serde_json::to_vec(&candidate.job).unwrap()).unwrap();
+        let output = controls.join("repaired");
+        let mut source = p.source();
+        let inputs = source.prepare(&candidate.job).unwrap();
+        reel::scene_delivery::render_with_inputs(&path, &p.programs.with_inputs(&inputs), &output)
+            .unwrap();
+        let before = read(original.join("receipt.json"));
+        let after = read(output.join("receipt.json"));
+        for field in ["content_samples", "delivery_frames"] {
+            assert!(!before[field].is_null(), "{language}: {field}");
+            assert_eq!(before[field], after[field], "{language}: {field}");
+        }
+        for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+            assert_eq!(
+                Object::from_bytes(&fs::read(original.join(name)).unwrap()),
+                Object::from_bytes(&fs::read(output.join(name)).unwrap()),
+                "{language}: {name}"
+            );
+        }
+        assert_ne!(
+            Object::from_bytes(&fs::read(original.join("master.mkv")).unwrap()),
+            Object::from_bytes(&fs::read(output.join("master.mkv")).unwrap()),
+            "{language}: repair did not change the master"
+        );
+    }
+}
+
 fn exercise_repaired_master(mut p: Project) {
     let language = p.requests[2].language.clone();
     let mut original = read(p.repo.path().join("records/cel-b.tig"));
