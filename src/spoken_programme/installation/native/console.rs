@@ -1,10 +1,18 @@
 //! Explicit blocking console primitives. Use only on owned I/O threads, never
 //! the audio callback or <=20 ms controller. No endpoint or playback is opened.
 use super::{input::InputSender, parent::LayoutObservation, *};
-use std::{fs::File, os::windows::io::AsRawHandle};
+use std::{
+    fs::File,
+    os::windows::io::{AsHandle, AsRawHandle},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread::JoinHandle,
+};
 use windows::Win32::{
     Foundation::*,
-    System::{Console::*, Performance::QueryPerformanceCounter},
+    System::{Console::*, IO::CancelSynchronousIo, Performance::QueryPerformanceCounter},
 };
 
 fn handle(file: &File) -> HANDLE {
@@ -37,7 +45,8 @@ pub enum ConsoleRead {
 /// Holds explicit attached-console handles and restores process console settings
 /// on actual destruction. Opening/rendering/reading/destruction may block.
 pub struct ConsoleSurface {
-    environment: Environment,
+    environment: Arc<Environment>,
+    reader_started: bool,
     left: i16,
     top: i16,
     expected: Option<Vec<u16>>,
@@ -47,6 +56,48 @@ pub struct ConsoleSurface {
     received_counter: i64,
 }
 impl ConsoleSurface {
+    /// Start the sole cooked reader after the transcript has been drawn.
+    /// The renderer retains its own surface and may update the status row
+    /// while the reader blocks. The caller owns the input queue and must join
+    /// this reader off the controller before releasing console ownership.
+    pub fn start_reader(&mut self, mut input: InputSender) -> Result<ConsoleReader> {
+        ensure!(
+            self.expected.is_some() && !self.reader_started && self.offset == self.length,
+            "installation console reader unavailable"
+        );
+        let mut surface = Self {
+            environment: self.environment.clone(),
+            reader_started: false,
+            left: self.left,
+            top: self.top,
+            expected: None,
+            pending: [0; 64],
+            offset: 0,
+            length: 0,
+            received_counter: 0,
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let requested = stop.clone();
+        let thread = std::thread::Builder::new()
+            .name("reel-console-input".into())
+            .spawn(move || {
+                while !requested.load(Ordering::Acquire) {
+                    let result = surface.read(&mut input);
+                    if requested.load(Ordering::Acquire) {
+                        break;
+                    }
+                    if result? == ConsoleRead::Eof {
+                        return Ok(Some(surface.received_counter()));
+                    }
+                }
+                Ok(None)
+            })?;
+        self.reader_started = true;
+        Ok(ConsoleReader {
+            stop,
+            thread: Some(thread),
+        })
+    }
     /// Original QPC of the last native read, including EOF. Never resample it
     /// when converting an input termination into the owner's Quit request.
     pub fn received_counter(&self) -> i64 {
@@ -97,7 +148,8 @@ impl ConsoleSurface {
             "installation console requires 80 columns and 30 rows"
         );
         Ok(Self {
-            environment,
+            environment: Arc::new(environment),
+            reader_started: false,
             left: info.srWindow.Left,
             top: info.srWindow.Top,
             expected: None,
@@ -242,6 +294,10 @@ impl ConsoleSurface {
     /// Blocking standard cooked read. Every returned chunk is stamped before
     /// parsing; queued lines keep that receipt, including multiple pasted lines.
     pub fn read(&mut self, input: &mut InputSender) -> Result<ConsoleRead> {
+        ensure!(
+            !self.reader_started,
+            "installation console reader already owns input"
+        );
         self.write_cells(self.top + 21, 9, &vec![b' ' as u16; 80 * 9])?;
         unsafe {
             SetConsoleCursorPosition(
@@ -309,6 +365,39 @@ impl ConsoleSurface {
                 length += 1;
             }
         }
+    }
+}
+
+pub struct ConsoleReader {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<Result<Option<i64>>>>,
+}
+impl ConsoleReader {
+    pub fn finished(&self) -> bool {
+        self.thread.as_ref().is_none_or(JoinHandle::is_finished)
+    }
+    /// Cancel synchronous I/O and join the real thread. Repeat cancellation
+    /// because the first request can race entry into the native read.
+    /// Returns the native EOF receipt counter if the reader reached EOF.
+    pub fn shutdown(&mut self) -> Result<Option<i64>> {
+        self.stop.store(true, Ordering::Release);
+        let Some(thread) = self.thread.take() else {
+            return Ok(None);
+        };
+        while !thread.is_finished() {
+            unsafe {
+                let _ = CancelSynchronousIo(HANDLE(thread.as_handle().as_raw_handle()));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("installation console reader panicked"))?
+    }
+}
+impl Drop for ConsoleReader {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
     }
 }
 
@@ -482,6 +571,15 @@ mod tests {
         assert!(surface.received_counter() > 0);
         assert_eq!(pool.occupied(), 0);
         surface.verify_transcript().unwrap();
+        let (input, mut commands) = pool.channel();
+        let mut reader = surface.start_reader(input).unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(!reader.finished());
+        surface
+            .status("Renderer stays responsive during cooked input")
+            .unwrap();
+        assert!(reader.shutdown().unwrap().is_none());
+        assert!(reader.finished() && commands.receive().is_none());
         std::fs::write(
             "console-resize-ready.marker",
             b"complete read and unchanged source cells",
