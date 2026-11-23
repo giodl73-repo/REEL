@@ -45,3 +45,9 @@ the full shared programme needed by the other deliveries.
 Retain the baseline fixture and version history so the changed source and its
 consuming sample intervals can be compared directly. Obtain the station and
 listening evidence for the selected version separately.
+
+At `5116136`, the locked spoken programme test admitted the two dedicated
+editions from a six-edition fixture. Their wave hashes differed from the
+executive outputs, while their opening source and selected PCM hashes matched.
+The English executive transcript was refused under the same terminal limits.
+This verifies the relationship and admission without opening an audio device.
