@@ -438,6 +438,9 @@ pub struct ConsoleRenderer {
     pending: bool,
 }
 impl ConsoleRenderer {
+    pub(super) fn pending(&self) -> bool {
+        self.pending
+    }
     pub fn start(mut surface: ConsoleSurface) -> Result<Self> {
         let (requests, input) = std::sync::mpsc::sync_channel(1);
         let (output, rendered) = std::sync::mpsc::sync_channel(1);
@@ -739,6 +742,28 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
+        let mut foreground = super::super::parent::tests::fixture();
+        foreground
+            .peer
+            .send(0, &display().report.bytes().unwrap())
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            foreground.parent.tick_with_renderer(&mut renderer).unwrap();
+            if let Some(packet) = foreground.peer.receive() {
+                assert!(matches!(
+                    super::super::protocol::Input::parse(&packet).unwrap(),
+                    super::super::protocol::Input::TextShown {
+                        columns: 80,
+                        rows: 30,
+                        ..
+                    }
+                ));
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         std::fs::write(
             "console-resize-ready.marker",
             b"complete read and unchanged source cells",
@@ -749,17 +774,41 @@ mod tests {
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(2));
         }
-        renderer.submit(display()).unwrap();
+        let mut at = 0;
+        unsafe {
+            QueryPerformanceCounter(&mut at).unwrap();
+        }
+        let id = foreground
+            .parent
+            .command(Command::Status, at)
+            .unwrap()
+            .unwrap();
+        super::super::parent::tests::receive(&mut foreground.peer);
+        unsafe {
+            QueryPerformanceCounter(&mut at).unwrap();
+        }
+        let report = Output::PreparationAck {
+            id,
+            phase: Preparation::AwaitingText,
+            refusal: None,
+            observed_counter: at,
+        };
+        foreground.peer.send(0, &report.bytes().unwrap()).unwrap();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
-            match renderer.completion() {
-                Err(_) => break,
-                Ok(None) => {}
-                Ok(Some(_)) => panic!("renderer acknowledged an unsupported layout"),
+            if let Err(error) = foreground.parent.tick_with_renderer(&mut renderer) {
+                assert!(
+                    error.to_string().contains("console layout changed"),
+                    "{error}"
+                );
+                break;
             }
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
+        assert!(foreground.parent.failed());
+        assert_eq!(foreground.parent.outstanding(), 1);
+        assert!(foreground.peer.receive().is_none());
         renderer.shutdown().unwrap();
         let (mut input_mode, mut output_mode) = (CONSOLE_MODE::default(), CONSOLE_MODE::default());
         unsafe {

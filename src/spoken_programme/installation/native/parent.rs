@@ -2,6 +2,7 @@
 //! remain separate: display confirmation is an integration boundary, not proof
 //! that any particular console has rendered these observations.
 use super::{
+    console::ConsoleRenderer,
     input::{CommandLease, CommandPool, QueuedCommand},
     output::OutputClock,
     pipe::Channel,
@@ -675,6 +676,31 @@ impl ParentSession {
         }
         result
     }
+    /// Drive protocol and console output without blocking the foreground loop.
+    /// Local Fault, Status and Quit events remain available to the owner.
+    pub fn tick_with_renderer(&mut self, renderer: &mut ConsoleRenderer) -> Result<()> {
+        self.tick()?;
+        if self.protocol_fault {
+            return Ok(());
+        }
+        let result = self.advance_renderer(renderer);
+        if result.is_err() {
+            self.fault();
+        }
+        result
+    }
+    fn advance_renderer(&mut self, renderer: &mut ConsoleRenderer) -> Result<()> {
+        if let Some((ticket, layout)) = renderer.completion()? {
+            self.displayed(ticket, layout)?;
+        }
+        if !renderer.pending()
+            && matches!(self.events.front(), Some(ParentEvent::Display(_)))
+            && let Some(ParentEvent::Display(item)) = self.event()
+        {
+            renderer.submit(item)?;
+        }
+        Ok(())
+    }
     /// Blocking IPC destruction only, after the enclosing owner has arranged
     /// final delivery/reaping or explicit cancellation. Not a process receipt.
     pub fn shutdown_channel(&mut self) -> Result<()> {
@@ -759,16 +785,16 @@ impl Drop for ParentSession {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::super::{protocol::WorkerGate, session::fixture_request};
     use super::*;
     use crate::scene_delivery::FileRef;
-    struct Fixture {
-        parent: ParentSession,
-        peer: Channel,
+    pub(crate) struct Fixture {
+        pub(crate) parent: ParentSession,
+        pub(crate) peer: Channel,
         _root: tempfile::TempDir,
     }
-    fn fixture() -> Fixture {
+    pub(crate) fn fixture() -> Fixture {
         let root = tempfile::tempdir().unwrap();
         let mut request = fixture_request();
         let path = std::env::current_exe().unwrap();
@@ -818,7 +844,7 @@ mod tests {
             _root: root,
         }
     }
-    fn receive(peer: &mut Channel) -> Packet {
+    pub(crate) fn receive(peer: &mut Channel) -> Packet {
         let until = Instant::now() + Duration::from_secs(2);
         loop {
             if let Some(packet) = peer.receive() {

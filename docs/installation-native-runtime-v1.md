@@ -483,11 +483,13 @@ barriers and drains output independently before closing it. This follows the
 [Windows pseudoconsole session API](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session).
 No second process launcher, visible console window or media device is started.
 
-These synchronous primitives **must not be called on the ≤20 ms controller or
-audio callback**. The production reader/renderer actors, actual rendering
-completion tickets, Ctrl+C handler, blocked-read/write cancellation, explicit
-restoration-failure reporting and shared cleanup/lifetime deadlines remain
-required before adding a Run command or qualifying M12b.2.
+The reader and renderer own their blocking operations on separate threads.
+`ParentSession::tick_with_renderer` polls the renderer and acknowledges each
+ticket only after a successful console operation. The headless fixture verifies
+that this sends `TextShown` over the channel and that a resize error leaves the
+command credit outstanding. The complete foreground owner must still coordinate
+input and shutdown, including Ctrl+C, blocked output cancellation, restoration
+errors and shared cleanup deadlines.
 
 ### Existing runner and output ports
 
