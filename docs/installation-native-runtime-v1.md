@@ -681,7 +681,14 @@ acknowledgements and faults remain immediate. With the corrected player pinned,
 three consecutive uninterrupted runs completed both passes and quit cleanly.
 This checkpoint measured no captured audio or physical timing.
 A separate control-sequence rerun on the corrected player displayed Fault
-after Resume during pass one. The cause remains open.
+after Resume during pass one. A later diagnostic run reached the worker
+acknowledgement watchdog. The foreground and worker now wake on incoming
+pipe packets, and the foreground also wakes on cooked input and renderer
+completion. The original 100 ms acknowledgement limit is unchanged. The
+Windows installation suite passed 110 tests, and three consecutive Dell
+control runs passed Start, Pause, Resume, loop completion, Restart, Stop
+and Quit with the updated player. These reruns did not measure the individual
+command timings independently.
 
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
