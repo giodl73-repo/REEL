@@ -90,3 +90,11 @@ edition. `build` identifies a new edition, `rebuild` a changed recipe and
 `removed` an edition absent from the current declaration. `reuse` is eligible
 when a prior checked, retained result matches the current recipe and delivery
 settings. The report opens alignment metadata and writes no media or selections.
+
+Pass each affected edition to `spoken-edition-compile` with
+`--select-edition EDITION_ID`. Production and independent checking replay that
+scope from the compiled plan. They read audio only for the included editions.
+Keep the full declaration and its alignment metadata available so the compiler
+can validate reuse scope, authorship and dependencies. Supply any processing
+policy for the included editions. The checker can write the transcript and
+chapter evidence with `--write-access`.
