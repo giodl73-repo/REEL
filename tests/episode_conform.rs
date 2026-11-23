@@ -932,14 +932,15 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
 
     // Bounded normalization batches reuse issued intermediates and still feed
     // the ordinary preparation/finish checks; incomplete custody is not a movie.
-    let batched = root.join("batched");
+    let batched = root.join("job-batched");
     fs::create_dir(&batched).unwrap();
-    let closed_job: serde_json::Value =
+    let mut closed_job: serde_json::Value =
         serde_json::from_slice(&fs::read(phased.join("job.json")).unwrap()).unwrap();
     for name in closed_job["inputs"].as_object().unwrap().keys() {
         fs::copy(phased.join(name), batched.join(name)).unwrap();
     }
-    fs::copy(phased.join("job.json"), batched.join("job.json")).unwrap();
+    closed_job["steps"] = serde_json::json!([{"tool":"conform"},{"tool":"conform"}]);
+    write(&batched.join("job.json"), &closed_job);
     let batched_prepared = batched.join("prepared");
     let run_batch = || {
         Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
@@ -972,6 +973,39 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
         "{}",
         String::from_utf8_lossy(&first_batch.stderr)
     );
+    let describe_resume = |step: &str| {
+        Command::new(env!("CARGO_BIN_EXE_reel-episode-conform"))
+            .arg("describe-resume")
+            .arg(&batched_prepared)
+            .arg("--asset-root")
+            .arg(&batched)
+            .arg("--start-step")
+            .arg(step)
+            .output()
+            .unwrap()
+    };
+    let descriptor = describe_resume("1");
+    assert!(
+        descriptor.status.success(),
+        "{}",
+        String::from_utf8_lossy(&descriptor.stderr)
+    );
+    let descriptor: serde_json::Value = serde_json::from_slice(&descriptor.stdout).unwrap();
+    assert_eq!(descriptor["schema"], "reel.native-job-resume.v1");
+    assert_eq!(descriptor["source_job_id"], "job-batched");
+    assert_eq!(descriptor["start_step"], 1);
+    assert_eq!(
+        descriptor["job_sha256"],
+        reference(&batched, "job.json")["sha256"]
+    );
+    let files = descriptor["files"].as_object().unwrap();
+    assert_eq!(files.len(), 3);
+    for (name, pin) in files {
+        assert!(name.starts_with("prepared/"));
+        assert_eq!(pin["sha256"], reference(&batched, name)["sha256"]);
+        assert_eq!(pin["bytes"], reference(&batched, name)["bytes"]);
+    }
+    assert!(!describe_resume("2").status.success());
     let progress_file = batched_prepared.join("normalization-progress.json");
     let progress_bytes = fs::read(&progress_file).unwrap();
     let mut progress: serde_json::Value = serde_json::from_slice(&progress_bytes).unwrap();
@@ -988,6 +1022,7 @@ fn lossless_episode_conform_handles_presentation_and_explicit_audio_normalizatio
     let last = corrupted.len() - 1;
     corrupted[last] ^= 1;
     fs::write(&intermediate, corrupted).unwrap();
+    assert!(!describe_resume("1").status.success());
     assert!(!run_batch().status.success());
     fs::write(&intermediate, &normalized_bytes).unwrap();
     let original_mtime = fs::metadata(&intermediate).unwrap().modified().unwrap();
