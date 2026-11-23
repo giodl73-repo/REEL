@@ -34,6 +34,16 @@ pub struct Track {
     /// Existing caption-family style, for example 70. No other VTT settings synthesized.
     #[serde(default)]
     pub vtt_line_percent: Option<u8>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reading_holds: Vec<ReadingHold>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadingHold {
+    pub cue_index: usize,
+    pub expected_end_ms: u64,
+    pub end_ms: u64,
 }
 
 fn read(root: &Path, reference: &FileRef) -> Result<Vec<u8>> {
@@ -311,13 +321,27 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
         }
         read(root, &track.selection_evidence)?;
         let source = read(root, &track.source_caption)?;
-        let entries = parse_srt(std::str::from_utf8(&source)?)?;
+        let mut entries = parse_srt(std::str::from_utf8(&source)?)?;
         if entries.first().is_some_and(|e| e.index != 1)
             || sha(&serde_json::to_vec(
                 &entries.iter().map(|e| &e.text).collect::<Vec<_>>(),
             )?) != track.source_words_sha256
         {
             bail!("selected source caption words/index mismatch");
+        }
+        let mut previous_index = 0;
+        for hold in &track.reading_holds {
+            if hold.cue_index <= previous_index || hold.end_ms <= hold.expected_end_ms {
+                bail!("invalid caption reading hold order or duration");
+            }
+            let entry = entries
+                .get_mut(hold.cue_index - 1)
+                .filter(|entry| {
+                    entry.index == hold.cue_index && entry.end_ms == hold.expected_end_ms
+                })
+                .context("caption reading hold differs from selected source cue")?;
+            entry.end_ms = hold.end_ms;
+            previous_index = hold.cue_index;
         }
         if composed
             && frame_cursor == 0
@@ -364,7 +388,11 @@ pub fn assemble(manifest_path: &Path, root: &Path, output: &Path) -> Result<()> 
                 text: entry.text,
             });
         }
-        lineage.push(serde_json::json!({"segment_id":segment.id,"source_caption":track.source_caption,"selection_evidence":track.selection_evidence,"source_words_sha256":track.source_words_sha256,"start_sample":native.start_sample,"content_samples":content_samples,"tail_hold_samples":native.tail_hold_samples,"first_cue":first_cue,"cue_count":cues.len()+1-first_cue}));
+        let mut evidence = serde_json::json!({"segment_id":segment.id,"source_caption":track.source_caption,"selection_evidence":track.selection_evidence,"source_words_sha256":track.source_words_sha256,"start_sample":native.start_sample,"content_samples":content_samples,"tail_hold_samples":native.tail_hold_samples,"first_cue":first_cue,"cue_count":cues.len()+1-first_cue});
+        if !track.reading_holds.is_empty() {
+            evidence["reading_holds"] = serde_json::to_value(&track.reading_holds)?;
+        }
+        lineage.push(evidence);
         frame_cursor = end_frame;
         sample_cursor = add(sample_cursor, native.samples)?;
     }

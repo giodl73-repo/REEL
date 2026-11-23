@@ -99,6 +99,41 @@ fn bilingual_27_segments_use_native_sample_clock_and_preserve_words_and_style() 
 }
 
 #[test]
+fn reading_holds_use_the_original_cue_end_and_stay_inside_source_content() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    let (mut manifest, _, _) = fixture(root, "es", 30);
+    let hold = json!({"cue_index":1,"expected_end_ms":1000,"end_ms":1035});
+    manifest["tracks"][0]["reading_holds"] = json!([hold.clone()]);
+    write(root, "captions.json", &manifest);
+    let output = root.join("reading-hold");
+    assemble(&root.join("captions.json"), root, &output).unwrap();
+    let rendered = fs::read_to_string(output.join("captions.srt")).unwrap();
+    let cues = reel::series::parse_srt(&rendered).unwrap();
+    assert_eq!((cues[0].start_ms, cues[0].end_ms), (0, 1035));
+    assert_eq!(cues[0].text, "¡Canción del niño!\n  Texto exacto.");
+    let evidence: Value =
+        serde_json::from_slice(&fs::read(output.join("caption-timing.json")).unwrap()).unwrap();
+    assert_eq!(
+        evidence["tracks"][0]["reading_holds"],
+        json!([hold.clone()])
+    );
+
+    for refused in [
+        json!([{"cue_index":1,"expected_end_ms":999,"end_ms":1035}]),
+        json!([{"cue_index":1,"expected_end_ms":1000,"end_ms":1041}]),
+        json!([hold.clone(), hold.clone()]),
+        json!([{"cue_index":2,"expected_end_ms":1000,"end_ms":1035}]),
+    ] {
+        manifest["tracks"][0]["reading_holds"] = refused;
+        write(root, "captions.json", &manifest);
+        let target = root.join("refused");
+        assert!(assemble(&root.join("captions.json"), root, &target).is_err());
+        assert!(!target.exists());
+    }
+}
+
+#[test]
 fn bilingual_27_segments_accept_typed_ordered_part_receipt_without_v1_master_fields() {
     for lang in ["es", "en"] {
         let d = tempfile::tempdir().unwrap();
