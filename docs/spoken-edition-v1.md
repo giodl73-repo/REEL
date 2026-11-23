@@ -130,3 +130,16 @@ reused editions have different access manifests.
 On Windows the existing private viewer plays the WAV and seeks to chapter
 boundaries. It verifies preview bytes when requested. The projection checks
 manifest and recipe pins and records no approval or native retained ownership.
+
+For jobs run against the local asset registry, generate one bundle binding
+from the successful runner result and the exact expected edition recipes:
+
+```sh
+reel-workflow-ui bind-spoken-result PROJECT RESULT RESULT_SHA256 EXPECTED EXPECTED_SHA256
+```
+
+`EXPECTED` maps edition IDs to their compiled and execution recipe hashes.
+The adapter reopens registered active objects from the project's configured
+storage and checks the linked audio and transcripts against the access manifest.
+Use the emitted binding in `bundles`. Native Git-asset retained-owner
+acknowledgements require their own adapter.

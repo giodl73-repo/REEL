@@ -38,6 +38,26 @@ fn run(args: &[String]) -> Result<()> {
         )?);
         return Ok(());
     }
+    if let [
+        command,
+        project,
+        result,
+        result_pin,
+        expectation,
+        expectation_pin,
+    ] = args
+        && command == "bind-spoken-result"
+    {
+        let binding = reel_workflow_ui::spoken::bind_retained(
+            Path::new(project),
+            Path::new(result),
+            result_pin,
+            Path::new(expectation),
+            expectation_pin,
+        )?;
+        println!("{binding}");
+        return Ok(());
+    }
     #[cfg(windows)]
     if let [command, request, pin, packet, profile, output] = args
         && command == "project-native-film"
