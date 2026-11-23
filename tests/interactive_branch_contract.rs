@@ -212,6 +212,61 @@ fn graph_refuses_a_choice_without_its_spanish_label() {
 }
 
 #[test]
+fn replay_processes_confirmed_completion_before_same_tick_input() {
+    #[derive(Clone, Copy)]
+    enum Event {
+        MediaEnded,
+        Choice(&'static str),
+    }
+
+    let graph = fixture();
+    let replay = |mut events: Vec<(u64, usize, Event)>| {
+        // The fixture gives completion priority within a tick. The addressed
+        // visit travels with the input, even when completion changes the node.
+        events.sort_by_key(|&(time, _, event)| (time, matches!(event, Event::Choice(_))));
+        let mut visits = vec![graph.entry.as_str()];
+        let mut stale = Vec::new();
+        for (_, addressed_visit, event) in events {
+            if addressed_visit != visits.len() {
+                stale.push((addressed_visit, visits.len()));
+                continue;
+            }
+            let node = graph
+                .nodes
+                .iter()
+                .find(|node| Some(node.id()) == visits.last().copied())
+                .unwrap();
+            let target = match (node, event) {
+                (Node::Playback { next, .. }, Event::MediaEnded) => Some(next),
+                (Node::Choice { choices, .. }, Event::Choice(id)) => choices
+                    .iter()
+                    .find(|choice| choice.id == id)
+                    .map(|choice| &choice.target),
+                _ => None,
+            };
+            if let Some(target) = target {
+                visits.push(target);
+            }
+        }
+        (visits, stale)
+    };
+
+    let events = [
+        (900, 1, Event::Choice("example")),
+        (900, 1, Event::MediaEnded),
+        (901, 1, Event::MediaEnded),
+        (902, 2, Event::Choice("example")),
+        (1_700, 3, Event::MediaEnded),
+    ];
+    let expected = (
+        vec!["opening", "choose", "example", "end"],
+        vec![(1, 2), (1, 2)],
+    );
+    assert_eq!(replay(events.to_vec()), expected);
+    assert_eq!(replay(events.into_iter().rev().collect()), expected);
+}
+
+#[test]
 fn graph_refuses_missing_target_and_unreachable_node() {
     let mut graph = fixture();
     graph.nodes.push(Node::End {
