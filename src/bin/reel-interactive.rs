@@ -104,7 +104,7 @@ mod windows_demo {
 
         fn submit(&mut self, pcm: &[u8]) -> Result<()> {
             ensure!(!self.failed.load(Ordering::Acquire), "audio output failed");
-            ensure!(pcm.len().is_multiple_of(6), "unaligned stereo PCM");
+            ensure!(pcm.len() % 6 == 0, "unaligned stereo PCM");
             ensure!(self.queue.slots() >= pcm.len() / 6, "audio buffer is full");
             for frame in pcm.chunks_exact(6) {
                 let convert = |sample: &[u8]| {
