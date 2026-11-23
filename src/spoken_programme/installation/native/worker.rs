@@ -1048,6 +1048,7 @@ mod tests {
                     if fault && !status {
                         input.line("status", counter().unwrap()).unwrap();
                         status = true;
+                        continue;
                     }
                     if status_ack
                         && foreground.outstanding() == 0
@@ -1057,6 +1058,7 @@ mod tests {
                         quit_receipt = counter().unwrap();
                         input.line("quit", quit_receipt).unwrap();
                         quit = true;
+                        continue;
                     }
                     if mode == 3 && foreground.quit_requested() {
                         let error = job.join().unwrap().unwrap_err();
@@ -1068,7 +1070,7 @@ mod tests {
                         return;
                     }
                     assert!(Instant::now() < deadline);
-                    std::thread::sleep(Duration::from_millis(2));
+                    std::thread::park_timeout(Duration::from_millis(2));
                 }
                 assert!(
                     status_ack

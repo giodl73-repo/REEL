@@ -730,6 +730,20 @@ mod tests {
         (Controller::new(core, output, clock), harness, clock)
     }
     #[test]
+    fn ready_status_keeps_its_numbered_acknowledgement_as_the_latest_report() {
+        let (mut controller, _, clock) = fixture();
+        controller
+            .command(1, Command::Status, 0, clock.now_us().unwrap())
+            .unwrap();
+        controller.tick().unwrap();
+        let Some(Event::Ack { id: 1, record }) = controller.event() else {
+            panic!("expected numbered Status acknowledgement");
+        };
+        assert_eq!(record.snapshot, controller.observed());
+        assert_eq!(record.snapshot.state, State::Ready);
+        assert!(controller.event().is_none(), "duplicate Ready report");
+    }
+    #[test]
     fn expiry_reclaims_a_paused_callback_and_reports_the_real_stopped_core() {
         let (origin, frequency) = OutputClock::start().unwrap().origin();
         let clock = OutputClock::from_origin(origin - frequency * 119, frequency).unwrap();
