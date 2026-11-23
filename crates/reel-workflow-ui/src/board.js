@@ -14,6 +14,7 @@
       ?? visible.at(-1);
   }
   const activeCue = () => state.data?.cues.find(c=>c.id===state.cue && c.language===state.language);
+  const unitName = () => ({comic:"page", spoken:"chapter"})[state.data.format] ?? "cel";
   const designation = v => v.designation==="candidate"?"Unselected candidate":v.designation==="selected"?"Selected reference":"Historical reference";
   const exactSubject = (a,b) => !!a && !!b && a.logical_id===b.logical_id && a.sha256===b.sha256 && a.bytes===b.bytes && a.media_type===b.media_type;
   function image(version, cls) {
@@ -37,11 +38,13 @@
     for(const scene of state.data.scenes){if(state.scene && state.scene!==scene.id)continue;
       const units=state.data.units.filter(u=>u.scene_id===scene.id && (!u.spans.length || u.spans.some(s=>s.language===state.language)));
       if(!units.length)continue;
-      const heading=node("div","scene-heading");heading.append(node("h2","",scene.title),node("small","",`${units.length} ${state.data.format==="comic"?"pages":"cels"}`));container.append(heading);
+      const heading=node("div","scene-heading");heading.append(node("h2","",scene.title),node("small","",`${units.length} ${unitName()}s`));container.append(heading);
       const grid=node("div","grid");
       for(const unit of units){const version=chosen(unit);const card=node("article",`unit-card${state.unit===unit.id?" focused":""}`);card.dataset.unit=unit.id;
-        const preview=image(version);preview.setAttribute("role","button");preview.tabIndex=0;preview.setAttribute("aria-label",`Inspect ${unit.display_id}: ${unit.title}`);preview.addEventListener("click",()=>selectUnit(unit));preview.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();selectUnit(unit);}});
-        preview.append(node("span",`preview-badge ${version?.designation||"waiting"}`,version?designation(version):"Planned"));card.append(preview);
+        if(state.data.format!=="spoken"){
+          const preview=image(version);preview.setAttribute("role","button");preview.tabIndex=0;preview.setAttribute("aria-label",`Inspect ${unit.display_id}: ${unit.title}`);preview.addEventListener("click",()=>selectUnit(unit));preview.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();selectUnit(unit);}});
+          preview.append(node("span",`preview-badge ${version?.designation||"waiting"}`,version?designation(version):"Planned"));card.append(preview);
+        }
         const body=node("div","card-body"),title=node("button","card-title");title.append(node("strong","",unit.display_id),node("span","",unit.title));title.addEventListener("click",()=>selectUnit(unit));body.append(title);
         const meta=node("div","card-meta");const task=state.data.tasks[unit.task];meta.append(node("span","",unit.story_id),node("span","",task?.label||`${versions(unit).length} version${versions(unit).length===1?"":"s"}`));body.append(meta);card.append(body,versionButtons(unit));grid.append(card);
       }container.append(grid);
@@ -86,10 +89,10 @@
     return control;
   }
   function renderInspector() {
-    const name=state.data.format==="comic"?"page":"cel";
+    const name=unitName();
     const unit=state.data.units.find(u=>u.id===state.unit),root=$("inspector");root.replaceChildren();if(!unit){root.append(node("p","muted",`Choose a ${name} to inspect its versions and cue.`));return;}
     const version=chosen(unit);root.append(node("h2","",unit.display_id),node("p","muted",unit.title));
-    const preview=image(version,"preview-button detail-image");root.append(preview);
+    if(state.data.format!=="spoken"){root.append(image(version,"preview-button detail-image"));}
     if(version)root.append(node("span",`pill ${version.designation}`,designation(version)));
     root.append(versionButtons(unit));
     const span=unit.spans.find(s=>s.language===state.language),cue=state.data.cues.find(c=>c.id===span?.cue_id&&c.language===state.language);
@@ -124,7 +127,7 @@
     const same=state.cue===id && audio.getAttribute("src")===cue.preview;state.cue=id;
     if(!same){pendingSeek=null;audio.pause();if(cue.preview)audio.src=cue.preview;else audio.removeAttribute("src");}
     $("cue-title").textContent=cue.title;$("cue-clock").textContent=`${cue.language.toUpperCase()} · ${cue.sample_rate.toLocaleString()} Hz · ${cue.samples.toLocaleString()} samples`;
-    $("audio-status").textContent=cue.preview?"Selected recording · press Play to listen. Source text and clocks remain unchanged.":"No preview declared for this selected recording.";
+    $("audio-status").textContent=state.data.format==="spoken"?"Edition audio · press Play to listen.":cue.preview?"Selected recording · press Play to listen. Source text and clocks remain unchanged.":"No preview declared for this selected recording.";
     const markers=$("markers");markers.replaceChildren();for(const marker of cue.markers){const button=node("button","marker",marker.word);button.dataset.sample=marker.sample;button.title=marker.semantic_id;button.append(node("time","",clock(marker.sample/cue.sample_rate)));button.addEventListener("click",()=>seekCue(marker.sample));markers.append(button);}highlight();
   }
   function highlight(){const cue=activeCue();if(!cue)return;const sample=Math.floor((audio.currentTime||0)*cue.sample_rate);$("playhead").textContent=clock(audio.currentTime||0);
@@ -169,7 +172,7 @@
   }
   function renderTasks(){const root=$("tasks");root.replaceChildren();for(const [id,task] of Object.entries(state.data.tasks)){const row=node("div","task");row.append(node("span","task-icon",task.state==="retained-recorded"?"◇":"◷"));const text=node("div");text.append(node("strong","",id),node("small","",task.attempt_id||task.code||"Waiting for a journal observation"));row.append(text,node("span",`pill ${task.state==="waiting"?"waiting":""}`,task.label));root.append(row);}if(!root.children.length)root.append(node("p","muted","No workflow journals are attached to this view."));}
   function render(){const data=state.data;document.title=`${data.title} · REEL`;$("title").textContent=data.title;$("work-id").textContent=data.work_id;$("workspace").replaceChildren(document.createTextNode(data.project),node("small","",data.work_id));$("synthetic").hidden=!data.synthetic;$("source").textContent=`Source ${data.source_commit.slice(0,10)}`;
-    $("unit-label").textContent=data.format==="comic"?"PAGES":"CELS";$("story-tab").textContent=data.format==="comic"?"Pages":"Storyboard";$("unit-count").textContent=data.units.length;$("cue-count").textContent=data.cues.filter(c=>c.language===state.language).length;$("candidate-count").textContent=data.units.flatMap(versions).filter(v=>v.designation==="candidate").length;$("waiting-count").textContent=Object.values(data.tasks).filter(t=>["waiting","publishing","updating"].includes(t.state)).length;$("workflow-note").textContent="Tasks awaiting a completed observation";
+    $("unit-label").textContent=unitName().toUpperCase()+"S";$("story-tab").textContent=data.format==="spoken"?"Chapters":data.format==="comic"?"Pages":"Storyboard";$("unit-count").textContent=data.units.length;$("cue-count").textContent=data.cues.filter(c=>c.language===state.language).length;$("candidate-count").textContent=data.units.flatMap(versions).filter(v=>v.designation==="candidate").length;$("waiting-count").textContent=Object.values(data.tasks).filter(t=>["waiting","publishing","updating"].includes(t.state)).length;$("workflow-note").textContent="Tasks awaiting a completed observation";
     const languages=$("language");languages.replaceChildren();for(const language of data.languages){const option=node("option","",language.label);option.value=language.id;option.selected=language.id===state.language;languages.append(option);}
     const scenes=$("scenes");scenes.replaceChildren();for(const scene of [{id:null,title:"All scenes"},...data.scenes]){const button=node("button",state.scene===scene.id?"active":"",scene.title);button.addEventListener("click",()=>{state.scene=scene.id;render();});scenes.append(button);}
     renderGrid();renderInspector();renderCues();renderTasks();setCue(state.cue||data.cues.find(c=>c.language===state.language)?.id);

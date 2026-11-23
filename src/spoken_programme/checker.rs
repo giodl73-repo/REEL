@@ -195,6 +195,9 @@ pub fn check(
         request.expected_runtime,
         profile,
     )?;
+    let raw = serde_json::from_slice(request.plan_bytes)
+        .map_err(|_| anyhow::anyhow!("spoken check plan JSON invalid"))?;
+    let plan = compiler::replay_selection(plan, &raw)?;
     require(
         serde_json::to_vec_pretty(&plan)? == request.plan_bytes,
         "spoken check plan differs from controls/runtime",

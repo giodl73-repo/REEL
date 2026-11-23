@@ -383,6 +383,7 @@ pub fn produce_controlled(
     check()?;
     let runtime = current_runtime()?;
     let plan = compiler::compile_with_inputs(document, inputs, &runtime, profile)?;
+    let plan = compiler::replay_selection(plan, &raw)?;
     require(
         serde_json::to_vec_pretty(&plan)? == plan_bytes,
         "spoken plan differs from current controls/runtime",

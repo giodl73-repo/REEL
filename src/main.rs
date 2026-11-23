@@ -715,9 +715,14 @@ fn run_cli() -> Result<()> {
             edition,
             output,
             profile,
+            select_edition,
         } => {
-            let report =
-                reel::spoken_programme::compiler::compile_file(&edition, &output, profile)?;
+            let report = reel::spoken_programme::compiler::compile_file_for_editions(
+                &edition,
+                &output,
+                profile,
+                &select_edition,
+            )?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         Command::SpokenEditionValidate { edition } => {
@@ -726,6 +731,55 @@ fn run_cli() -> Result<()> {
                 "{}",
                 serde_json::to_string_pretty(&reel::spoken_programme::validate(&document)?)?
             );
+        }
+        Command::SpokenEditionImpact {
+            previous,
+            current,
+            profile,
+        } => {
+            let report =
+                reel::spoken_programme::compiler::impact_file(&previous, &current, profile)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        #[cfg(feature = "tig-publication")]
+        Command::SpokenEditionDescribeJob {
+            request,
+            asset_root,
+        } => {
+            let job = reel::spoken_programme::workflow::describe_job(&request, &asset_root)?;
+            println!("{}", serde_json::to_string_pretty(&job)?);
+        }
+        #[cfg(feature = "tig-publication")]
+        Command::SpokenEditionPlanRebuild {
+            request,
+            previous_root,
+            asset_root,
+        } => {
+            let plan = reel::spoken_programme::workflow::plan_rebuild(
+                &request,
+                &previous_root,
+                &asset_root,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+        }
+        #[cfg(feature = "tig-publication")]
+        Command::SpokenEditionDispatchRebuild {
+            request,
+            previous_root,
+            asset_root,
+            project,
+            job_sha256,
+            dispatch,
+        } => {
+            let result = reel::spoken_programme::workflow::dispatch_rebuild(
+                &project,
+                &request,
+                &previous_root,
+                &asset_root,
+                &job_sha256,
+                &dispatch,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Command::CueRelativeCompile {
             contract,
@@ -3027,8 +3081,49 @@ enum Command {
         edition: PathBuf,
         #[arg(long)]
         output: PathBuf,
+        /// Limit production and independent checking to these edition IDs.
+        #[arg(long = "select-edition")]
+        select_edition: Vec<String>,
         #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
         profile: reel::spoken_programme::compiler::CompilationProfile,
+    },
+    /// Identify spoken editions affected by a changed declaration or selected take.
+    SpokenEditionImpact {
+        previous: PathBuf,
+        current: PathBuf,
+        #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
+        profile: reel::spoken_programme::compiler::CompilationProfile,
+    },
+    /// Describe a pinned compile, produce and check job for affected spoken editions.
+    #[cfg(feature = "tig-publication")]
+    SpokenEditionDescribeJob {
+        request: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+    },
+    /// Plan exactly the editions changed by a replacement take for managed admission.
+    #[cfg(feature = "tig-publication")]
+    SpokenEditionPlanRebuild {
+        request: PathBuf,
+        #[arg(long)]
+        previous_root: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+    },
+    /// Dispatch the approved rebuild recipe through an existing project registry.
+    #[cfg(feature = "tig-publication")]
+    SpokenEditionDispatchRebuild {
+        request: PathBuf,
+        #[arg(long)]
+        previous_root: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+        #[arg(long)]
+        project: PathBuf,
+        #[arg(long)]
+        job_sha256: String,
+        #[arg(long)]
+        dispatch: PathBuf,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {
