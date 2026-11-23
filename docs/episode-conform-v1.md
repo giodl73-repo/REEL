@@ -182,7 +182,21 @@ still undergoes ordered picture/audio comparison, timestamp verification and
 full compact-output decoding. Scene receipt checks and creative approval remain
 independent.
 
-### Explicit delivery geometry
+#For an interrupted contained job with preserved scratch, describe its last
+verified batch using the same conform executable and toolchain:
+
+```text
+reel-episode-conform describe-resume PREPARED --asset-root JOB_DIRECTORY --start-step NEXT_STEP
+```
+
+The command checks the original recipe, input scope, clocks, and generated
+media. It emits a bounded resume descriptor carrying the progress record and
+its exact generated file pins. The workspace directory name supplies the job
+ID. Enroll the descriptor and pins through the job owner's checkpoint
+admission before resuming. This inspection reads and hashes files without
+registering them or retiring scratch.
+
+## Explicit delivery geometry
 
 By default, every selected source must have the same picture dimensions and
 frame rate. To join different resolutions, declare an output size explicitly:

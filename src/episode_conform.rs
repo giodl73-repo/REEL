@@ -2205,6 +2205,15 @@ pub fn prepare_batch(
     Ok(())
 }
 
+/// Describe the verified scratch files needed to resume a batched conform job.
+pub fn normalization_resume_descriptor(
+    prepared: &Path,
+    asset_root: &Path,
+    start_step: usize,
+) -> Result<serde_json::Value> {
+    checkpoint::resume_descriptor(prepared, asset_root, start_step)
+}
+
 struct BatchPreparation {
     max_segments: usize,
     resume: Option<checkpoint::NormalizationState>,
