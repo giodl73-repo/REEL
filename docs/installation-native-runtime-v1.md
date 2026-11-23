@@ -614,6 +614,13 @@ enrolled endpoint. The export runs the original checker and prepares the
 transport without opening a device. With the environment variable unset, the
 test uses a temporary directory and removes it when finished.
 
+On the development Windows 11 host, the contained `probe` command accepted
+two explicitly named stereo 48 kHz float32 outputs and refused an eight-channel
+mix without writing an observation. The probe retains the full format list in
+the configuration fingerprint and bounds it by the pinned CPAL WASAPI
+enumerator's maximum. These are metadata observations. The effective callback
+period, submitted samples and capture timing still require a station run.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 
