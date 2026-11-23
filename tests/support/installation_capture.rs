@@ -35,7 +35,7 @@ fn marker_at(frames: &[[f32; 2]]) -> Option<Marker> {
     matches.then_some(kind)
 }
 
-fn measure(frames: &[[f32; 2]]) -> Result<(usize, [usize; 2])> {
+fn marker_offsets(frames: &[[f32; 2]]) -> Result<[usize; 4]> {
     ensure!(
         frames.iter().flatten().all(|sample| sample.is_finite()),
         "capture contains a nonfinite sample"
@@ -55,10 +55,102 @@ fn measure(frames: &[[f32; 2]]) -> Result<(usize, [usize; 2])> {
     else {
         anyhow::bail!("expected exactly two ordered fixture marker pairs");
     };
+    Ok([*head_a, *tail_a, *head_b, *tail_b])
+}
+
+fn measure([head_a, tail_a, head_b, tail_b]: [usize; 4]) -> Result<(usize, [usize; 2])> {
     let gap = (head_b - tail_a)
         .checked_sub(SOURCE_FRAMES - LAST_MARKER + FIRST_MARKER)
         .ok_or_else(|| anyhow::anyhow!("capture has no measurable loop interval"))?;
     let spans = [tail_a - head_a, tail_b - head_b];
+    Ok((gap, spans))
+}
+
+#[derive(serde::Deserialize)]
+struct CaptureClock {
+    sample_rate: usize,
+    channels: usize,
+    encoding: String,
+    total_frames: usize,
+    audio_sha256: String,
+    audio_bytes: usize,
+    packets: Vec<CapturePacket>,
+}
+
+#[derive(serde::Deserialize)]
+struct CapturePacket {
+    offset_frames: usize,
+    frames: usize,
+    capture_qpc_ns: u64,
+    callback_qpc_ns: u64,
+}
+
+fn frame_ns(frames: usize) -> u64 {
+    frames as u64 * 1_000_000_000 / RATE as u64
+}
+
+fn measure_capture_clock(
+    clock: &CaptureClock,
+    bytes: &[u8],
+    markers: [usize; 4],
+) -> Result<(u64, [u64; 2])> {
+    ensure!(
+        clock.sample_rate == RATE
+            && clock.channels == 2
+            && clock.encoding == "f32le"
+            && clock.total_frames == bytes.len() / 8
+            && clock.audio_bytes == bytes.len()
+            && clock.audio_sha256 == reel::production::sha256_bytes(bytes),
+        "capture clock describes different audio"
+    );
+    let mut offset = 0;
+    let mut previous: Option<&CapturePacket> = None;
+    for packet in &clock.packets {
+        ensure!(
+            packet.offset_frames == offset
+                && (1..=2048).contains(&packet.frames)
+                && packet.capture_qpc_ns > 0
+                && packet.callback_qpc_ns >= packet.capture_qpc_ns,
+            "capture packet geometry or timestamp"
+        );
+        if let Some(previous) = previous {
+            let elapsed = packet.capture_qpc_ns.checked_sub(previous.capture_qpc_ns);
+            ensure!(
+                elapsed.is_some_and(|time| time.abs_diff(frame_ns(previous.frames)) <= 2_000_000),
+                "capture packet clock discontinuity"
+            );
+        }
+        offset += packet.frames;
+        previous = Some(packet);
+    }
+    ensure!(
+        offset == clock.total_frames,
+        "capture packet coverage differs"
+    );
+    let mut marker_clock = [0; 4];
+    for (marker, time) in markers.into_iter().zip(&mut marker_clock) {
+        let index = clock
+            .packets
+            .partition_point(|packet| packet.offset_frames <= marker);
+        let packet = &clock.packets[index - 1];
+        *time = packet
+            .capture_qpc_ns
+            .checked_add(frame_ns(marker - packet.offset_frames))
+            .ok_or_else(|| anyhow::anyhow!("capture marker timestamp overflow"))?;
+    }
+    let [head_a, tail_a, head_b, tail_b] = marker_clock;
+    let gap = head_b
+        .checked_sub(tail_a)
+        .and_then(|span| span.checked_sub(frame_ns(SOURCE_FRAMES - LAST_MARKER + FIRST_MARKER)))
+        .ok_or_else(|| anyhow::anyhow!("capture clock has no measurable loop interval"))?;
+    let spans = [
+        tail_a
+            .checked_sub(head_a)
+            .ok_or_else(|| anyhow::anyhow!("first capture span reversed"))?,
+        tail_b
+            .checked_sub(head_b)
+            .ok_or_else(|| anyhow::anyhow!("second capture span reversed"))?,
+    ];
     Ok((gap, spans))
 }
 
@@ -89,13 +181,37 @@ fn station_capture_measurement_detects_markers_and_applies_both_limits() {
             }
         }
     }
-    let (gap, spans) = measure(&frames).unwrap();
+    let offsets = marker_offsets(&frames).unwrap();
+    let (gap, spans) = measure(offsets).unwrap();
     assert_eq!((gap, spans), (12_000, [133_680; 2]));
     assert!(capture_passes(gap, spans));
     assert!(!capture_passes(gap + 2_401, spans));
     assert!(!capture_passes(gap, [spans[0], spans[1] - 961]));
     frames[LAST_MARKER..LAST_MARKER + MARKER_FRAMES].fill([0.0; 2]);
-    assert!(measure(&frames).is_err());
+    assert!(marker_offsets(&frames).is_err());
+    let bytes = vec![0; frames.len() * 8];
+    let mut clock = CaptureClock {
+        sample_rate: RATE,
+        channels: 2,
+        encoding: "f32le".into(),
+        total_frames: frames.len(),
+        audio_sha256: reel::production::sha256_bytes(&bytes),
+        audio_bytes: bytes.len(),
+        packets: (0..frames.len())
+            .step_by(480)
+            .map(|offset_frames| CapturePacket {
+                offset_frames,
+                frames: (frames.len() - offset_frames).min(480),
+                capture_qpc_ns: 1 + frame_ns(offset_frames),
+                callback_qpc_ns: 2 + frame_ns(offset_frames),
+            })
+            .collect(),
+    };
+    let (gap_ns, spans_ns) = measure_capture_clock(&clock, &bytes, offsets).unwrap();
+    assert_eq!((gap_ns, spans_ns), (250_000_000, [2_785_000_000; 2]));
+    clock.packets[10].capture_qpc_ns += 3_000_000;
+    clock.packets[10].callback_qpc_ns += 3_000_000;
+    assert!(measure_capture_clock(&clock, &bytes, offsets).is_err());
 }
 
 #[test]
@@ -105,7 +221,7 @@ fn measure_retained_station_capture() {
         .expect("provide the retained stereo 48 kHz f32le capture path");
     const MAX_BYTES: usize = 120 * RATE * 8;
     let mut bytes = Vec::new();
-    std::fs::File::open(path)
+    std::fs::File::open(&path)
         .unwrap()
         .take(MAX_BYTES as u64 + 1)
         .read_to_end(&mut bytes)
@@ -120,7 +236,8 @@ fn measure_retained_station_capture() {
             ]
         })
         .collect();
-    let (gap, spans) = measure(&frames).unwrap();
+    let markers = marker_offsets(&frames).unwrap();
+    let (gap, spans) = measure(markers).unwrap();
     println!(
         "capture SHA-256 {}; loop gap {} frames; source spans {:?} frames",
         reel::production::sha256_bytes(&bytes),
@@ -128,6 +245,27 @@ fn measure_retained_station_capture() {
         spans
     );
     assert!(capture_passes(gap, spans), "capture failed timing gates");
+    let clock_path = std::path::Path::new(&path).with_extension("clock.json");
+    if clock_path.is_file() {
+        let mut raw = Vec::new();
+        std::fs::File::open(clock_path)
+            .unwrap()
+            .take(2_000_001)
+            .read_to_end(&mut raw)
+            .unwrap();
+        assert!(raw.len() <= 2_000_000, "capture clock sidecar too large");
+        let clock: CaptureClock = serde_json::from_slice(&raw).unwrap();
+        let (gap_ns, spans_ns) = measure_capture_clock(&clock, &bytes, markers).unwrap();
+        println!("capture QPC loop gap {gap_ns} ns; source spans {spans_ns:?} ns");
+        assert!(gap_ns.abs_diff(250_000_000) <= 50_000_000);
+        assert!(
+            spans_ns
+                .into_iter()
+                .all(|span| span.abs_diff(frame_ns(LAST_MARKER - FIRST_MARKER)) <= 20_000_000)
+        );
+    } else {
+        println!("sample positions only; no capture clock sidecar");
+    }
 }
 
 #[cfg(windows)]

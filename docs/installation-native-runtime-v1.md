@@ -682,6 +682,25 @@ with `--ignored --exact --nocapture`. After it reports that capture started,
 run the uninterrupted playback test in a separate process. The recorder
 saves up to 45 seconds of stereo samples and a packet clock sidecar. The
 observation point is the Windows render mix before physical output.
+Keep the sidecar next to the PCM with the same basename. The analyzer binds
+the sidecar to the exact audio hash and length, checks packet coverage and
+timestamp continuity, then measures both source spans and the loop gap again
+against the WASAPI capture clock. Without the sidecar it reports sample
+positions only.
+
+Keep the evidence for each station measurement tied to the clock and
+observation point that produced it:
+
+| Gate | Evidence required |
+| --- | --- |
+| Loop interval and source-span error | The uninterrupted two-pass PCM, bound packet clock and marker analysis. WASAPI loopback measures the render mix. |
+| Start and Restart onset | Complete command receipt time and first source onset on the declared capture path. Use a synchronized clock and retain the observed marker offset. |
+| Command acknowledgement | Complete cooked-line receipt and actual visible acknowledgement timestamps. A test process sending a line only gives an earlier outer bound. |
+| Pause and Stop quiescence | Command receipt and the final captured source boundary, with any queued output accounted for. |
+| Disconnect and expiry | The fault or stopped transition, actual worker and stream closure, and elapsed time from the event that triggered cleanup. |
+
+Record human listening, operator usability and rights review separately from
+these measurements.
 
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
