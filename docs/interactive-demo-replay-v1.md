@@ -8,6 +8,8 @@ The worked example plays the technical detail and closing. The summary plays
 the executive closing. A text ending is shared by both routes. Use the
 [bilingual engineering fixture](media-expansion-spoken-fixture.md) and match
 each selection to its independently checked programme and transcript.
+The [replay fixture](../tests/fixtures/spoken-programme/interactive-replay.json)
+records the expected visits and sample ranges for the local test.
 
 | Visit | English edition and sample interval | Spanish edition and sample interval |
 | --- | --- | --- |
