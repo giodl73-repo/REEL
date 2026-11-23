@@ -666,8 +666,17 @@ with `--ignored --exact --nocapture`. Retain any conversion command and its
 tool identity. Keep channel order and sample rate unchanged and preserve
 leading silence and packet gaps. The analyzer prints the input hash, the
 inferred loop gap and both marker spans. It checks the 250 ±50 ms loop gap
-and ≤20 ms source-span error. Use a separate uninterrupted run because
-the operator smoke test deliberately pauses and restarts playback.
+and ≤20 ms source-span error. Invoke
+`actual_station_run_plays_uninterrupted_marker_passes` by its exact name with
+`--ignored --exact` and the same `REEL_INSTALLATION_STATION_SESSION` binding.
+This run sends only Start and Quit so the two passes and loop interval are
+continuous. Start the separate recorder before invoking the test and retain its
+state and recording after the test exits.
+
+The uninterrupted Dell smoke run remains open. One run timed out after Start.
+A diagnostic retry visibly reached Playing through source frame 53,760, then
+the foreground exited with status 1 before either pass completed. The earlier
+pause/resume/restart smoke result did not reproduce this failure.
 
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.

@@ -64,6 +64,33 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
 #[test]
 #[ignore = "explicit station playback; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_run_exercises_playback_commands_and_reaps_worker() {
+    run_station(&[
+        (b"Ready p", b"start\r"),
+        (b"Playing p1", b"pause\r"),
+        (b"Paused p1", b"resume\r"),
+        (b"LoopWait p1", b""),
+        (b"Completed p2", b"restart\r"),
+        (b"Restarting p", b""),
+        (b"Playing p1", b"stop\r"),
+        (b"Stopped p1", b"quit\r"),
+    ]);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "uninterrupted station playback; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_run_plays_uninterrupted_marker_passes() {
+    run_station(&[
+        (b"Ready p", b"start\r"),
+        (b"Playing p1", b""),
+        (b"LoopWait p1", b""),
+        (b"Playing p2", b""),
+        (b"Completed p2", b"quit\r"),
+    ]);
+}
+
+#[cfg(windows)]
+fn run_station(sequence: &[(&[u8], &[u8])]) {
     use reel::spoken_programme::installation::native::SessionRequest;
     let path = std::path::PathBuf::from(
         std::env::var_os("REEL_INSTALLATION_STATION_SESSION")
@@ -75,23 +102,10 @@ fn actual_station_run_exercises_playback_commands_and_reaps_worker() {
         (request.edition_id.as_str(), request.passes),
         ("en-technical", 2)
     );
-    let (result, steps) = run_console(
-        &request.playback.runtime.path,
-        &path,
-        &[
-            (b"Ready p", b"start\r"),
-            (b"Playing p1", b"pause\r"),
-            (b"Paused p1", b"resume\r"),
-            (b"LoopWait p1", b""),
-            (b"Completed p2", b"restart\r"),
-            (b"Restarting p", b""),
-            (b"Playing p1", b"stop\r"),
-            (b"Stopped p1", b"quit\r"),
-        ],
-        70,
-    );
+    let (result, steps) = run_console(&request.playback.runtime.path, &path, sequence, 70);
     assert_eq!(
-        steps, 8,
+        steps,
+        sequence.len(),
         "station run stopped before the full control sequence: {result:?}"
     );
     result.unwrap();
