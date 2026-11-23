@@ -124,6 +124,7 @@ pub struct ConsoleSurface {
     left: i16,
     top: i16,
     expected: Option<Vec<u16>>,
+    closing_ack: Option<u64>,
     pending: [u16; 64],
     offset: usize,
     length: usize,
@@ -145,6 +146,7 @@ impl ConsoleSurface {
             left: self.left,
             top: self.top,
             expected: None,
+            closing_ack: None,
             pending: [0; 64],
             offset: 0,
             length: 0,
@@ -243,6 +245,7 @@ impl ConsoleSurface {
             left: info.srWindow.Left,
             top: info.srWindow.Top,
             expected: None,
+            closing_ack: None,
             pending: [0; 64],
             offset: 0,
             length: 0,
@@ -418,9 +421,16 @@ impl ConsoleSurface {
                 Some(reason) => format!("Command {id} refused: {reason:?}"),
                 None => format!("Command {id}: {}", phase_label(phase)),
             },
-            Output::Ready { snapshot, .. }
-            | Output::State { snapshot, .. }
-            | Output::Ended { snapshot, .. } => playback_status(snapshot),
+            Output::Ready { snapshot, .. } | Output::State { snapshot, .. } => {
+                playback_status(snapshot)
+            }
+            Output::Ended { snapshot, .. } => {
+                let status = playback_status(snapshot);
+                // ConPTY can coalesce the final display with the Quit reply.
+                // Keep the acknowledged command visible in the final row.
+                self.closing_ack
+                    .map_or_else(|| status.clone(), |id| format!("Command {id}: {status}"))
+            }
             Output::Ack {
                 id,
                 snapshot,
@@ -428,7 +438,12 @@ impl ConsoleSurface {
                 ..
             } => match refusal {
                 Some(reason) => format!("Command {id} refused: {reason:?}"),
-                None => format!("Command {id}: {}", playback_status(snapshot)),
+                None => {
+                    if snapshot.session_closed {
+                        self.closing_ack = Some(id);
+                    }
+                    format!("Command {id}: {}", playback_status(snapshot))
+                }
             },
             Output::ResourcesClosed { .. } => "Worker resources closed".into(),
             Output::SessionFault { .. } => "Fault".into(),
