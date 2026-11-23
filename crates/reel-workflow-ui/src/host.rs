@@ -198,6 +198,7 @@ impl State {
             return Ok(());
         }
         let mut observations = BTreeMap::new();
+        let mut cue_candidates = Vec::new();
         let mut budget = 0u64;
         let mut view = serde_json::to_value(&source.board)
             .map_err(|_| error(ErrorKind::Invalid, "board-view-json"))?;
@@ -225,8 +226,18 @@ impl State {
                         continue;
                     };
                     let media_key = format!("candidates/{index}-{output_index}-{}", asset.sha256);
+                    if preview.cue.as_ref().is_some_and(|target| {
+                        observer.last_language.as_deref() != Some(target.language.as_str())
+                    }) {
+                        continue;
+                    }
+                    let media_prefix = if preview.cue.is_some() {
+                        "audio/"
+                    } else {
+                        "image/"
+                    };
                     let available = mime(&asset.media_type).is_some()
-                        && asset.media_type.starts_with("image/")
+                        && asset.media_type.starts_with(media_prefix)
                         && asset.bytes <= MAX_PREVIEW_BYTES;
                     if available {
                         self.resources.insert(
@@ -238,17 +249,25 @@ impl State {
                             },
                         );
                     }
+                    if let Some(target) = &preview.cue {
+                        cue_candidates.push(json!({
+                            "cue": target, "label": preview.label, "task": key, "asset": asset,
+                            "preview": if available { Some(format!("media/{media_key}")) } else { None }
+                        }));
+                        continue;
+                    }
                     let unit = view["units"]
                         .as_array_mut()
                         .unwrap()
                         .iter_mut()
-                        .find(|u| u["id"] == preview.unit_id)
+                        .find(|u| u["id"].as_str() == preview.unit_id.as_deref())
                         .ok_or_else(|| error(ErrorKind::Conflict, "board-candidate-unit"))?;
                     unit["versions"].as_array_mut().unwrap().push(json!({"id":format!("candidate-{key}-{output}"),"label":preview.label,"asset":asset,"designation":"candidate","language":observer.last_language,"preview":if available{Some(format!("media/{media_key}"))}else{None},"approval_reference":null,"task":key}));
                 }
             }
         }
         view["tasks"] = json!(observations);
+        view["cue_candidates"] = json!(cue_candidates);
         view["board_pin"] = json!(source.pin);
         view["read_only"] = json!(true);
         view["approvals_verified"] = json!(false);

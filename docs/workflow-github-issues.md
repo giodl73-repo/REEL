@@ -25,6 +25,16 @@ Replace `payload` with:
 }
 ```
 
+Prepare the payload from the exact exported `KEY.json` draft:
+
+```text
+reel-workflow-http prepare-github-issue OWNER/REPO KEY.json DRAFT_SHA256
+```
+
+The command checks the draft's raw SHA-256 and emits the complete `payload`
+object on stdout. It makes no HTTP call. Use that object in the pinned owned
+request with the matching endpoint and registry.
+
 Those placeholders are not runnable values. `KEY-github.json` from
 [`draft-film-issues`](workflow-film-findings.md) supplies the `issue` object;
 `KEY.json` supplies both identities. Rust callers can use

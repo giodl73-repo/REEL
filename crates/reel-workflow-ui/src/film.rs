@@ -264,10 +264,13 @@ pub fn project(request: &Request, reader: &mut impl film_inspect::Reader) -> Res
     });
     for (key, watch) in &board.tasks {
         for preview in watch.outputs.values() {
+            let Some(unit_id) = &preview.unit_id else {
+                continue;
+            };
             let unit = board
                 .units
                 .iter_mut()
-                .find(|u| u.id == preview.unit_id)
+                .find(|u| &u.id == unit_id)
                 .ok_or_else(|| error(ErrorKind::Missing, "film-board-watch-unit"))?;
             if unit.task.as_ref().is_some_and(|t| t != key) {
                 return Err(error(ErrorKind::Conflict, "film-board-watch-alias"));

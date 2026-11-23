@@ -112,13 +112,13 @@ refuse and remain untouched. Creation is exclusive, with failed writes preserved
 for explicit recovery. `viewing_verified`, `authority_verified`,
 `native_retention_verified`, `issue_submitted` and `selection_applied` remain false.
 
-The Markdown records the draft version and a `reel-film-finding` marker containing
-that logical identity. These assist later reconciliation; they are not
-GitHub service idempotency. An authorized issuer must preserve the original
-operation and reconcile an uncertain result before another POST. The existing
-bounded HTTP/API path can carry the generated body under an explicit pinned
-service request. Drafting creates no cache engine, job registry, durable claim,
-provider retry policy or API effect.
+The Markdown carries the draft version and the `reel-film-finding` marker.
+Use the exact structured draft and GitHub body with the
+[explicit GitHub submission adapter](workflow-github-issues.md). It binds the
+issue to the repository, logical finding and draft version, then records the
+original request and response. If the outcome is uncertain, reconcile that
+operation before attempting any further POST. The marker helps locate a posted
+issue and does not provide GitHub service idempotency.
 
 These are private files. The body omits machine bindings and producer filenames,
 but observations and asset identities may themselves contain private context.
@@ -142,7 +142,10 @@ pins/replay and preservation of partial packages. The real-media integration
 renders an actual scene review and resolves its finding through the shared map
 to the exact selected picture.
 
-W4 still needs integrated issue submission/reconciliation, exact native
-record/selection baselines for repair, affected rebuilds and protected dispatch.
-This draft cannot authorize repair from a matching hash alone. No project
-adoption or actual Season 5 issue filing occurs here.
+For a reported picture problem, use the same exact finding with
+[film image repair](workflow-film-image-repair.md) to prepare an unselected
+candidate. After a selection decision, use the
+[native film rebuild path](workflow-native-film-rebuild.md) for affected
+languages and consumers. A posted issue is evidence of submission. Apply a
+repair only against the expected source and selection baseline through the
+protected workflow.
