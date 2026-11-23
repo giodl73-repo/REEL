@@ -309,8 +309,11 @@ fn exercise_variant_mode(
             .unwrap()["expected_master"];
         let report = json!({"ok":true,"editions":{"repair-es":{
             "ok":true,"retained_verified":true,"retained_scene":{
-                "task_id":"repair-es","language":"es","worker_receipt":master,
-                "retained_acknowledgement":master,"artifacts":{"master-mkv":master},
+                "task_id":"repair-es","task_key":"repair-test","language":"es","worker_receipt":master,
+                "retained_acknowledgement":master,"artifacts":{"master-mkv":{
+                    "logical_id":"workflow/film/repair-test/master-mkv",
+                    "sha256":master["sha256"],"bytes":master["bytes"],"media_type":"video/x-matroska",
+                }},
             }
         }}});
         let dispatch = p.data.path().join("dispatch-repair.json");
@@ -348,6 +351,11 @@ fn exercise_variant_mode(
         let mut wrong_language = report.clone();
         wrong_language["editions"]["repair-es"]["retained_scene"]["language"] = json!("en");
         assert!(!bind(&wrong_language).status.success());
+        assert!(!bound.exists());
+        let mut wrong_type = report.clone();
+        wrong_type["editions"]["repair-es"]["retained_scene"]["artifacts"]["master-mkv"]["media_type"] =
+            json!("audio/wav");
+        assert!(!bind(&wrong_type).status.success());
         assert!(!bound.exists());
         let result = bind(&report);
         assert!(

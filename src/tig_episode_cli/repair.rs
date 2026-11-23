@@ -68,11 +68,21 @@ pub fn bind(request: &Path, output: &Path) -> Result<Value> {
         {
             bail!("retained film result does not match episode segment language and task");
         }
-        let artifact = &retained["artifacts"][&replacement.master_artifact];
-        let master: Object = serde_json::from_value(json!({
-            "sha256": artifact["sha256"],
-            "bytes": artifact["bytes"],
-        }))?;
+        let artifact: reel_publication::Artifact =
+            serde_json::from_value(retained["artifacts"][&replacement.master_artifact].clone())?;
+        let task_key = retained["task_key"]
+            .as_str()
+            .context("retained task key missing")?;
+        if artifact.media_type != "video/x-matroska"
+            || artifact.logical_id
+                != format!("workflow/film/{task_key}/{}", replacement.master_artifact)
+        {
+            bail!("episode repair requires a Matroska output of the retained film task");
+        }
+        let master = Object {
+            sha256: Digest::parse(&artifact.sha256)?,
+            bytes: artifact.bytes,
+        };
         if master.bytes == 0
             || scene
                 .expected_master
