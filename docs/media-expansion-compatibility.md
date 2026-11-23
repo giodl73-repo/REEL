@@ -1,7 +1,6 @@
 # Spoken source across delivery formats
 
-M15 is staged against the M14 runtime. Final qualification runs
-after M14 merges and records the exact checked artifacts and evidence.
+This guide follows the synthetic programme used for engineering qualification. Project adoption, listening and station review have separate evidence.
 
 The [bilingual fixture](media-expansion-spoken-fixture.md) authors `opening`,
 `detail` and `closing` once as module identities. Each language selects its
@@ -9,14 +8,32 @@ own script and takes. The executive edition omits `detail`, and the technical
 edition includes it. A delivery package can reference a checked edition and
 its local sample bounds while keeping its own artifact identity.
 
+```mermaid
+flowchart LR
+    opening["Authored opening module"] --> en["EN script and selected performance"]
+    opening --> es["ES script and selected performance"]
+    en --> editions["Checked edition WAV and transcript"]
+    es --> editions
+    editions --> chapters["Exact chapter sample spans"]
+    chapters --> reading["Narrated reading and lesson"]
+    chapters --> branch["Interactive choice and replay"]
+    editions --> visual["Companion SVG and event clock"]
+    editions --> player["Opening-only edition for offline player"]
+```
+
+The opening keeps its authored module identity across delivery. Each branch
+selects an exact edition and span. Its transcript and the companion's event
+clock follow that edition. The offline player consumes a whole opening-only
+edition whose source samples match the opening chapter in the executive edition.
+
 | Delivery | What it binds | Current evidence and remaining work |
 | --- | --- | --- |
 | [Spoken edition](spoken-edition-check-v1.md) | Selected language, exact takes, PCM, transcript and module chapters | Controlled English and Spanish fixtures check independent PCM and transcript derivation. [History](spoken-edition-history-v1.md) covers exact retained identities. |
 | [Narrated reading](narrated-reading-v1.md) | Checked chapter intervals and authored page/text spans | M08 merged with engineering evidence for the reading index. The final cross-format run must link the index to the selected common edition. |
 | [Lesson and rehearsal](lesson-rehearsal-v1.md) | Explanation, selected audio, editable score, notation exports and passage occurrence | M09 merged with checked lesson fixtures. The final run must demonstrate the common edition relationship and preserve the score and occurrence identities. |
 | [Visual companion](semantic-visual-companion-v1.md) | Authored events, exact edition phrases and the matching visual clock | M10 merged with a one-language replacement case. The final run must bind the common selection and verify the unchanged language's evidence. |
-| [Offline installation](offline-installation-v1.md) | One whole checked edition, matching text and an enrolled runtime and endpoint | M11 defines the contract. M12 station fixtures use an independently admitted quiet-seam signal. Any shared-source demonstration must satisfy the seam and station gates. |
-| [Interactive branches](interactive-branch-contract-v1.md) | Authored routes and exact edition, module, media and access bindings | The shared-source fixture now replays both routes in both languages through the M14 PCM sink. It compares exact audio before and after a selective English opening replacement. Final qualification is pending. |
+| [Offline installation](offline-installation-v1.md) | One whole checked edition, matching text and an enrolled runtime and endpoint | The six-edition fixture admits dedicated opening-only editions. Live disconnect, isolated capture and operator review remain in [station qualification](https://github.com/giodl73-repo/REEL/pull/442). |
+| [Interactive branches](interactive-branch-contract-v1.md) | Authored routes and exact edition, module, media and access bindings | The shared-source fixture now replays both routes in both languages through the M14 PCM sink. It compares exact audio before and after a selective English opening replacement. [M14 replay evidence](interactive-demo-replay-v1.md) covers local keyboard/text commands and synthetic playback. |
 
 The final run should retain the original edition and each derivative by its
 own checked identity. It should follow at least one selected module through
@@ -59,8 +76,7 @@ lesson carried the reading-index hash. Each companion kept the exact audio and
 transcript hashes of its installation opening, with separate visual evidence.
 The run checked local packages. A separate Windows browser test at `825dcb7`
 rendered the same fixture's opening companions as 72 EN frames and 84 ES
-frames. Both outputs preserved the checked PCM hash. Interactive replay and
-station qualification still require their own runs.
+frames. Both outputs preserved the checked PCM hash. The later replay run checked both branch paths. Station qualification remains open.
 
 At `afe51bc`, an English opening replacement changed the three English WAV
 outputs while all three Spanish WAVs remained byte-for-byte identical. Every

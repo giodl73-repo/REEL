@@ -8,26 +8,18 @@ are separate states.
 
 ## Media format expansion plan
 
-The [format-expansion plan](media-format-expansion.md) records the proposed next
-direction: reusable semantic spoken-content modules assembled into technical,
-executive, language and audience editions. It distinguishes existing foundations
-from proposed applications, includes natural multi-speaker handoffs, and defines
-a bounded first audio-only milestone.
-This is a planning record, not an implemented programme runner or a recording.
-The [phased PR sequence](media-expansion-pr-plan.md) starts with a source-backed
-reuse/gap map, then separates spoken production, companion packages,
-installation playback and interaction into bounded implementation PRs.
+Authors can reuse modules with independently selected language scripts and
+performances for technical and executive editions. The [support map](media-expansion-compatibility.md)
+follows one shared programme through checked audio, reading, lessons, visual
+companions, offline installation admission and branching. Each derivative
+carries its own identity and retains the link to its source.
 
-The first implementation slice adds [spoken-edition declaration validation](spoken-edition-v1.md):
-modules, speaker cues, language scripts, selected performances and explicit
-handoffs. It reads no referenced media or authority evidence and is not an
-audio-only programme producer. Compilation, production, independent media/text
-checking and retained edition integration have separate qualification scopes.
-The [control compiler](spoken-edition-compilation-v1.md) additionally resolves
-selected alignment metadata into sample placements, chapters and consumed-recipe
-identities. It opens no source audio and records media/authority as unverified.
-Audio assembly, independent output/text checks and retained asset integration
-remain later slices.
+The [phased PR sequence](media-expansion-pr-plan.md) records the implementation
+and test evidence for each capability. The offline Windows operator runtime is
+merged. [Station qualification](https://github.com/giodl73-repo/REEL/pull/442)
+tracks isolated capture, live disconnect and operator review. The bounded local
+interactive demo has synthetic replay and terminal evidence. Project adoption,
+human listening and authority decisions require their own records.
 
 ## Workflow orchestration
 
