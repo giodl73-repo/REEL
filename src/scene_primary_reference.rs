@@ -14,6 +14,8 @@ use std::{
 };
 mod pipeline;
 
+const MAX_REFERENCE_TIMEOUT_SECONDS: u64 = 24 * 60 * 60;
+
 pub struct Budget {
     pub max_staged_bytes: u64,
     pub timeout_seconds: u64,
@@ -297,7 +299,7 @@ pub fn compare_master_to_primaries(
     if !stage_parent.is_absolute()
         || !stage_parent.is_dir()
         || budget.max_staged_bytes == 0
-        || !(1..=3600).contains(&budget.timeout_seconds)
+        || !(1..=MAX_REFERENCE_TIMEOUT_SECONDS).contains(&budget.timeout_seconds)
         || !(2..=130).contains(&budget.max_picture_processes)
     {
         bail!("invalid reference admission");
