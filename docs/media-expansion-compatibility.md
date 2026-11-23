@@ -1,6 +1,6 @@
 # Spoken source across delivery formats
 
-M15 design draft based on stacked commit `c9b2c71`. Final qualification runs
+M15 is staged against the M14 runtime. Final qualification runs
 after M14 merges and records the exact checked artifacts and evidence.
 
 The [bilingual fixture](media-expansion-spoken-fixture.md) authors `opening`,
@@ -16,7 +16,7 @@ its local sample bounds while keeping its own artifact identity.
 | [Lesson and rehearsal](lesson-rehearsal-v1.md) | Explanation, selected audio, editable score, notation exports and passage occurrence | M09 merged with checked lesson fixtures. The final run must demonstrate the common edition relationship and preserve the score and occurrence identities. |
 | [Visual companion](semantic-visual-companion-v1.md) | Authored events, exact edition phrases and the matching visual clock | M10 merged with a one-language replacement case. The final run must bind the common selection and verify the unchanged language's evidence. |
 | [Offline installation](offline-installation-v1.md) | One whole checked edition, matching text and an enrolled runtime and endpoint | M11 defines the contract. M12 station fixtures use an independently admitted quiet-seam signal. Any shared-source demonstration must satisfy the seam and station gates. |
-| [Interactive branches](interactive-branch-contract-v1.md) | Authored routes and exact edition, module, media and access bindings | M13 has preparatory bilingual admission tests. M14 execution and deterministic replay are still required. |
+| [Interactive branches](interactive-branch-contract-v1.md) | Authored routes and exact edition, module, media and access bindings | The shared-source fixture now replays both routes in both languages through the M14 PCM sink. It compares exact audio before and after a selective English opening replacement. Final qualification is pending. |
 
 The final run should retain the original edition and each derivative by its
 own checked identity. It should follow at least one selected module through

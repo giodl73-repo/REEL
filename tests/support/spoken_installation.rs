@@ -288,10 +288,109 @@ fn shared_installation_openings_render_with_exact_pcm() {
 }
 
 #[cfg(feature = "print")]
+fn shared_interactive_routes(shared: &InstallationFixture) -> Vec<(String, String, Vec<String>)> {
+    use reel::spoken_programme::interactive::{Graph, Selection, Session};
+    let inputs = shared.inputs();
+    let mut checked =
+        checker::check(inputs.spoken, inputs.sources, inputs.candidate, control()).unwrap();
+    checker::verify_access(&mut checked, inputs.access_manifest, inputs.access, || {
+        Ok(())
+    })
+    .unwrap();
+    let graph: Graph = serde_json::from_value(json!({
+        "entry":"opening",
+        "nodes":[
+            {"kind":"playback","id":"opening","next":"choice","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"choice","id":"choice","choices":[
+                {"id":"detail","target":"detail","labels":{"en":"Detail","es":"Detalle"}},
+                {"id":"summary","target":"summary","labels":{"en":"Summary","es":"Resumen"}}]},
+            {"kind":"playback","id":"detail","next":"end","selections":[
+                {"language":"en","edition":"en-technical"},{"language":"es","edition":"es-technical"}]},
+            {"kind":"playback","id":"summary","next":"end","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"end","id":"end"}
+        ]
+    })).unwrap();
+    let mut bindings = std::collections::BTreeMap::new();
+    for language in ["en", "es"] {
+        for (node, edition_name, module) in [
+            ("opening", "executive", "opening"),
+            ("detail", "technical", "detail"),
+            ("summary", "executive", "closing"),
+        ] {
+            let edition = checked
+                .access()
+                .editions
+                .iter()
+                .find(|edition| edition.edition_id == format!("{language}-{edition_name}"))
+                .unwrap();
+            let chapter = edition
+                .chapters
+                .iter()
+                .find(|chapter| chapter.module_id == module)
+                .unwrap();
+            bindings.insert(
+                (node, language),
+                Selection {
+                    edition: &edition.edition_id,
+                    language,
+                    module,
+                    programme_sha256: &edition.wave.sha256,
+                    access_sha256: &edition.transcript.sha256,
+                    first_frame: chapter.start_sample,
+                    end_frame: chapter.end_sample,
+                },
+            );
+        }
+    }
+    let mut routes = Vec::new();
+    for language in ["en", "es"] {
+        for choice in ["detail", "summary"] {
+            let replay = || {
+                let mut session =
+                    Session::start(&graph, &checked, bindings.clone(), language).unwrap();
+                let mut hashes = Vec::new();
+                for expected in ["opening", choice] {
+                    assert_eq!(session.node(), Some(expected));
+                    let span = session.selection().unwrap();
+                    let count = session
+                        .deliver(&checked, inputs.candidate, usize::MAX, |pcm| {
+                            hashes.push(hash(pcm));
+                            Ok(())
+                        })
+                        .unwrap();
+                    assert_eq!(count as u64, span.end_frame - span.first_frame);
+                    if expected == "opening" {
+                        assert_eq!(session.node(), Some("choice"));
+                        assert!(session.choose(session.visit(), choice));
+                    }
+                }
+                assert!(session.is_ended());
+                hashes
+            };
+            let hashes = replay();
+            assert_eq!(hashes, replay());
+            routes.push((language.to_owned(), choice.to_owned(), hashes));
+        }
+    }
+    routes
+}
+
+#[cfg(feature = "print")]
 #[test]
 #[ignore = "explicit shared-source reading, lesson and installation fixture using a local test font"]
 fn reading_lesson_and_installation_use_the_same_checked_programme() {
     let shared = shared_quiet_programme(false);
+    let original_routes = shared_interactive_routes(&shared);
+    let replacement_routes = shared_interactive_routes(&shared_quiet_programme(true));
+    for ((language, route, original), (next_language, next_route, replacement)) in
+        original_routes.iter().zip(&replacement_routes)
+    {
+        assert_eq!((language, route), (next_language, next_route));
+        assert_eq!(original[0] == replacement[0], language == "es");
+        assert_eq!(original[1], replacement[1]);
+    }
     let mut opening_frames = Vec::new();
     for language in ["en", "es"] {
         let prepared = api::prepare(
