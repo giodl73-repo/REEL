@@ -11,6 +11,7 @@ pub mod film_repair;
 pub mod film_review;
 pub mod handoff;
 pub mod manual;
+pub mod speech_handoff;
 
 pub const PLAN_SCHEMA: &str = "reel.workflow-plan.v2";
 pub const SCOPED_PLAN_SCHEMA: &str = "reel.workflow-plan.v3";
