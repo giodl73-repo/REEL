@@ -1812,6 +1812,7 @@ name = "reel-print"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "flate2",
  "lopdf",
  "resvg",
  "roxmltree",
@@ -1827,7 +1828,16 @@ dependencies = [
 name = "reel-publication"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "lopdf",
+ "reel-print",
+ "resvg",
+ "roxmltree",
  "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
 ]
 
 [[package]]
