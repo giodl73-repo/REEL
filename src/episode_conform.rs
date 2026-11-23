@@ -891,6 +891,7 @@ fn probe_segment(
     })
 }
 
+#[cfg(test)]
 fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
     decoded_digest_with_padding(path, video, 0)
 }
@@ -903,6 +904,7 @@ pub(crate) fn decoded_digest_with_inputs(
     decoded_digest_with_options(path, video, 0, None, "yuv444p", inputs)
 }
 
+#[cfg(test)]
 fn decoded_digest_with_padding(
     path: &Path,
     video: bool,
@@ -911,6 +913,7 @@ fn decoded_digest_with_padding(
     decoded_digest_with_filter(path, video, padding_samples, None)
 }
 
+#[cfg(test)]
 fn decoded_digest_with_filter(
     path: &Path,
     video: bool,
@@ -997,6 +1000,7 @@ mod color_declaration_tests {
     }
 }
 
+#[cfg(test)]
 fn decoded_digest_with_pixel_format(
     path: &Path,
     video: bool,
@@ -2392,7 +2396,7 @@ fn build_internal_with_inputs(
     let protected_inputs = scene_inputs.is_some()
         || scene_outputs.is_some()
         || presentations.is_some()
-        || explicit_programs
+        || (explicit_programs && part_range.is_none())
         || controls.is_some()
         || scene_controls.is_some()
         || presentation_controls.is_some()
@@ -3808,6 +3812,7 @@ fn build_internal_with_inputs(
             work,
             asset_root,
             &preparation_scope.context("part scope missing")?,
+            programs,
         )?;
         drop(temp);
         fs::rename(stage.context("part stage missing")?.keep(), output)?;

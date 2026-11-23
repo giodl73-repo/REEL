@@ -21,6 +21,22 @@ pub(crate) fn hash(
     filter: Option<&str>,
     frame_counts: Option<&[u64]>,
 ) -> Result<Hashes> {
+    hash_with_command(
+        crate::episode_conform::command("ffmpeg"),
+        path,
+        pixel_format,
+        filter,
+        frame_counts,
+    )
+}
+
+pub(crate) fn hash_with_command(
+    mut command: std::process::Command,
+    path: &Path,
+    pixel_format: &str,
+    filter: Option<&str>,
+    frame_counts: Option<&[u64]>,
+) -> Result<Hashes> {
     if frame_counts.is_some_and(|counts| counts.is_empty() || counts.contains(&0)) {
         bail!("decoded video segments must contain frames");
     }
@@ -32,7 +48,6 @@ pub(crate) fn hash(
         Some(filter) => format!("[0:v:0]{filter},split=2[digest][counter]"),
         None => "[0:v:0]split=2[digest][counter]".into(),
     };
-    let mut command = crate::episode_conform::command("ffmpeg");
     command
         .args([
             "-v",
@@ -172,7 +187,6 @@ mod tests {
     }
 
     fn legacy_bytes(path: &Path, filter: Option<&str>, format: &str) -> Vec<u8> {
-        let mut command = crate::episode_conform::command("ffmpeg");
         command.args(["-v", "error", "-nostdin", "-i"]).arg(path);
         if let Some(filter) = filter {
             command.args(["-vf", filter]);
@@ -200,7 +214,6 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         for codec in ["ffv1", "libx264"] {
             let path = temp.path().join(format!("{codec}.mkv"));
-            let mut command = crate::episode_conform::command("ffmpeg");
             command.args([
                 "-v",
                 "error",
