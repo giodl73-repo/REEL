@@ -298,7 +298,7 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     drop(reader);
     let reference_budget = crate::scene_primary_reference::Budget {
         max_staged_bytes: t.reference_staging_bytes,
-        timeout_seconds: t.timeout_seconds.min(3600),
+        timeout_seconds: t.timeout_seconds,
         max_picture_processes: t.reference_picture_processes,
     };
     let stage = Path::new("reference-stage");
