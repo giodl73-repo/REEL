@@ -83,6 +83,22 @@ struct Scene {
     output_definition: String,
     #[serde(default)]
     compiled: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    expected_master: Option<Object>,
+}
+impl Scene {
+    fn check_master(&self, reference: &jobs::reference::ReferencePlan<'_, '_>) -> Result<()> {
+        let selected = reference.selected();
+        if self.expected_master.as_ref().is_some_and(|expected| {
+            expected.sha256.as_str() != selected.sha256 || expected.bytes != selected.bytes
+        }) {
+            bail!(
+                "episode scene {} selected master differs from its expected output",
+                self.id
+            );
+        }
+        Ok(())
+    }
 }
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

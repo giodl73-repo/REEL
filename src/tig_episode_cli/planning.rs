@@ -180,6 +180,7 @@ pub(super) fn freeze(
             &spec.output_definition,
             &preparation.join(format!("scene-{index}")),
         )?;
+        spec.check_master(&reference)?;
         enroll(
             &mut evidence,
             &spec.id,

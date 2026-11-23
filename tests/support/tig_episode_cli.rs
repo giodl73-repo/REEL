@@ -271,6 +271,14 @@ fn exercise_variant_mode(
     let mut inputs = json!({"source":fragment["source"],"context":fragment["context"],"request":fragment["request"],"runtime":runtime,
         "record_outputs":record_fixture.specs,"git_handoff":record_fixture.handoff(&p, &git_base),
         "scenes":p.requests.iter().zip(UNITS).filter(|(_,id)|!mixed || matches!(*id,"scene-a"|"scene-b")).map(|(request,id)|json!({"id":id,"request":request,"output_id":format!("{id}:master:es"),"output_definition":"types/output","compiled":id=="scene-b"})).collect::<Vec<_>>(),"presentations":presentations});
+    let scene_b = inputs["scenes"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|scene| scene["id"] == "scene-b")
+        .unwrap();
+    scene_b["expected_master"] =
+        read(p.repo.path().join("records/output-scene-b.tig"))["selected"].clone();
     if verification_only {
         inputs["purpose"] = json!("verify-components");
         inputs["record_outputs"] = json!([]);
@@ -347,6 +355,27 @@ fn exercise_variant_mode(
         .unwrap();
     assert!(!refused.status.success());
     assert!(!stream_path.exists());
+    if !mixed && !verification_only {
+        let mut stale = preparation.clone();
+        let scene_b = stale["inputs"]["scenes"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|scene| scene["id"] == "scene-b")
+            .unwrap();
+        scene_b["expected_master"] = json!(Object::from_bytes(b"stale master"));
+        let stale_path = p.data.path().join("stale-episode-preparation.json");
+        fs::write(&stale_path, serde_json::to_vec(&stale).unwrap()).unwrap();
+        let refused = Command::new(&binary)
+            .arg("prepare-episode")
+            .arg(stale_path)
+            .arg(&report_path)
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        assert!(String::from_utf8_lossy(&refused.stderr).contains("selected master differs"));
+        assert!(!report_path.exists());
+    }
     let prepared = Command::new(&binary)
         .arg("prepare-episode")
         .arg(&preparation_profile)
