@@ -112,7 +112,10 @@ pub fn bind_retained(
     let (access_pin, path) = resolve(&outputs["spoken-access/access.json"])?;
     let access: Access = serde_json::from_slice(&pinned(&path, &access_pin.sha256)?)
         .map_err(|_| error(ErrorKind::Invalid, "spoken-board-access-json"))?;
-    if access.schema != "reel.spoken-access.v1" || access.editions.len() > 16 {
+    if access.schema != "reel.spoken-access.v1"
+        || access.sample_rate != 48_000
+        || access.editions.len() > 16
+    {
         return Err(error(ErrorKind::Invalid, "spoken-board-access-schema"));
     }
     let mut waves = BTreeMap::new();
@@ -372,6 +375,84 @@ pub fn export(path: &Path, pin: &str, output: &Path) -> Result<Artifact> {
 mod tests {
     use super::*;
     use serde_json::{Value, json};
+
+    #[test]
+    fn retained_binding_reopens_registry_objects_and_rejects_missing_transcript_registration() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        let cache = root.join("cache");
+        std::fs::create_dir(root.join(".local")).unwrap();
+        std::fs::create_dir(root.join("registry")).unwrap();
+        std::fs::write(
+            root.join(".local/storage-rust.json"),
+            serde_json::to_vec(&json!({"cache_roots":[cache]})).unwrap(),
+        )
+        .unwrap();
+        let put = |bytes: &[u8]| {
+            let hash = reel_workflow::digest(bytes);
+            let object = reel_assets::object(&cache, &hash);
+            std::fs::create_dir_all(object.parent().unwrap()).unwrap();
+            std::fs::write(object, bytes).unwrap();
+            json!({"sha256":hash,"bytes":bytes.len()})
+        };
+        let wave = put(b"audio bytes for the registry binding test");
+        let text = put(b"hello");
+        let evidence = put(b"retired workspace evidence");
+        let expected = json!({"english":{
+            "compiled_recipe_sha256":"1".repeat(64),"execution_recipe_sha256":"2".repeat(64)
+        }});
+        let access = put(&serde_json::to_vec(&json!({
+            "schema":"reel.spoken-access.v1","sample_rate":48000,"editions":[{
+                "edition_id":"english","language":"en","compiled_recipe_sha256":"1".repeat(64),
+                "execution_recipe_sha256":"2".repeat(64),"wave":wave,"transcript":text,
+                "duration_samples":48000,"entries":[{"text":"hello"}],"chapters":[
+                    {"module_id":"opening","start_sample":0,"end_sample":48000}]
+            }]
+        }))
+        .unwrap());
+        let result = json!({"schema":"caminos.production-job-result.v1","workspace_retained":false,
+            "retirement_evidence":evidence,"outputs":{"spoken-access/access.json":access,
+                "spoken-candidate/edition-000.wav":wave,"spoken-access/edition-000.txt":text}
+        });
+        let write = |path: &Path, value: &Value| {
+            let bytes = serde_json::to_vec(value).unwrap();
+            std::fs::write(path, &bytes).unwrap();
+            reel_workflow::digest(&bytes)
+        };
+        let result_path = root.join("result.json");
+        let expectation_path = root.join("expectation.json");
+        let result_pin = write(&result_path, &result);
+        let expectation_pin = write(&expectation_path, &expected);
+        let register = |objects: &[&Value]| {
+            let rows: String = objects
+                .iter()
+                .map(|object| {
+                    format!(
+                        "{}\t{}\n",
+                        object["sha256"].as_str().unwrap(),
+                        object["bytes"].as_u64().unwrap()
+                    )
+                })
+                .collect();
+            std::fs::write(root.join("registry/objects.tsv"), rows).unwrap();
+        };
+        let bind = || {
+            bind_retained(
+                root,
+                &result_path,
+                &result_pin,
+                &expectation_path,
+                &expectation_pin,
+            )
+        };
+        register(&[&evidence, &access, &wave, &text]);
+        assert_eq!(
+            bind().unwrap()["waves"]["english"]["media"]["artifact"]["sha256"],
+            wave["sha256"]
+        );
+        register(&[&evidence, &access, &wave]);
+        assert_eq!(bind().unwrap_err().code, "spoken-board-unregistered-output");
+    }
 
     #[test]
     fn projects_new_and_reused_editions_and_refuses_wrong_audio() {
