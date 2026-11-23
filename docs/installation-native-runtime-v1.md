@@ -715,6 +715,9 @@ prints the operator cue after observing Playing and writes the private console
 trace. Run it with `--ignored --exact --nocapture` and a fresh absolute trace
 path. The physical removal observation and stream closure need independent
 evidence alongside that trace.
+With the CA-2890 deliberately left connected, the fixture observed Ready and
+Playing but no Fault. The containing job terminated on its deadline and the
+fixture failed as expected. This run checks the fixture's failure behavior.
 
 The opt-in test `actual_station_exits_while_terminal_output_is_undrained`
 starts the pinned synthetic playback under ConPTY, stops reading terminal output
