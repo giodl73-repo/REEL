@@ -51,6 +51,7 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
             (b"1: Fault", b"quit\r"),
         ],
         10,
+        None,
     );
     let error = result.expect_err("a closed source fault must remain visible in the exit status");
     assert!(
@@ -144,6 +145,7 @@ fn actual_station_refuses_changed_endpoint_configuration() {
         &path,
         &[(b"Fault", b"quit\r")],
         45,
+        None,
     );
     let error = result.expect_err("a changed endpoint configuration must fault");
     assert!(
@@ -278,11 +280,13 @@ fn run_station(
     command_budget_seconds: u64,
 ) -> Vec<Option<std::time::Duration>> {
     let (path, request) = station_request();
+    let trace = std::env::var_os("REEL_INSTALLATION_CONSOLE_TRACE").map(std::path::PathBuf::from);
     let (result, steps, elapsed) = run_console(
         &request.playback.runtime.path,
         &path,
         sequence,
         command_budget_seconds,
+        trace.as_deref(),
     );
     assert_eq!(
         steps,
@@ -299,6 +303,7 @@ fn run_console(
     request: &std::path::Path,
     steps: &[(&[u8], &[u8])],
     command_budget_seconds: u64,
+    trace_path: Option<&std::path::Path>,
 ) -> (Result<(), String>, usize, Vec<Option<std::time::Duration>>) {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
@@ -312,6 +317,7 @@ fn run_console(
         Foundation::HANDLE,
         System::{
             Console::{COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON},
+            Performance::{QueryPerformanceCounter, QueryPerformanceFrequency},
             Pipes::CreatePipe,
         },
     };
@@ -345,6 +351,21 @@ fn run_console(
     });
     drop(in_read);
     drop(out_write);
+    let capture_clock = trace_path.map(|path| {
+        assert!(path.is_absolute() && !path.exists());
+        let mut frequency = 0;
+        unsafe { QueryPerformanceFrequency(&mut frequency).unwrap() };
+        assert!(frequency > 0);
+        frequency as u128
+    });
+    let qpc_ns = || {
+        capture_clock.map(|frequency| {
+            let mut ticks = 0;
+            unsafe { QueryPerformanceCounter(&mut ticks).unwrap() };
+            assert!(ticks > 0);
+            u64::try_from(ticks as u128 * 1_000_000_000 / frequency).unwrap()
+        })
+    };
     let observed = Mutex::new(Vec::with_capacity(steps.len()));
     std::thread::scope(|scope| {
         let reader = scope.spawn(|| {
@@ -361,7 +382,7 @@ fn run_console(
                             matched += 1;
                             if matched == marker.len() {
                                 next += 1;
-                                observed.lock().unwrap().push(Instant::now());
+                                observed.lock().unwrap().push((Instant::now(), qpc_ns()));
                                 matched = 0;
                             }
                         } else {
@@ -391,30 +412,55 @@ fn run_console(
             });
             let deadline = Instant::now() + Duration::from_secs(command_budget_seconds);
             let mut elapsed = Vec::with_capacity(steps.len());
+            let mut trace = Vec::with_capacity(steps.len());
             let mut last_command = None;
-            for (index, (_, line)) in steps.iter().enumerate() {
+            for (index, (marker, line)) in steps.iter().enumerate() {
                 let mut seen = observed.lock().unwrap().get(index).copied();
                 while seen.is_none() && !job.is_finished() && Instant::now() < deadline {
                     std::thread::sleep(Duration::from_millis(2));
                     seen = observed.lock().unwrap().get(index).copied();
                 }
-                let Some(seen) = seen else {
+                let Some((seen, observed_ns)) = seen else {
                     break;
                 };
                 let duration = last_command.map(|sent| seen.duration_since(sent));
+                let mut sent_ns = None;
                 if !line.is_empty() {
                     last_command = Some(Instant::now());
+                    sent_ns = qpc_ns();
                     if input.write_all(line).is_err() {
                         break;
                     }
                 }
                 elapsed.push(duration);
+                if capture_clock.is_some() {
+                    trace.push(json!({
+                        "marker": std::str::from_utf8(marker).unwrap(),
+                        "observed_qpc_ns": observed_ns,
+                        "command": std::str::from_utf8(line).unwrap(),
+                        "sent_qpc_ns": sent_ns,
+                    }));
+                }
             }
             let result = job.join().unwrap();
             let steps = elapsed.len();
             // Final entry bounds the time from the last write to observed
             // process cleanup. The step count covers console markers only.
             elapsed.push(last_command.map(|sent| sent.elapsed()));
+            if let Some(path) = trace_path {
+                let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap()).unwrap();
+                let evidence = json!({
+                    "schema": "reel.installation-station-console-trace.v1",
+                    "clock": "windows-qpc-nanoseconds",
+                    "request_sha256": reel::production::sha256_bytes(&fs::read(request).unwrap()),
+                    "process_observed_exit_qpc_ns": qpc_ns(),
+                    "process_exited_successfully": result.is_ok(),
+                    "steps": trace,
+                });
+                serde_json::to_writer_pretty(&mut file, &evidence).unwrap();
+                file.as_file().sync_all().unwrap();
+                file.persist_noclobber(path).unwrap();
+            }
             (result, steps, elapsed)
         });
         drop(input);

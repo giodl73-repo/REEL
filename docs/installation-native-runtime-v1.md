@@ -730,6 +730,14 @@ observation point that produced it:
 Record human listening, operator usability and rights review separately from
 these measurements.
 
+For the opt-in station console tests, set `REEL_INSTALLATION_CONSOLE_TRACE`
+to a new absolute JSON path to retain command send, visible status and
+process-exit timestamps. The private trace includes the session-request hash.
+Its Windows QPC nanosecond timestamps share the WASAPI packet clock domain.
+The command send timestamp precedes the application's cooked-line receipt,
+and the console observation comes after rendering. Use these as outer bounds
+when comparing them with capture.
+
 `actual_station_status_acknowledgement_meets_outer_deadline` times from
 before typing Status into the pseudoconsole to the reader observing its
 numbered Ready acknowledgement. This bounds the application's receipt-to-display
