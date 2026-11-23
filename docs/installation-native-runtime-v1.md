@@ -739,6 +739,12 @@ Stop reply on the pinned Dell session. Start's numbered reply records
 Starting. Stop's reply records Stopped. Physical onset and quiescence still
 require independently synchronized capture.
 
+`actual_station_restart_acknowledges_and_returns_to_pass_one` exercises a
+fresh check and native reopen after Stop. On the pinned Dell session,
+Restart's numbered acknowledgement took 15.0 ms. The console reported
+Playing on pass one 923.7 ms after sending Restart. The latter bounds the
+return to visible Playing. Physical onset still requires capture.
+
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
 The controller still tracks every callback cursor, but publishes cursor-only

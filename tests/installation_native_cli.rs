@@ -183,6 +183,26 @@ fn actual_station_start_and_stop_acknowledgements_meet_outer_deadline() {
 }
 
 #[cfg(windows)]
+#[test]
+#[ignore = "explicit native restart timing; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_restart_acknowledges_and_returns_to_pass_one() {
+    let elapsed = run_station(
+        &[
+            (b"Ready p", b"start\r"),
+            (b"Playing p1", b"stop\r"),
+            (b"Stopped p1", b"restart\r"),
+            (b"Command 3: Restarting", b""),
+            (b"Playing p1", b"quit\r"),
+        ],
+        50,
+    );
+    assert_acknowledgement_time("Restart", elapsed[3]);
+    let reopened = elapsed[4].expect("Restart playback observation missing");
+    println!("Restart sent to visible Playing: {reopened:?}");
+    assert!(reopened <= std::time::Duration::from_secs(35));
+}
+
+#[cfg(windows)]
 fn assert_acknowledgement_time(command: &str, duration: Option<std::time::Duration>) {
     let duration = duration.expect("command timing missing");
     println!("{command} sent to console acknowledgement: {duration:?}");
