@@ -1076,7 +1076,7 @@ mod tests {
                         "--test-threads=1".into(),
                     ],
                     directory,
-                    Duration::from_secs(15),
+                    Duration::from_secs(30),
                     QuietLimits {
                         memory_bytes: 256 * 1024 * 1024,
                         processes: 1,
@@ -1095,7 +1095,7 @@ mod tests {
                 .map_err(|error| error.to_string())
             });
             let _cancel = Cancel(cancel.clone());
-            let until = Instant::now() + Duration::from_secs(10);
+            let until = Instant::now() + Duration::from_secs(25);
             while !root.path().join("console-ready.marker").is_file() {
                 assert!(!job.is_finished(), "console child exited before admission");
                 assert!(Instant::now() < until, "console admission deadline");

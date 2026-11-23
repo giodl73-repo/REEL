@@ -98,15 +98,15 @@ objects. A blocked read therefore cannot serialize an unrelated write on the
 same synchronous handle. Its owned reader/writer threads exchange bounded
 packets; controller/callback code polls queues. The worker now routes guarded
 admission and real transport events. `ParentSession` routes foreground protocol
-and command credits. The actual console links still require integration; there
-is no implemented Run command.
+and command credits. The Windows Run command drives both the console and the
+contained worker.
 
 ```mermaid
 flowchart LR
     accTitle: Separate one-way pipes isolate blocked command and report I/O
-    accDescr: ParentSession and WorkerSession exchange guarded commands and observations through owned pipe I/O. ParentSession keeps command credits through worker confirmation of display. The actual terminal still needs integration. Both actual worker pipe peers must match the PID held by the existing process runner.
-    console["Actual terminal surface<br/>(pending)"] -.-> fg["ParentSession<br/>8 credits + display tickets"]
-    fg -.-> console
+    accDescr: ParentSession and WorkerSession exchange guarded commands and observations through owned pipe I/O. ParentSession keeps command credits through worker confirmation of display. Both actual worker pipe peers must match the PID held by the existing process runner.
+    console["Windows console<br/>cooked input and rendering"] --> fg["ParentSession<br/>8 credits + display tickets"]
+    fg --> console
     fg --> cq["8-command queue<br/>owned writer thread"]
     cq --> cp["Local command pipe<br/>owned reader thread"]
     cp --> worker["Authenticated WorkerSession<br/>actual controller + source checks"]
@@ -183,7 +183,7 @@ commands. They are bounded by the same frame limit:
 | Direction / message | Required relationship |
 | --- | --- |
 | Worker `hello` → parent `authorize` | Both actual OS pipe peers, random run context, exact request hash and actual image hash agree with the held runtime/worker. Bootstrap is accepted once. |
-| Worker `transcript` → parent `text_shown` | Exact admitted UTF-8 text/hash; acknowledgement names that same hash and at least 80×30 / UTF-8 input and output observations. Actual console measurement/display still belongs to the pending operator implementation. |
+| Worker `transcript` → parent `text_shown` | The Windows renderer writes the exact admitted text and reads back its cells before acknowledgement. The acknowledgement carries the original hash and observed UTF-8 code pages and dimensions of at least 80×30. |
 | Parent `control` | Canonical command, consecutive unique ID and nondecreasing complete-receipt counter within the Run clock domain. The worker retains each of eight outstanding IDs through actual application/refusal and matching display acknowledgement. |
 | Worker `ack` / `preparation_ack` → parent `ack_shown` | Match an actually emitted command report, its ID and frame generation. Display counter cannot precede that report or be in the future. A parsed display claim is not console-rendering evidence. |
 | Worker `credit_released` → parent credit pool | Only after the worker accepts `ack_shown`. ID/generation must match an acknowledged and displayed command; its counter cannot precede display. Queueing `ack_shown` alone does not free foreground credit. |
@@ -289,7 +289,7 @@ that origin before setup so setup counts against the same lifetime.
 sequenceDiagram
     accTitle: Exact originals and two acknowledgements precede output
     accDescr: The worker verifies both parent peers, then exchanges Hello and Authorize. Only then does source checking run. The exact transcript is sent and its display acknowledged before endpoint metadata probing and Ready. Start produces an actual core acknowledgement. Its display acknowledgement must return before stream startup. The real callback receives the same prepared core.
-    participant P as Foreground (pending)
+    participant P as Foreground
     participant W as WorkerSession
     participant S as Guarded source thread
     participant C as Actual controller/core
@@ -347,7 +347,7 @@ sequenceDiagram
     accDescr: Complete foreground line receipt reserves one of eight credits. The worker applies or refuses the actual command. ParentSession issues a display ticket. Only after rendering confirmation does it send AckShown; the worker accepts it and returns CreditReleased. ParentSession then frees that credit. All deadlines retain the original foreground receipt time.
     participant P as ParentSession (8 credits)
     participant W as WorkerSession
-    participant D as Console actor (pending)
+    participant D as Console actor
     P->>P: Complete line receipt; reserve ID and original QPC
     P->>W: Control with ID/generation/receipt
     W-->>P: Actual application/refusal acknowledgement
@@ -535,12 +535,10 @@ error cancels through the existing tree cleanup before the call returns. The
 original `run_quiet` callers keep their existing path and incur no new process
 memory queries. No second launcher, cache or telemetry store was added.
 
-These observations supply the ownership facts needed for private-pipe peer
-verification in the contained protocol tests; the complete production owner
-integration is still pending. They measure only the primary
-process's peak working set. A zero/failed observation cannot qualify memory use,
-and the session must still measure its foreground process and enforce the
-combined 512 MiB envelope. Job committed-memory limits are a different metric.
+The production launcher uses these observations to verify the worker's private
+pipe peer and measure its peak working set. It measures the foreground peak
+separately and enforces the combined 512 MiB envelope. Job committed-memory
+limits also apply.
 The observer runs on the existing runner thread, whose 250 ms monitor cadence
 cannot replace the session's 20 ms controller or 100 ms acknowledgement rules.
 
@@ -598,9 +596,9 @@ checklists. These are review lenses, not independent reviewers or approvals.
 | Guarded original reads and strict bounded invocation | `held_original_input_denies_mutation_and_rename_without_executable_requirement`, request-shape/cancellation/deadline and CLI cases. Passed locally. |
 | Startup Stop retains the actual session | Native-ready handoff, Stop before first owned fill and cancelled blocked-open controlled-backend cases passed locally. Foreground/contained-process integration remains pending. |
 | Callback teardown returns pending ownership | Drop-before-first-fill, queued Stop, completion, preempted writer and racing return cases passed locally. Actual native error/close integration remains pending. |
-| Exact private wire context | Framing, actual peers, strict bodies, held runtime/request authentication and scope at actual core application passed locally. Whole-session orchestration, parent observation ordering and actual display proof remain pending. |
+| Exact private wire context | Framing, actual peers, strict bodies, held runtime/request authentication and scope at actual core application passed locally. The headless CLI test covers the missing-source fault through display, cooked Quit and process exit. |
 | Aggregate clocks and source verification cancellation | Source port shares the Run origin and one initial/fresh-check deadline; queued cancellation/expiry and real original rechecks passed locally. Complete foreground Start/Restart aggregates, Stop/Quit integration and blocked-operation containment remain pending. |
-| Exact persistent text and line commands | Actual Windows console, Spanish cells, paste/scroll/resize, ordinary EOF/Ctrl+C, blocked I/O and bounded cleanup; pending. |
+| Exact persistent text and line commands | Headless Windows fixtures cover Spanish cells, repeated cooked lines, resize refusal, EOF, Ctrl+C and console restoration. Blocked output and operator usability still need station verification. |
 | Real contained lifecycle and unchanged PCM | Controlled native output port passed source/interval sample oracles, allocation/free, cancelled handoff, oversized period/buffer and actual mock-stream close tests. Actual contained worker/driver lifecycle remains pending. |
 
 No complete M12b.2, actual playback, device/listening/usability or release claim

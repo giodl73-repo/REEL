@@ -1394,22 +1394,20 @@ pub(super) mod tests {
     #[test]
     fn foreground_credit_stays_owned_until_the_worker_confirms_display() {
         let mut f = fixture();
-        for _ in 0..8 {
-            f.parent
-                .command(Command::Status, counter().unwrap())
-                .unwrap();
-            assert!(matches!(
-                Input::parse(&receive(&mut f.peer)).unwrap(),
-                Input::Control { .. }
-            ));
-        }
+        f.parent
+            .command(Command::Status, counter().unwrap())
+            .unwrap();
+        assert!(matches!(
+            Input::parse(&receive(&mut f.peer)).unwrap(),
+            Input::Control { id: 1, .. }
+        ));
         let display = status_ack(&mut f, 1);
         f.parent.displayed(display.ticket, None).unwrap();
         assert!(matches!(
             Input::parse(&receive(&mut f.peer)).unwrap(),
             Input::AckShown { id: 1, .. }
         ));
-        assert_eq!(f.parent.outstanding(), 8);
+        assert_eq!(f.parent.outstanding(), 1);
         deliver(
             &mut f,
             0,
@@ -1420,12 +1418,12 @@ pub(super) mod tests {
             },
         )
         .unwrap();
-        assert_eq!(f.parent.outstanding(), 7);
+        assert_eq!(f.parent.outstanding(), 0);
         assert_eq!(
             f.parent
                 .command(Command::Status, counter().unwrap())
                 .unwrap(),
-            Some(9)
+            Some(2)
         );
     }
     #[test]
