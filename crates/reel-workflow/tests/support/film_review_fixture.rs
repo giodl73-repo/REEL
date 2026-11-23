@@ -76,6 +76,7 @@ pub fn fixture() -> (Report, Memory) {
                 method: Method::ModelReport,
                 observation: "Revisar el detalle de la orilla.\nConservar el texto español.".into(),
                 evidence: vec![],
+                board_reference: None,
             },
             Finding {
                 id: "finding-2".into(),
@@ -85,6 +86,7 @@ pub fn fixture() -> (Report, Memory) {
                 method: Method::HumanReport,
                 observation: "Check the transition on this language's clock.".into(),
                 evidence: vec![],
+                board_reference: None,
             },
         ],
     };

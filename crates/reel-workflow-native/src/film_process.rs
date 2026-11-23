@@ -78,6 +78,14 @@ struct Outcome {
     error: Option<reel_workflow::Error>,
     outputs: Option<BTreeMap<String, FileRef>>,
 }
+
+#[derive(Serialize)]
+struct RecoveredOutcome<'a> {
+    schema: &'static str,
+    request_sha256: String,
+    check_request_sha256: String,
+    outputs: &'a BTreeMap<String, FileRef>,
+}
 struct Files<'a>(&'a Request);
 fn hash_file(path: &Path, bytes: u64) -> anyhow::Result<String> {
     anyhow::ensure!(bytes <= 64 * 1024 * 1024 * 1024, "process input byte bound");
@@ -372,6 +380,27 @@ fn collect(workspace: &Path, limits: &Limits) -> Result<Rendered> {
         _directories: directories,
     })
 }
+
+fn collect_recovered_render(workspace: &Path, limits: &Limits) -> Result<Rendered> {
+    let output = workspace.join("delivery");
+    if let Err(err) = fs::symlink_metadata(&output) {
+        return Err(if err.kind() == std::io::ErrorKind::NotFound {
+            error(ErrorKind::NeedsRecovery, "film-process-incomplete-render")
+        } else {
+            io_error(err)
+        });
+    }
+    let _output_directory = directory(&output)?;
+    if let Err(err) = fs::symlink_metadata(output.join("receipt.json")) {
+        return Err(if err.kind() == std::io::ErrorKind::NotFound {
+            error(ErrorKind::NeedsRecovery, "film-process-incomplete-render")
+        } else {
+            io_error(err)
+        });
+    }
+    collect(workspace, limits)
+}
+
 fn launch(request: &Request, name: &str) -> Result<BTreeMap<String, FileRef>> {
     let runtime = &request.runtime;
     let _runtime = crate::hold_tool(runtime)?;
@@ -563,6 +592,59 @@ pub fn render(
     check_output_proof(&rendered, &proof)?;
     Ok(rendered)
 }
+
+fn preserve_recovered_outcome(
+    workspace: &Path,
+    render_request: &[u8],
+    check: &Request,
+    proof: &BTreeMap<String, FileRef>,
+) -> Result<()> {
+    let path = workspace.join("render-result.json");
+    let check_request = serde_json::to_vec(check)
+        .map_err(|_| error(ErrorKind::Invalid, "film-process-request-json"))?;
+    let raw = crate::admission::encode(&RecoveredOutcome {
+        schema: "reel.workflow-film-process-recovered-outcome.v1",
+        request_sha256: reel_workflow::digest(render_request),
+        check_request_sha256: reel_workflow::digest(&check_request),
+        outputs: proof,
+    })?;
+    match crate::staging::read_held(&path, reel_workflow::MAX_CONTROL_BYTES as u64) {
+        Ok((existing, _held)) => {
+            if existing == raw {
+                return Ok(());
+            }
+            let original: Outcome = reel_workflow::decode(&existing)?;
+            if original.schema != "reel.workflow-film-process-outcome.v2"
+                || original.request_sha256 != reel_workflow::digest(render_request)
+                || original.error.is_some()
+                || original.outputs.as_ref() != Some(proof)
+            {
+                return Err(error(
+                    ErrorKind::Integrity,
+                    "film-process-original-render-result",
+                ));
+            }
+            return Ok(());
+        }
+        Err(err) if err.kind == ErrorKind::Missing => (),
+        Err(err) => return Err(err),
+    }
+    let persist = || -> std::io::Result<()> {
+        let mut staged = tempfile::Builder::new()
+            .prefix("recovered-render-result-")
+            .tempfile_in(workspace)?;
+        staged.write_all(&raw)?;
+        staged.as_file().sync_all()?;
+        staged.persist_noclobber(path)?;
+        Ok(())
+    };
+    persist().map_err(|_| {
+        error(
+            ErrorKind::NeedsRecovery,
+            "film-process-recovered-outcome-preserve",
+        )
+    })
+}
 /// Reconcile an existing rendered directory without rendering again. Requires
 /// the original request bytes and uses a separate, explicit verification launch.
 pub fn recover(
@@ -592,7 +674,7 @@ pub fn recover(
     if actual != expected {
         return Err(error(ErrorKind::Conflict, "film-process-original-request"));
     }
-    let rendered = collect(directory.path(), limits)?;
+    let rendered = collect_recovered_render(directory.path(), limits)?;
     let mut check = original;
     check.action = Action::Check;
     let proof = if directory.path().join("check-request.json").exists() {
@@ -601,6 +683,7 @@ pub fn recover(
         launch(&check, "check-request.json")?
     };
     check_output_proof(&rendered, &proof)?;
+    preserve_recovered_outcome(directory.path(), &expected, &check, &proof)?;
     Ok(rendered)
 }
 /// Internal trusted child port. The parent must hold source/program/output guards.

@@ -12,6 +12,7 @@ producing project's profile.
 | Protect manual work and retain external results | [`reel-workflow-native`](../crates/reel-workflow-native/README.md) | Explicit native admission, owned staging, immutable unselected ingress, retained readback and original-operation recovery/close |
 | Run an existing film producer | [Owned film CLI](../crates/reel-workflow-native/README.md#owned-film-cli-optional-windows-film-feature) | Optional Windows `film` feature: pinned prepare/run/resume/verify/close, existing media reuse, capacity and scratch preserved |
 | Call an API or workflow proxy | [`reel-workflow-http`](../crates/reel-workflow-http/README.md) | Pinned JSON POSTs, private original-operation evidence and offline resume; proxy result/returns files feed explicit native handoff/retention |
+| View cels, versions and language cues | [`reel-workflow-ui`](../crates/reel-workflow-ui/README.md) | Existing-film scene projection, read-only pinned local board and explicit journal observations; desktop and narrow playback verified with synthetic media. Native previews and episode adoption remain open. |
 | Put stable cel IDs in a scene review movie | [Private cel-ID copies](film-cel-review-v1.md) | Existing delivery-receipt frame ranges, visible IDs and exact source map; candidate output with native retention and issue/fix dispatch separate |
 | Turn film findings into issue drafts | [Exact-baseline findings](workflow-film-findings.md) | Checked movie/map/receipt bytes and exact target frames; private drafts/API bodies with posting, repair and native retention separate |
 | Submit an explicitly authorized finding | [GitHub issue adapter](workflow-github-issues.md) | Existing owned HTTP operation, exact created-response receipt and offline replay; uncertain remote outcomes, repair and selection remain separate |
@@ -43,7 +44,8 @@ voice authority, candidate selection or publication permission.
 The [visual production workspace requirements](workflow-ux-requirements.md)
 describe the near-term cel/cue/page board, existing editor reuse and generic
 git-asset tool/preview handoff gaps. This is proposed UX work, not an existing
-live production dashboard.
+complete live production dashboard. The first local board implementation is
+linked above; native previews and live project integration remain open.
 
 The [protected repair qualification](reviews/workflow-protected-film-repair-review.md)
 verified image and control retention through one synthetic scene repair.
