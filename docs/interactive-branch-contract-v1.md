@@ -87,6 +87,28 @@ language, local cursor and repeat counts. Closing the runtime drops it.
 | Keyboard and text choose the same ID | Both produce the same route and visible state |
 | Identical input trace replayed with the same checked originals | Node visits, selected editions and media-relative event placements agree |
 
+### Completion and repeat trace
+
+Add a `repeat-opening` choice from `choose` to `opening` with a limit of one.
+For this fixture the checked opening begins at 100 ms in EN and 200 ms in ES,
+with confirmed end positions of 900 ms and 1,300 ms respectively. Run the same
+logical trace separately with each language's positions.
+
+| Ordered input | Expected session state |
+| --- | --- |
+| Begin and pause during the opening | Visit 1 is paused on generation 1 at the observed local position |
+| Seek to the checked entry position and resume | Visit 1 resumes on generation 1 at 100 ms in EN or 200 ms in ES |
+| Confirm end and submit an input addressed to visit 1 at the same boundary | Completion enters `choose` at visit 2 before the visit 1 input is evaluated and discarded |
+| Select `repeat-opening` at visit 2 | Visit 3 begins on generation 2 at its language's checked entry position and consumes the repeat budget |
+| Deliver another end observation from generation 1 | Visit 3 remains active |
+| Confirm end for generation 2 | Visit 4 presents `choose` with `repeat-opening` disabled |
+| Submit `repeat-opening`, then `summary` at visit 4 | The first input leaves visit 4 active and the second enters `summary` at visit 5 |
+
+Record the node visits, admitted editions, accepted local positions and
+ignored stale events. Compare those fields across two replays in the same
+language. Check the selected media positions against the separate EN and ES
+bindings when comparing across languages.
+
 The first M14 fixture uses two choices, both languages and deliberately unequal
 edition durations. Role checks apply the Story and Editor lenses to authored
 order and endings, Platform/Audience to keyboard and exact text access, Sound
