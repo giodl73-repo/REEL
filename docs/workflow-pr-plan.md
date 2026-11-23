@@ -120,6 +120,12 @@ recordings. It prepares affected render bindings and withholds stale downstream
 assemblies. Native orchestration and project adoption remain open; see its
 [scoped review](reviews/workflow-film-rebuild-review.md).
 
+The [native film rebuild binder](workflow-native-film-rebuild.md) connects those
+plans to exact original Git declarations and new per-consumer retained origins.
+The owned film CLI can verify actual still-control derivation under child claims
+before workspace admission/rendering. Live admission and full project adoption
+remain separate; see its [review](reviews/workflow-native-film-rebuild-review.md).
+
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:
 

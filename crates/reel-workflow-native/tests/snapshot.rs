@@ -13,12 +13,18 @@ use tig_core::{LogicalPath, Object};
 use tig_git::{annex::identity::Key, source::native::annex::Binding};
 
 #[cfg(windows)]
+#[path = "support/film_rebuild.rs"]
+mod film_rebuild_cases;
+#[cfg(windows)]
 #[path = "support/image_selection.rs"]
 mod image_selection_cases;
 #[path = "support/upstream.rs"]
 #[cfg(windows)]
 mod upstream_cases;
 
+#[cfg(all(windows, feature = "film"))]
+#[path = "support/film_controls.rs"]
+mod film_control_cases;
 #[cfg(all(windows, feature = "film"))]
 #[path = "support/film_job.rs"]
 mod film_job;
@@ -1089,6 +1095,7 @@ fn owned_film_cli_runs_pinned_tickets_and_preserves_capacity_and_identity() {
             owner: profile.scope.owner.clone(),
         },
         close_operation: tig_store::Key::parse("owned-cli-close-1").unwrap(),
+        control_derivation: None,
     };
     let raw = serde_json::to_vec(&request).unwrap();
     let pin = digest(&raw);

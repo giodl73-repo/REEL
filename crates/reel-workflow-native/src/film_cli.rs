@@ -53,6 +53,9 @@ pub struct Request {
     pub workspace: WorkspaceProfile,
     pub retained: crate::retention::Target,
     pub close_operation: tig_store::Key,
+    /// Optional exact still-repair intent. Old requests serialize unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub control_derivation: Option<crate::film_controls::Derivation>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +174,11 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
     )?
     .reopen(&request.receipt)?;
     let mut native = NativeInputs::from_claims(&request.packet, &request.source, claims)?;
+    let control_verification = request
+        .control_derivation
+        .as_ref()
+        .map(|spec| crate::film_controls::verify(&request.packet, &mut native, spec))
+        .transpose()?;
     let bound = film_task::bind(&request.packet, &mut native)?;
     let maximum = bound
         .request()
@@ -213,10 +221,13 @@ pub fn prepare(request: &Request, request_pin: &str) -> Result<Ticket> {
     fs::create_dir(root.path().join("work")).map_err(io_error)?;
     let work = open_workspace_directory(&root.path().join("work"))
         .map_err(|_| error(ErrorKind::Denied, "film-cli-work-namespace"))?;
-    let intent = admission::encode(
-        &serde_json::json!({"schema":"reel.workflow-film-owned-workspace.v1","request_sha256":request_pin,
-        "operation_identity":operation_identity,"parent_identity":parent.identity(),"root_identity":root.identity(),"work_identity":work.identity()}),
-    )?;
+    let mut intent = serde_json::json!({"schema":"reel.workflow-film-owned-workspace.v1","request_sha256":request_pin,
+        "operation_identity":operation_identity,"parent_identity":parent.identity(),"root_identity":root.identity(),"work_identity":work.identity()});
+    if let Some(verified) = control_verification {
+        intent["control_verification"] = serde_json::to_value(verified)
+            .map_err(|_| error(ErrorKind::Invalid, "film-cli-control-verification-json"))?;
+    }
+    let intent = admission::encode(&intent)?;
     persist_new(&root.path().join("intent.json"), &intent)?;
     let ticket = Ticket {
         schema: "reel.workflow-film-workspace-ticket.v1".into(),
@@ -349,11 +360,12 @@ pub fn execute(
                     &request.receipt.attempt_id,
                 )?
                 .reopen(&request.receipt)?;
-                film_task::run(
-                    &request.packet,
-                    NativeInputs::from_claims(&request.packet, &request.source, claims)?,
-                    invocation,
-                )?
+                let mut native =
+                    NativeInputs::from_claims(&request.packet, &request.source, claims)?;
+                if let Some(spec) = &request.control_derivation {
+                    crate::film_controls::verify(&request.packet, &mut native, spec)?;
+                }
+                film_task::run(&request.packet, native, invocation)?
             } else {
                 film_task::resume(
                     &request.packet,
