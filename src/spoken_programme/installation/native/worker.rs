@@ -337,7 +337,7 @@ impl WorkerSession {
             Preparation::Stopped
         } else if self.source_fault {
             Preparation::Fault
-        } else if self.core.is_some() {
+        } else if self.core.is_some() && !self.shown {
             Preparation::AwaitingText
         } else {
             Preparation::Checking
@@ -346,14 +346,17 @@ impl WorkerSession {
     fn send(&mut self, generation: u64, report: Output) -> Result<()> {
         self.channel.send(generation, &report.bytes()?)
     }
-    fn fault(&mut self) -> Result<()> {
-        self.source_fault = true;
+    fn cancel_preparation(&self) {
         if let Some(source) = &self.source {
             source.request_stop();
         }
         if let Some(probe) = &self.probe {
             probe.cancel();
         }
+    }
+    fn fault(&mut self) -> Result<()> {
+        self.source_fault = true;
+        self.cancel_preparation();
         if let Some(controller) = &mut self.controller {
             controller.abort();
         }
@@ -416,6 +419,7 @@ impl WorkerSession {
         {
             self.expired = true;
             self.closing = true;
+            self.cancel_preparation();
             return Ok(());
         }
         // A peer may refill the queue while we drain it. Bound this batch so
@@ -447,6 +451,7 @@ impl WorkerSession {
         if now >= MAX_SESSION_MS * 1000 {
             self.expired = true;
             self.closing = true;
+            self.cancel_preparation();
             return Ok(());
         }
         if self
@@ -493,9 +498,13 @@ impl WorkerSession {
             }
             if let Some(event) = self.output.as_mut().and_then(OutputWorker::event) {
                 self.probe = None;
-                self.probe_deadline_us = None;
+                let deadline = self.probe_deadline_us.take();
                 match event {
-                    OutputEvent::Probed { .. } => {
+                    OutputEvent::Probed { .. }
+                        if deadline.is_some_and(|deadline| {
+                            self.clock.now_us().is_some_and(|now| now < deadline)
+                        }) =>
+                    {
                         let mut controller = Controller::new(
                             self.core.take().unwrap(),
                             self.output.take().unwrap(),
@@ -630,9 +639,7 @@ impl WorkerSession {
                     self.preparation_ack(id, refusal)?;
                     if command == Command::Quit {
                         self.closing = true;
-                        if let Some(source) = &self.source {
-                            source.request_stop();
-                        }
+                        self.cancel_preparation();
                     }
                 }
             }
