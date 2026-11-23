@@ -3,6 +3,7 @@
   const $ = id => document.getElementById(id);
   const state = {data:null, language:null, scene:null, unit:null, versions:new Map(), cue:null, epoch:0, revision:0, board:null, poll:null};
   const audio = $("audio");
+  let pendingSeek = null;
   const node = (tag, cls, text) => {const n=document.createElement(tag);if(cls)n.className=cls;if(text!==undefined)n.textContent=text;return n;};
   const clock = seconds => `${String(Math.floor(seconds/60)).padStart(2,"0")}:${(seconds%60).toFixed(2).padStart(5,"0")}`;
   const versions = unit => unit.versions.filter(v=>!v.language || v.language===state.language);
@@ -29,7 +30,7 @@
   function selectUnit(unit) {
     state.unit=unit.id;renderGrid();renderInspector();
     const span=unit.spans.find(s=>s.language===state.language);
-    if(span){setCue(span.cue_id);const seconds=span.start_sample/activeCue().sample_rate;if(audio.readyState>0)audio.currentTime=seconds;else audio.addEventListener("loadedmetadata",()=>audio.currentTime=seconds,{once:true});}
+    if(span){setCue(span.cue_id);seekCue(span.start_sample);}
   }
   function renderGrid() {
     const container=$("storyboard");container.replaceChildren();
@@ -67,14 +68,25 @@
     for(const [label,value] of [["Story",unit.story_id],["Semantic event",unit.semantic_id],["Asset",version?.asset.logical_id],["SHA-256",version?.asset.sha256],["Approval",recorded?"Reference recorded; authority not verified by this viewer.":"No approval reference on this version."]]){if(value){list.append(node("dt","",label),node("dd","",value));}}details.append(list);root.append(details);
     for(const approval of approvals){const exact=exactSubject(approval.subject,version?.asset);list.append(node("dt","",exact?"Approval reference · exact subject, authority unverified":"Approval reference · different subject, does not approve this version"),node("dd","",`${approval.subject.logical_id} · ${approval.subject.sha256}`),node("dt","","Evidence"),node("dd","",`${approval.evidence.logical_id} · ${approval.evidence.sha256}`));}
   }
+  function seekCue(sample) {
+    const cue = activeCue();
+    if (!cue?.preview) return;
+    pendingSeek = sample / cue.sample_rate;
+    applyPendingSeek();
+  }
+  function applyPendingSeek() {
+    if (pendingSeek === null || audio.readyState < 1) return;
+    audio.currentTime = pendingSeek;
+    pendingSeek = null;
+  }
   function setCue(id) {
     const cue=state.data.cues.find(c=>c.id===id&&c.language===state.language);
-    if(!cue){audio.pause();audio.removeAttribute("src");state.cue=null;$("cue-title").textContent="No cue in this language";$("cue-clock").textContent="";$("markers").replaceChildren();return;}
+    if(!cue){pendingSeek=null;audio.pause();audio.removeAttribute("src");state.cue=null;$("cue-title").textContent="No cue in this language";$("cue-clock").textContent="";$("markers").replaceChildren();return;}
     const same=state.cue===id && audio.getAttribute("src")===cue.preview;state.cue=id;
-    if(!same){audio.pause();if(cue.preview)audio.src=cue.preview;else audio.removeAttribute("src");}
+    if(!same){pendingSeek=null;audio.pause();if(cue.preview)audio.src=cue.preview;else audio.removeAttribute("src");}
     $("cue-title").textContent=cue.title;$("cue-clock").textContent=`${cue.language.toUpperCase()} · ${cue.sample_rate.toLocaleString()} Hz · ${cue.samples.toLocaleString()} samples`;
     $("audio-status").textContent=cue.preview?"Selected recording · press Play to listen. Source text and clocks remain unchanged.":"No preview declared for this selected recording.";
-    const markers=$("markers");markers.replaceChildren();for(const marker of cue.markers){const button=node("button","marker",marker.word);button.dataset.sample=marker.sample;button.title=marker.semantic_id;button.append(node("time","",clock(marker.sample/cue.sample_rate)));button.addEventListener("click",()=>{audio.currentTime=marker.sample/cue.sample_rate;});markers.append(button);}highlight();
+    const markers=$("markers");markers.replaceChildren();for(const marker of cue.markers){const button=node("button","marker",marker.word);button.dataset.sample=marker.sample;button.title=marker.semantic_id;button.append(node("time","",clock(marker.sample/cue.sample_rate)));button.addEventListener("click",()=>seekCue(marker.sample));markers.append(button);}highlight();
   }
   function highlight(){const cue=activeCue();if(!cue)return;const sample=Math.floor((audio.currentTime||0)*cue.sample_rate);$("playhead").textContent=clock(audio.currentTime||0);
     for(const card of document.querySelectorAll(".unit-card")){const unit=state.data.units.find(u=>u.id===card.dataset.unit);card.classList.toggle("is-playing",!audio.paused&&unit.spans.some(s=>s.language===state.language&&s.cue_id===cue.id&&sample>=s.start_sample&&sample<s.end_sample));}
@@ -96,6 +108,6 @@
   $("story-tab").addEventListener("click",()=>{ $("storyboard").hidden=false;$("cue-sheet").hidden=true;$("story-tab").setAttribute("aria-selected","true");$("cue-tab").setAttribute("aria-selected","false");});
   $("cue-tab").addEventListener("click",()=>{$("storyboard").hidden=true;$("cue-sheet").hidden=false;$("story-tab").setAttribute("aria-selected","false");$("cue-tab").setAttribute("aria-selected","true");});
   for(const event of ["timeupdate","play","pause","ended"])audio.addEventListener(event,highlight);
-  audio.addEventListener("loadedmetadata",()=>{const cue=activeCue();if(cue&&Math.abs(audio.duration-cue.samples/cue.sample_rate)>.1)$("audio-status").textContent="Preview duration differs from the declared take clock. No timing was changed.";});audio.addEventListener("error",()=>$("audio-status").textContent="Recording preview unavailable. The selected take and its clock are preserved.");
+  audio.addEventListener("loadedmetadata",()=>{applyPendingSeek();const cue=activeCue();if(cue&&Math.abs(audio.duration-cue.samples/cue.sample_rate)>.1)$("audio-status").textContent="Preview duration differs from the declared take clock. No timing was changed.";});audio.addEventListener("error",()=>{pendingSeek=null;$("audio-status").textContent="Recording preview unavailable. The selected take and its clock are preserved.";});
   refresh();state.poll=setInterval(()=>refresh(),2000);
 })();
