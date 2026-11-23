@@ -714,8 +714,13 @@ The pinned source independently passed `check-session`. Windows enumerated
 the Dell endpoint only as a non-present device. The same silent fixture on the
 enrolled CA-2890 opened successfully and reported a 480-frame period, five
 callbacks, a largest observed callback of 1,056 frames and zero submitted
-source frames. The Dell attempts establish absence before playback. Live
-disconnect and terminal cleanup during playback still require a station run.
+source frames. The Dell attempts establish absence before playback.
+
+A new private session retained the exact `f42b864` runtime and checked source
+and selected the previously enrolled CA-2890 endpoint. After `check-session`
+passed, the undrained-output test reached live playback and observed successful
+process exit 248.96 ms after EOF. This run used synthetic playback and no audio
+capture. Live disconnect and isolated render-mix measurement remain open.
 
 The opt-in test `capture::record_isolated_station_loopback` records the pinned
 render endpoint's WASAPI loopback. On an isolated synthetic test output, set
