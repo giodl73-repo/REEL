@@ -32,6 +32,11 @@ The installation contract requires 4,800 silent sample frames at both ends of
 the admitted range. For the shared-source run, author a new synthetic take
 version with sufficient leading silence, then compile and check its affected
 editions. Use the newly checked chapter bounds for the installation selection.
+The [existing installation test fixture](../tests/support/spoken_installation.rs)
+already generates a quiet-seam variant and uses stereo markers to identify
+its boundaries. Its shortened, opening-only programme covers the station
+profile. Reuse that signal construction for the selected take while preserving
+the full shared programme needed by the other deliveries.
 Retain the baseline fixture and version history so the changed source and its
 consuming sample intervals can be compared directly. Obtain the station and
 listening evidence for the selected version separately.
