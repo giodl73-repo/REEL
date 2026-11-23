@@ -25,7 +25,7 @@ pub use recovery::cli::{adopt_prepared, retain_published, retire_workspace};
 pub use recovery::salvage::salvage_workspace;
 pub use recovery::{RecoveryBudget, adopt_prepared_result};
 
-trait ResourceView {
+pub(crate) trait ResourceView {
     fn selection(&self) -> &Selection;
     fn of(&self, role: Role) -> &std::collections::BTreeSet<Object>;
 }
@@ -345,7 +345,7 @@ pub fn run_with_dependencies(
 pub(crate) fn resume_with_dependencies(
     root: &Path,
     manifest: &Path,
-    resources: &JobContext,
+    resources: &dyn ResourceView,
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
     checkpoint: (&Path, &Object),
@@ -371,7 +371,7 @@ enum RunMode<'a> {
 fn run_inner(
     root: &Path,
     manifest: &Path,
-    resources: &JobContext,
+    resources: &dyn ResourceView,
     journal: &mut SourceJournal,
     profile: &Profile<'_>,
     mode: RunMode<'_>,

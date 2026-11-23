@@ -2,7 +2,7 @@
 use super::*;
 use crate::tig_scene_production::jobs::reference::ReferencePlan;
 
-fn check(t: &Ticket, journal: &mut SourceJournal) -> Result<()> {
+pub(super) fn check(t: &Ticket, journal: &mut SourceJournal) -> Result<()> {
     let state = journal
         .source(&key(&t.source_id)?)
         .context("episode worker source journal read")?
@@ -59,6 +59,35 @@ fn temporary_sources(t: &Ticket) -> Result<Vec<String>> {
         .map(|label| identity(t, &label).map(|id| id.source.as_str().to_owned()))
         .collect()
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct NormalizationPrefix {
+    schema: String,
+    ticket: Object,
+    segments: Vec<crate::scene_delivery::FileRef>,
+}
+
+fn staged_normalization_prefix(ticket: &Object) -> Result<Vec<crate::scene_delivery::FileRef>> {
+    // The admitted runner stages this declaration as checkpoint evidence.
+    // Fresh jobs stage no prefix. Never discover segments from file names.
+    let path = Path::new("native-normalization/resume.json");
+    match fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Ok(meta) if meta.is_file() && !meta.is_symlink() => {}
+        Ok(_) => bail!("native normalization resume declaration is not a regular file"),
+        Err(error) => return Err(error.into()),
+    }
+    let prefix: NormalizationPrefix = read(path, 256 * 1024, None)?;
+    if prefix.schema != "reel.native-episode-normalization-prefix.v1"
+        || &prefix.ticket != ticket
+        || prefix.segments.is_empty()
+        || prefix.segments.len() > 4096
+    {
+        bail!("native normalization resume declaration differs from the original ticket or bounds");
+    }
+    Ok(prefix.segments)
+}
+
 /// Internal trusted route. Use run() for capacity, process-tree containment,
 /// timeout, result retention and root-source authority.
 pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
@@ -394,7 +423,12 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
     let parent_plan = tig_episode::plan(&mut source, &t.inputs.request)?;
     let controls = tig_episode::ParentControls::open(archive.byte_source, &parent_plan.conform)?;
     check(&t, &mut journal)?;
-    let rendered = parent.assemble(
+    let prefix = if t.preserve_workspace_on_failure {
+        staged_normalization_prefix(expected)?
+    } else {
+        Vec::new()
+    };
+    let rendered = parent.assemble_with_checkpoint(
         &source,
         &children,
         &mut journal,
@@ -405,6 +439,16 @@ pub fn worker(path: &Path, expected: &Object) -> Result<Value> {
             inputs: &BTreeMap::new(),
             outputs: &BTreeMap::new(),
         },
+        tig_episode::PresentationComponents {
+            files: &BTreeMap::new(),
+            controls: &BTreeMap::new(),
+        },
+        t.preserve_workspace_on_failure
+            .then_some(crate::episode_conform::NativeNormalization {
+                ticket_sha256: expected.sha256.as_str(),
+                prefix: &prefix,
+                pause_after: t.pause_after_normalized_segments,
+            }),
     )?;
     let actual = rendered
         .outputs()
