@@ -152,6 +152,8 @@ impl ConsoleSurface {
         };
         let stop = Arc::new(AtomicBool::new(false));
         let requested = stop.clone();
+        let invalid = Arc::new(AtomicBool::new(false));
+        let invalid_line = invalid.clone();
         let thread = std::thread::Builder::new()
             .name("reel-console-input".into())
             .spawn(move || {
@@ -160,7 +162,11 @@ impl ConsoleSurface {
                     if requested.load(Ordering::Acquire) {
                         break;
                     }
-                    if result? == ConsoleRead::Eof {
+                    let outcome = result?;
+                    if outcome == ConsoleRead::Invalid {
+                        invalid_line.store(true, Ordering::Release);
+                    }
+                    if outcome == ConsoleRead::Eof {
                         // Cooked input can return zero before Windows schedules
                         // the Ctrl+C handler. Keep the read receipt and allow
                         // the handler to publish its own receipt first.
@@ -175,6 +181,7 @@ impl ConsoleSurface {
         self.reader_started = true;
         Ok(ConsoleReader {
             stop,
+            invalid,
             thread: Some(thread),
         })
     }
@@ -548,7 +555,19 @@ impl ConsoleForeground {
             self.parent
                 .poll_console_input(&mut self.input, &mut self.reader)?;
         }
-        self.parent.tick_with_renderer(&mut self.renderer)
+        self.parent.tick_with_renderer(&mut self.renderer)?;
+        if !self.parent.quit_requested()
+            && !self.renderer.pending()
+            && self.reader.invalid.swap(false, Ordering::AcqRel)
+        {
+            let status = if self.parent.failed() {
+                "Fault | Invalid command"
+            } else {
+                "Invalid command"
+            };
+            self.renderer.queue(RenderRequest::Status(status))?;
+        }
+        Ok(())
     }
     pub fn quit_requested(&self) -> bool {
         self.parent.quit_requested()
@@ -581,9 +600,14 @@ impl ConsoleForeground {
 }
 
 /// A single in-flight display ticket keeps output ordered and bounded.
+enum RenderRequest {
+    Ticket(DisplayItem),
+    Status(&'static str),
+}
+
 pub struct ConsoleRenderer {
-    requests: Option<std::sync::mpsc::SyncSender<DisplayItem>>,
-    rendered: std::sync::mpsc::Receiver<Result<Rendered>>,
+    requests: Option<std::sync::mpsc::SyncSender<RenderRequest>>,
+    rendered: std::sync::mpsc::Receiver<Result<Option<Rendered>>>,
     thread: Option<JoinHandle<()>>,
     pending: bool,
 }
@@ -597,8 +621,11 @@ impl ConsoleRenderer {
         let thread = std::thread::Builder::new()
             .name("reel-console-output".into())
             .spawn(move || {
-                while let Ok(item) = input.recv() {
-                    let result = surface.render(item);
+                while let Ok(request) = input.recv() {
+                    let result = match request {
+                        RenderRequest::Ticket(item) => surface.render(item).map(Some),
+                        RenderRequest::Status(status) => surface.status(status).map(|()| None),
+                    };
                     let failed = result.is_err();
                     if output.send(result).is_err() || failed {
                         break;
@@ -613,11 +640,14 @@ impl ConsoleRenderer {
         })
     }
     pub fn submit(&mut self, item: DisplayItem) -> Result<()> {
+        self.queue(RenderRequest::Ticket(item))
+    }
+    fn queue(&mut self, request: RenderRequest) -> Result<()> {
         ensure!(!self.pending, "installation console already rendering");
         self.requests
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("installation renderer closed"))?
-            .try_send(item)
+            .try_send(request)
             .map_err(|_| anyhow::anyhow!("installation renderer unavailable"))?;
         self.pending = true;
         Ok(())
@@ -629,7 +659,7 @@ impl ConsoleRenderer {
         match self.rendered.try_recv() {
             Ok(result) => {
                 self.pending = false;
-                result.map(Some)
+                result
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
@@ -662,6 +692,7 @@ impl Drop for ConsoleRenderer {
 
 pub struct ConsoleReader {
     stop: Arc<AtomicBool>,
+    invalid: Arc<AtomicBool>,
     thread: Option<JoinHandle<Result<Option<i64>>>>,
 }
 impl ConsoleReader {
@@ -881,6 +912,7 @@ mod tests {
             assert!(Instant::now() < deadline, "cooked reader EOF deadline");
             std::thread::sleep(Duration::from_millis(2));
         }
+        assert!(reader.invalid.load(Ordering::Acquire));
         let mut last_receipt = 0;
         for (expected_id, expected_command) in [(1, Command::Status), (2, Command::Quit)] {
             let packet = super::super::parent::tests::receive(&mut input_foreground.peer);
@@ -1135,7 +1167,7 @@ mod tests {
                 .input
                 .as_mut()
                 .unwrap()
-                .write_all(b"status\r\x1a\r")
+                .write_all(b"bogus\rstatus\r\x1a\r")
                 .unwrap();
             while !root.path().join("console-interrupt-ready.marker").is_file() {
                 assert!(!job.is_finished(), "console child exited before Ctrl+C");
