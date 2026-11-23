@@ -14,7 +14,18 @@ use tig_store::source_claims::Command;
 #[test]
 #[ignore = "requires native FFmpeg; source-owned retained scenes assemble with old receipts offline"]
 fn verified_scene_owners_assemble_current_parent_and_survive_independent_withdrawal() {
-    let mut p = Project::new();
+    exercise_repaired_master(Project::new());
+}
+
+#[test]
+#[ignore = "requires native FFmpeg and a temporary synthetic episode"]
+fn english_repaired_master_assembles_on_its_own_cue_clock() {
+    let (bootstrap, request) = crate::language_scope::bilingual();
+    exercise_repaired_master(Project::from_scene_fixture(bootstrap, request));
+}
+
+fn exercise_repaired_master(mut p: Project) {
+    let language = p.requests[2].language.clone();
     let mut original = read(p.repo.path().join("records/cel-b.tig"));
     let blue = json!(p.publish("hot", &picture([0, 0, 255])));
     if original["selected"] != blue {
@@ -35,7 +46,7 @@ fn verified_scene_owners_assemble_current_parent_and_survive_independent_withdra
     profile["object"] = json!(p.publish("hot", &serde_json::to_vec(&current_profile).unwrap()));
     write(p.repo.path(), "records/scene-scene-b.tig", &h264_scene);
     p.commit("explicit lossless H264 scene among FFV1 peers");
-    let mut scenes = (0..4)
+    let scenes = (0..4)
         .map(|index| p.render_delivery(index, "v1"))
         .collect::<Vec<_>>();
     p.assemble(&scenes, "v1");
@@ -44,19 +55,71 @@ fn verified_scene_owners_assemble_current_parent_and_survive_independent_withdra
     cel["selected"] = json!(p.publish("hot", &picture([0, 255, 0])));
     write(p.repo.path(), "records/cel-b.tig", &cel);
     p.commit("change one primary cel without changing parent conform");
-    let changed = p.render_delivery(2, "v2");
+    // Render through the workflow still-control transform. The episode must
+    // verify the selected master from current primary inputs and controls.
+    let old = &scenes[2];
+    let job = reel::tig_inputs::read_job(&old.job).unwrap();
     assert_eq!(
-        reel::tig_inputs::read_job(&changed.job)
-            .unwrap()
-            .still_sequence_encoding
-            .as_deref(),
+        job.still_sequence_encoding.as_deref(),
         Some("h264-lossless")
     );
-    let old = std::mem::replace(&mut scenes[2], changed);
+    assert_eq!(job.pictures.len(), 1);
+    let new_picture = picture([0, 255, 0]);
+    let candidate = reel::scene_delivery::repair::derive(
+        &job,
+        &reel::scene_delivery::repair::StillReplacement {
+            schema: "reel.scene-still-replacement.v1".into(),
+            attachments: vec![job.pictures[0].attachment_id.clone()],
+            expected: job.pictures[0].source.clone(),
+            replacement: reel::scene_delivery::FileRef {
+                path: job.pictures[0].source.path.clone(),
+                sha256: Object::from_bytes(&new_picture).sha256.as_str().into(),
+                bytes: new_picture.len() as u64,
+            },
+        },
+    )
+    .unwrap();
+    let candidate_job = old.job.with_file_name("job-repaired.json");
+    fs::write(&candidate_job, serde_json::to_vec(&candidate.job).unwrap()).unwrap();
+    let repaired_output = p.data.path().join("workflow-repaired-scene");
+    let mut repaired_source = p.source();
+    let inputs = repaired_source.prepare(&candidate.job).unwrap();
+    reel::scene_delivery::render_with_inputs(
+        &candidate_job,
+        &p.programs.with_inputs(&inputs),
+        &repaired_output,
+    )
+    .unwrap();
+    drop(inputs);
+    let original_receipt = read(old.output.join("receipt.json"));
+    let repaired_receipt = read(repaired_output.join("receipt.json"));
+    for field in ["content_samples", "delivery_frames"] {
+        assert!(!original_receipt[field].is_null());
+        assert_eq!(original_receipt[field], repaired_receipt[field]);
+    }
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            Object::from_bytes(&fs::read(old.output.join(name)).unwrap()),
+            Object::from_bytes(&fs::read(repaired_output.join(name)).unwrap())
+        );
+    }
+    let master = p.publish(
+        "hot",
+        &fs::read(repaired_output.join("master.mkv")).unwrap(),
+    );
+    let record_path = format!("records/output-{}.tig", UNITS[2]);
+    let mut record = read(p.repo.path().join(&record_path));
+    record["selected"] = json!(master);
+    record["metadata"]
+        .as_object_mut()
+        .unwrap()
+        .remove("production");
+    write(p.repo.path(), &record_path, &record);
     p.commit("select current scene b");
     let parent_files = parent_controls::exercise(&p, &request);
     let mut source = p.source();
     let initial = tig_episode::plan(&mut source, &request).unwrap();
+    assert_eq!(initial.language, language);
     assert_eq!(initial.changed_components, 1);
     let metadata = p.data.path().join("reference-parent-metadata");
     let mut writer = MetadataStore::create(

@@ -2,6 +2,7 @@
 //! normalization/publication and uncertain-operation reconciliation.
 #[cfg(windows)]
 pub mod call;
+pub mod github_issue;
 pub mod proxy;
 use reel_workflow::{Error, ErrorKind, Result};
 use reqwest::{
@@ -240,7 +241,9 @@ impl Prepared {
             schema: "reel.workflow-http-head.v1".into(),
             status,
             content_type: content_type.clone(),
-            request_id: header("request-id").or_else(|| header("x-request-id")),
+            request_id: header("request-id")
+                .or_else(|| header("x-request-id"))
+                .or_else(|| header("x-github-request-id")),
             history_item_id: header("history-item-id"),
         })
         .map_err(|_| {

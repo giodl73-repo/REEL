@@ -6,6 +6,14 @@ license = "MIT"
 publish = false
 description = "Exact native inputs, protected manual handoffs and retained-result recovery for REEL workflows"
 
+# Match the root media workspace: immutable runtime/media hashing should not
+# dominate development qualification. Application assertions remain enabled.
+[profile.dev.package.sha2]
+opt-level = 3
+
+[profile.test.package.sha2]
+opt-level = 3
+
 # Separate workspace/lock: existing producers retain vendor/tig unchanged.
 [workspace]
 

@@ -12,6 +12,21 @@ adds protected manual work and retained close/recovery.
 Bounded film task execution and [owned CLI dispatch #399](https://github.com/giodl73-repo/REEL/pull/399)
 are landed. Episode-scale qualification remains a separate gate. No source merge
 adopts an actual project or production profile.
+
+Additional source landings are [API/proxy transport #402](https://github.com/giodl73-repo/REEL/pull/402),
+[cel-ID review copies #407](https://github.com/giodl73-repo/REEL/pull/407),
+[exact-baseline issue drafts #408](https://github.com/giodl73-repo/REEL/pull/408),
+[explicit issue submission #409](https://github.com/giodl73-repo/REEL/pull/409), and
+[image-candidate repair preparation #410](https://github.com/giodl73-repo/REEL/pull/410),
+[checked large-film output routing #411](https://github.com/giodl73-repo/REEL/pull/411),
+and [owned-selection transactions #412](https://github.com/giodl73-repo/REEL/pull/412).
+These components do not complete W4: approved candidate application, exact
+parent-result rebinding and protected affected-consumer rebuilds remain open.
+The [board #405](https://github.com/giodl73-repo/REEL/pull/405) and
+[film projection #406](https://github.com/giodl73-repo/REEL/pull/406) remain drafts
+pending visual acceptance. Provider/speech integration, packaged tools,
+project-owned adoption/rollback and episode-scale qualification remain the W3b,
+W5 and W6 gates below.
 The [role review](reviews/workflow-pr-plan-review.md) records findings and their
 disposition. Roles are author-applied checklists, not independent reviewers.
 
@@ -68,6 +83,55 @@ Concrete W3a slices:
   streaming composition, long execution and interruption with exact retained outputs.
 
 ## Film acceptance contract
+
+The first W4 producer component is [private cel-ID review copies](film-cel-review-v1.md):
+visible stable targets from an existing scene-delivery receipt, exact frame maps
+and unchanged audio/timestamps. Finding/issue/fix handling, affected rebuilds and
+protected workflow dispatch remain required before W4 is complete.
+
+The merged W4 [owned-selection primitive #412](https://github.com/giodl73-repo/REEL/pull/412) supplies qualified
+exact-base proposals plus expected-ref CAS, immutable operation intent and
+confirmed-completion readback. It has no film selection CLI and is not complete
+W4 acceptance. Wiring retained candidates, exact annex record/leaf replacement,
+project decision authority and protected affected-language/consumer rebuilds
+remains required. See the [scoped review](reviews/workflow-owned-selection-review.md).
+
+The merged [retained-image adapter #413](https://github.com/giodl73-repo/REEL/pull/413) builds on that transaction: live retained ownership,
+project-supplied exact decision authority, immutable decision evidence in Git and
+prospective native record/leaf validation precede owned selection. It clears the
+old status and preserves stable authoring/metadata and exact historical approvals.
+It is a Rust integration component, not the complete film issue/fix/rebuild flow;
+project policy/CLI integration and protected affected-consumer rebuilds are still
+open. See its [scoped review](reviews/workflow-image-selection-review.md).
+
+[Retained child inputs #414](https://github.com/giodl73-repo/REEL/pull/414) adds
+exact parent-output/worker bindings, live retained-parent proof, child-owned
+claims and original-operation recovery in the existing index. Explicit native
+fixtures cover new slot generations and shared retained owners. An actual short
+film child consumed the retained image through the existing contained renderer
+and retained/recovered/closed its result. This supplies protected dependency
+inputs; real-project control derivation, affected-language scheduling and the
+complete issue/fix/rebuild application remain open. See its
+[scoped review](reviews/workflow-retained-children-review.md).
+
+The [candidate film rebuild adapter](workflow-film-rebuild.md) derives exact
+still-replacement controls while preserving each language's existing clock and
+recordings. It prepares affected render bindings and withholds stale downstream
+assemblies. Native orchestration and project adoption remain open; see its
+[scoped review](reviews/workflow-film-rebuild-review.md).
+
+An explicit [protected repair qualification](reviews/workflow-protected-film-repair-review.md)
+reused a completed synthetic film's selected inputs and renderer, retained new
+image/control parents and rebuilt their consumer through the native binder.
+Original-operation continuation, unchanged actual audio/clocks and retained
+historical readback passed. This is one Spanish scene, not full bilingual
+assembly, project adoption or episode-scale acceptance.
+
+The [native film rebuild binder](workflow-native-film-rebuild.md) connects those
+plans to exact original Git declarations and new per-consumer retained origins.
+The owned film CLI can verify actual still-control derivation under child claims
+before workspace admission/rendering. Live admission and full project adoption
+remain separate; see its [review](reviews/workflow-native-film-rebuild-review.md).
 
 W2 defines these choices; W3 and W4 implement or explicitly reject them according
 to the selected producer's capabilities:

@@ -274,23 +274,46 @@ impl Prepared {
         result: &reel_workflow::ReturnedResult,
         acknowledgement: &Acknowledgement,
     ) -> Result<Vec<reel_assets::admission::MetadataLock>> {
+        let mut session = RetainedFences::default();
+        self.verify_retained_in(receipt, result, acknowledgement, &mut session)?;
+        Ok(session.held)
+    }
+    pub(crate) fn verify_retained_in(
+        &self,
+        receipt: &Receipt,
+        result: &reel_workflow::ReturnedResult,
+        acknowledgement: &Acknowledgement,
+        session: &mut RetainedFences,
+    ) -> Result<()> {
         self.check_receipt(receipt)?;
         let (mut index, mut nodes) = self.stores(Some(receipt))?;
         self.retained_scope(&index, &acknowledgement.target)?;
-        let fences = vec![
-            qualified::prepublication::actor_fence(
-                index.identity(),
-                &self.profile.scope.coordination_root,
-                &acknowledgement.target.actor,
-            )
-            .map_err(native_error)?,
-        ];
+        let identity = (
+            index.identity().clone(),
+            self.profile
+                .scope
+                .coordination_root
+                .canonicalize()
+                .map_err(crate::io_error)?,
+            acknowledgement.target.actor.as_str().to_owned(),
+        );
+        if !session.identities.contains(&identity) {
+            session.held.push(
+                qualified::prepublication::actor_fence(
+                    index.identity(),
+                    &self.profile.scope.coordination_root,
+                    &acknowledgement.target.actor,
+                )
+                .map_err(native_error)?,
+            );
+            session.identities.insert(identity);
+        }
         let candidate = self.response_candidate(receipt, result, &mut index, &mut nodes)?;
         if candidate != acknowledgement.candidate {
             return Err(error(ErrorKind::Conflict, "retention-candidate-binding"));
         }
         self.verify_ack(receipt, acknowledgement, &mut index, &mut nodes)?;
-        Ok(fences)
+        Ok(())
     }
     pub(super) fn verify_ack(
         &self,

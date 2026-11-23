@@ -194,9 +194,10 @@ impl ProtectedComposition<'_, '_> {
                 bail!("composition native verification is incomplete");
             }
             let bytes = read_receipt(output)?;
-            if serde_json::to_value(tig_core::identity::parse_json(&bytes)?)?
-                != serde_json::to_value(&receipt)?
-            {
+            // The conform writer serializes this receipt directly. Boundary
+            // measurements can be fractional, so compare the exact serialized
+            // evidence before pinning it instead of parsing it as Tig identity JSON.
+            if bytes != serde_json::to_vec_pretty(&receipt)? {
                 bail!("composition native receipt changed after verification");
             }
             let mut outputs = BTreeMap::new();

@@ -29,8 +29,13 @@ fn server(reply: Vec<u8>) -> (String, thread::JoinHandle<Vec<u8>>, TcpListener) 
                 Err(e) => panic!("bounded synthetic accept: {e}"),
             }
         };
+        // Windows accepted sockets may inherit the listener's nonblocking mode.
+        stream.set_nonblocking(false).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
         let mut raw = Vec::new();
         let mut byte = [0; 1];
@@ -61,6 +66,140 @@ fn ok(body: &[u8]) -> Vec<u8> {
     let mut raw=format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nx-request-id: synthetic-17\r\nConnection: close\r\n\r\n",body.len()).into_bytes();
     raw.extend(body);
     raw
+}
+fn issue_spec() -> Value {
+    let identity = "1".repeat(64);
+    let key = "2".repeat(64);
+    json!({"schema":"reel.workflow-github-issue.v1","repository":"private/film",
+        "finding_identity":identity,"draft_key":key,
+        "issue":{"title":"Review picture: C100","body":format!("Synthetic finding only\n\nDraft version: `{key}`\n\n<!-- reel-film-finding:{identity} -->\n")}})
+}
+#[test]
+fn github_issue_uses_one_owned_operation_and_resumes_without_reposting_or_credentials() {
+    let spec = issue_spec();
+    let body = serde_json::to_vec(&json!({"number":17,"url":"https://api.github.com/repos/private/film/issues/17","html_url":"https://github.com/private/film/issues/17","title":spec["issue"]["title"],"body":spec["issue"]["body"]})).unwrap();
+    let mut reply = format!(
+        "HTTP/1.1 201 Created\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .into_bytes();
+    reply.extend(body);
+    let (endpoint, worker, _observer) = server(reply);
+    let endpoint = endpoint.replace("/call", "/repos/private/film/issues");
+    let mut f = Fixture::new(endpoint);
+    f.request["payload"] = json!({"kind":"github-issue","spec":spec});
+    f.save();
+    let typed: reel_workflow_http::github_issue::Spec =
+        serde_json::from_value(spec.clone()).unwrap();
+    let operation = typed.operation_id().unwrap();
+    let owned = f.root.path().join(format!("owned/http-{operation}"));
+    let (success, result) = f.invoke("post");
+    assert!(success, "{result}");
+    assert_eq!(result["issue_submitted"], false);
+    assert_eq!(result["simulated"], true);
+    let sent = String::from_utf8(worker.join().unwrap()).unwrap();
+    assert!(sent.starts_with("POST /repos/private/film/issues HTTP/1.1"));
+    assert!(
+        sent.to_ascii_lowercase()
+            .contains("x-github-api-version: 2026-03-10")
+    );
+    assert!(
+        sent.to_ascii_lowercase()
+            .contains("user-agent: reel-workflow/0.1.0")
+    );
+    let receipt = fs::read(owned.join("issue.json")).unwrap();
+    assert!(f.invoke("resume").0);
+    assert_eq!(fs::read(owned.join("issue.json")).unwrap(), receipt);
+    assert!(!f.invoke("post").0);
+    // A refined note/version cannot produce a new operation in this registry.
+    f.request["payload"]["spec"]["draft_key"] = json!("3".repeat(64));
+    f.request["payload"]["spec"]["issue"]["body"] = json!(
+        spec["issue"]["body"]
+            .as_str()
+            .unwrap()
+            .replace(&"2".repeat(64), &"3".repeat(64))
+    );
+    f.save();
+    assert!(!f.invoke("post").0);
+    assert!(!f.invoke("resume").0);
+    assert_eq!(fs::read(owned.join("issue.json")).unwrap(), receipt);
+    f.request["payload"]["spec"] = spec;
+    f.save();
+    fs::write(owned.join("issue.json"), b"changed receipt").unwrap();
+    assert!(!f.invoke("resume").0);
+    assert_eq!(
+        fs::read(owned.join("issue.json")).unwrap(),
+        b"changed receipt"
+    );
+}
+#[test]
+fn github_interrupted_creation_retains_original_prefix_without_an_issue_receipt_or_repost() {
+    let reply = b"HTTP/1.1 201 Created\r\nContent-Length: 1000\r\nx-github-request-id: issue-interrupted\r\nConnection: close\r\n\r\n{\"number\":17".to_vec();
+    let (endpoint, worker, _observer) = server(reply);
+    let mut f = Fixture::new(endpoint.replace("/call", "/repos/private/film/issues"));
+    f.request["payload"] = json!({"kind":"github-issue","spec":issue_spec()});
+    f.save();
+    assert!(!f.invoke("post").0);
+    worker.join().unwrap();
+    let spec: reel_workflow_http::github_issue::Spec =
+        serde_json::from_value(issue_spec()).unwrap();
+    let root = f
+        .root
+        .path()
+        .join(format!("owned/http-{}", spec.operation_id().unwrap()));
+    assert!(root.join("response.bin").is_file());
+    let head: Value =
+        serde_json::from_slice(&fs::read(root.join("http-head.json")).unwrap()).unwrap();
+    assert_eq!(head["request_id"], "issue-interrupted");
+    assert!(!root.join("response-complete.json").exists());
+    assert!(!root.join("issue.json").exists());
+    let (success, value) = f.invoke("resume");
+    assert!(!success);
+    assert_eq!(value["error"]["kind"], "needs-recovery");
+    assert!(!f.invoke("post").0);
+}
+#[test]
+fn github_uncertain_response_preserves_original_evidence_and_never_claims_submission() {
+    let (endpoint, worker, _observer) = server(ok(b"{}"));
+    let mut f = Fixture::new(endpoint.replace("/call", "/repos/private/film/issues"));
+    f.request["payload"] = json!({"kind":"github-issue","spec":issue_spec()});
+    f.save();
+    let (success, value) = f.invoke("post");
+    assert!(!success);
+    assert_eq!(value["error"]["kind"], "needs-recovery");
+    worker.join().unwrap();
+    let spec: reel_workflow_http::github_issue::Spec =
+        serde_json::from_value(issue_spec()).unwrap();
+    let root = f
+        .root
+        .path()
+        .join(format!("owned/http-{}", spec.operation_id().unwrap()));
+    assert!(root.join("response-complete.json").is_file());
+    assert!(!root.join("issue.json").exists());
+    assert!(!f.invoke("resume").0);
+    assert!(!f.invoke("post").0);
+}
+#[test]
+fn synthetic_listener_waits_for_headers_after_accept() {
+    let (endpoint, worker, _observer) = server(ok(b"{}"));
+    let authority = endpoint
+        .strip_prefix("http://")
+        .unwrap()
+        .split('/')
+        .next()
+        .unwrap();
+    let mut stream = std::net::TcpStream::connect(authority).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    thread::sleep(Duration::from_millis(100));
+    let request =
+        format!("POST /call HTTP/1.1\r\nHost: {authority}\r\nContent-Length: 2\r\n\r\n{{}}");
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    assert_eq!(worker.join().unwrap(), request.as_bytes());
 }
 struct Fixture {
     root: tempfile::TempDir,

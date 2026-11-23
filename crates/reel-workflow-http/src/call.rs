@@ -24,6 +24,9 @@ pub struct Input {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum Payload {
+    GithubIssue {
+        spec: crate::github_issue::Spec,
+    },
     Json {
         operation_id: String,
         body: Input,
@@ -176,12 +179,17 @@ impl Request {
                 Ok(operation_id.clone())
             }
             Payload::Proxy { spec, .. } => spec.operation_id(),
+            Payload::GithubIssue { spec } => {
+                spec.body(&self.http)?;
+                spec.operation_id()
+            }
             _ => Err(error(ErrorKind::Invalid, "http-operation-identity")),
         }
     }
     fn body(&self) -> Result<(Vec<u8>, Vec<File>)> {
         let maximum = self.http.request_byte_limit.min(crate::MAX_BYTES);
         match &self.payload {
+            Payload::GithubIssue { spec } => Ok((spec.body(&self.http)?, Vec::new())),
             Payload::Json { body, .. } => {
                 let (raw, file) = pinned(body, maximum)?;
                 Ok((raw, vec![file]))
@@ -553,6 +561,18 @@ fn finish(
             )?,
         )?;
     }
+    if let Payload::GithubIssue { spec } = &request.payload {
+        if body != spec.body(&request.http)? {
+            return Err(error(ErrorKind::Integrity, "github-issue-original-body"));
+        }
+        let receipt = spec.interpret(&request.http, complete.status, &response)?;
+        preserve(&root.join("issue.json"), &encode(&receipt)?)?;
+        return Ok(
+            serde_json::json!({"ok":true,"scope":"private-http-evidence",
+            "status":complete.status,"issue_submitted":receipt["issue_submitted"],"simulated":receipt["simulated"],"task_completed":false,
+            "native_retained":false,"selected":false,"scratch_retired":false,"capacity_released":false}),
+        );
+    }
     Ok(
         serde_json::json!({"ok":true,"scope":"private-http-evidence","status":complete.status,"candidate_ready":matches!(request.payload,Payload::Proxy {..}),"task_completed":false,"native_retained":false,"selected":false,"scratch_retired":false,"capacity_released":false}),
     )
@@ -572,6 +592,11 @@ pub fn execute(path: &Path, pin: &str, resume: bool) -> Result<serde_json::Value
         let prepared = request
             .http
             .prepare(&operation, &body, |name| std::env::var(name).ok())?;
+        let prepared = if matches!(request.payload, Payload::GithubIssue { .. }) {
+            prepared.github_issue_headers()
+        } else {
+            prepared
+        };
         prepare(&request, &raw, pin, &operation, &body)?;
         Some((prepared, body))
     } else {

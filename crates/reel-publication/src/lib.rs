@@ -1,6 +1,7 @@
 //! Named artifact contracts. No renderer, storage publication or approval.
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt};
+pub mod film_review;
 pub const PUBLICATION_SCHEMA: &str = "reel.publication.v1";
 pub const MAX_CONTROL_BYTES: usize = 1024 * 1024;
 pub const MAX_OUTPUTS: usize = 256;

@@ -48,6 +48,7 @@ image = { version = "0.25.9", default-features = false, features = ["png", "pnm"
 same-file = "1.0.6"
 reel-music = { path = "crates/reel-music" }
 reel-assembly = { path = "crates/reel-assembly" }
+reel-publication = { path = "crates/reel-publication" }
 reel-assets = { path = "crates/reel-assets", optional = true }
 reel-print = { path = "crates/reel-print", optional = true }
 flate2 = "1"
@@ -149,6 +150,7 @@ resolver = "3"
 
 [dev-dependencies]
 reel-assets = { path = "crates/reel-assets" }
+reel-workflow = { path = "crates/reel-workflow" }
 flate2 = "1"
 
 # Repeated immutable-media/runtime hashing should not dominate qualification.

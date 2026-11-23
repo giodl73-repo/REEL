@@ -2,6 +2,24 @@ use super::*;
 use reel_workflow::{Operation, OutputContract, Plan, Task, ToolContract, make_packet};
 
 struct Controls(BTreeMap<String, Vec<u8>>);
+#[test]
+fn film_response_preview_uses_existing_envelope_ceiling_without_expanding_other_tools() {
+    let (mut packet, _) = fixture(|_| {});
+    assert_eq!(
+        crate::output_bounds::Allowance::admission_ceiling(&packet.task),
+        crate::admission::limits().logical_bytes
+    );
+    packet.task.tool.as_mut().unwrap().capability = ToolCapability::ComicRender;
+    assert_eq!(
+        crate::output_bounds::Allowance::admission_ceiling(&packet.task),
+        128 * 1024 * 1024
+    );
+    packet.task.tool = None;
+    assert_eq!(
+        crate::output_bounds::Allowance::admission_ceiling(&packet.task),
+        128 * 1024 * 1024
+    );
+}
 impl InputReader for Controls {
     fn read(&mut self, artifact: &Artifact, _: u64) -> Result<Vec<u8>> {
         self.0
