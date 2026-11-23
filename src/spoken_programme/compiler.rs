@@ -170,6 +170,8 @@ pub struct CompiledPlan {
     pub schema: &'static str,
     /// Canonical typed declaration identity; not an edition consumption hash.
     pub declaration_semantics_sha256: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selected_editions: Option<BTreeSet<String>>,
     pub editions: Vec<CompiledEdition>,
     pub alignment_metadata_verified: bool,
     pub media_verified: bool,
@@ -549,6 +551,7 @@ pub fn compile(
     let plan = CompiledPlan {
         schema: PLAN_SCHEMA,
         declaration_semantics_sha256: digest(&declaration_bytes),
+        selected_editions: None,
         editions,
         alignment_metadata_verified: true,
         media_verified: false,
@@ -712,8 +715,50 @@ pub fn compile_file(
     output: &Path,
     profile: CompilationProfile,
 ) -> Result<CompilationSummary> {
+    compile_file_for_editions(declaration, output, profile, &[])
+}
+
+fn select_editions(mut plan: CompiledPlan, ids: &[String]) -> Result<CompiledPlan> {
+    if ids.is_empty() {
+        return Ok(plan);
+    }
+    let selected: BTreeSet<_> = ids.iter().cloned().collect();
+    require(
+        selected.len() == ids.len(),
+        "duplicate scoped spoken edition",
+    )?;
+    plan.editions
+        .retain(|edition| selected.contains(&edition.recipe.edition_id));
+    require(
+        plan.editions.len() == selected.len(),
+        "unknown scoped spoken edition",
+    )?;
+    plan.selected_editions = Some(selected);
+    Ok(plan)
+}
+
+pub(super) fn replay_selection(
+    plan: CompiledPlan,
+    raw: &serde_json::Value,
+) -> Result<CompiledPlan> {
+    let Some(selected) = raw.get("selected_editions") else {
+        return Ok(plan);
+    };
+    let ids: Vec<String> = serde_json::from_value(selected.clone())
+        .map_err(|_| anyhow::anyhow!("invalid scoped spoken edition selection"))?;
+    require(!ids.is_empty(), "empty scoped spoken edition selection")?;
+    select_editions(plan, &ids)
+}
+
+pub fn compile_file_for_editions(
+    declaration: &Path,
+    output: &Path,
+    profile: CompilationProfile,
+    selected_editions: &[String],
+) -> Result<CompilationSummary> {
     let document = load(declaration)?;
     let plan = compile_local(declaration, &document, &current_compiler()?, profile)?;
+    let plan = select_editions(plan, selected_editions)?;
     let bytes = serde_json::to_vec_pretty(&plan)?;
     require(
         bytes.len() <= MAX_PLAN,

@@ -612,6 +612,79 @@ fn cli_spoken_impact_rebuilds_only_editions_using_the_changed_english_take() {
 }
 
 #[test]
+fn cli_produces_and_checks_only_selected_spoken_editions() {
+    let fixture = Fixture::new();
+    let root = fixture.temp.path();
+    let declaration = root.join("declaration.json");
+    fs::write(&declaration, serde_json::to_vec(&fixture.document).unwrap()).unwrap();
+    for take in &fixture.document.performances {
+        if take.language == "es" {
+            fs::remove_file(root.join(&take.source.path)).unwrap();
+        }
+    }
+    let plan = root.join("scoped-plan.json");
+    let candidate = fixture.output();
+    let access = root.join("access");
+    let invoke = |args: &[&str]| {
+        let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    let declaration = declaration.to_str().unwrap();
+    let plan = plan.to_str().unwrap();
+    let candidate_path = candidate.to_str().unwrap();
+    let root = root.to_str().unwrap();
+    invoke(&[
+        "spoken-edition-compile",
+        declaration,
+        "--output",
+        plan,
+        "--select-edition",
+        "en-executive",
+        "--select-edition",
+        "en-technical",
+    ]);
+    invoke(&[
+        "spoken-edition-produce",
+        plan,
+        "--declaration",
+        declaration,
+        "--asset-root",
+        root,
+        "--output",
+        candidate_path,
+    ]);
+    invoke(&[
+        "spoken-edition-check",
+        declaration,
+        plan,
+        "--asset-root",
+        root,
+        "--candidate",
+        candidate_path,
+        "--write-access",
+        access.to_str().unwrap(),
+    ]);
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(candidate.join("receipt.json")).unwrap()).unwrap();
+    let ids: Vec<_> = receipt["editions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|edition| edition["edition_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["en-executive", "en-technical"]);
+    assert!(!candidate.join("edition-002.wav").exists());
+    assert!(access.is_dir());
+}
+
+#[test]
 fn cli_compiles_produces_and_refuses_overwrite() {
     let mut f = Fixture::new();
     f.document.id = "PRIVATE-PROGRAMME-CANARY".into();
