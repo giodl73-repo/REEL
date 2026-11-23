@@ -56,6 +56,10 @@ closure merging and downstream assembly rebinding are still separate work.
 
 Run only against explicitly completed retained synthetic fixtures:
 
+The baseline index must not already contain these fixed qualification
+operations. A new evidence directory does not create a new operation identity;
+preserve and reconcile an existing run instead of starting it again.
+
 ```text
 REEL_REPAIR_BASELINE=<completed original synthetic film root>
 REEL_REPAIR_IMAGE=<completed original retained PNG root>
