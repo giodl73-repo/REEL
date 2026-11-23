@@ -1108,6 +1108,7 @@ fn finalize_checked(
 }
 
 fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
+    use std::io::{BufRead, BufReader, Seek};
     let out = command("ffprobe")
         .args([
             "-v",
@@ -1115,8 +1116,9 @@ fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
             "-select_streams",
             "a:0",
             "-show_streams",
-            "-show_frames",
             "-show_format",
+            "-show_entries",
+            "stream=codec_name,sample_rate,channels:format=duration",
             "-of",
             "json",
         ])
@@ -1133,27 +1135,56 @@ fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
     {
         bail!("final audio is not selected stereo MP3");
     }
+    let mut frames = tempfile::tempfile()?;
+    let status = command("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=best_effort_timestamp_time,nb_samples",
+            "-of",
+            "compact",
+        ])
+        .arg(path)
+        .stdout(frames.try_clone()?)
+        .status()?;
+    if !status.success() {
+        bail!("MP3 frame probe failed");
+    }
+    frames.rewind()?;
+    let mut reader = BufReader::new(frames);
+    let mut row = String::new();
     let mut cursor = 0u64;
-    for frame in value["frames"]
-        .as_array()
-        .context("MP3 decoded frames missing")?
-    {
-        let time: f64 = frame["best_effort_timestamp_time"]
-            .as_str()
-            .context("MP3 timestamp missing")?
-            .parse()?;
+    while reader.read_line(&mut row)? != 0 {
+        let mut fields = row.trim_end().split('|');
+        if fields.next() != Some("frame") {
+            bail!("invalid MP3 frame row");
+        }
+        let mut time = None;
+        let mut frame_samples = None;
+        for field in fields {
+            if let Some(value) = field.strip_prefix("best_effort_timestamp_time=") {
+                time = Some(value.parse::<f64>()?);
+            } else if let Some(value) = field.strip_prefix("nb_samples=") {
+                frame_samples = Some(value.parse::<u64>()?);
+            }
+        }
+        let time = time.context("MP3 timestamp missing")?;
         if !time.is_finite() || (time - cursor as f64 / f64::from(rate)).abs() > 0.002 {
             bail!("MP3 priming/clock discontinuity");
         }
         cursor = cursor
-            .checked_add(
-                frame["nb_samples"]
-                    .as_u64()
-                    .context("MP3 samples missing")?,
-            )
+            .checked_add(frame_samples.context("MP3 samples missing")?)
             .context("MP3 count overflow")?;
+        if cursor.saturating_sub(samples) > 2304 {
+            bail!("MP3 decoded endpoint outside codec tail bound");
+        }
+        row.clear();
     }
-    if cursor < samples || cursor - samples > 2304 {
+    if cursor == 0 || cursor < samples {
         bail!("MP3 decoded endpoint outside codec tail bound");
     }
     let duration: f64 = value["format"]["duration"]
