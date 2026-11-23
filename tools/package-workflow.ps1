@@ -22,7 +22,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not identify the Rust compiler.' }
 
     $builds = @(
-        @{ Manifest = 'Cargo.toml'; Args = @('--features', 'tig-history,speech-provider', '--bin', 'reel', '--bin', 'reel-tig-job', '--bin', 'reel-tig-speech', '--bin', 'reel-episode-captions'); Binaries = @('reel','reel-tig-job','reel-tig-speech','reel-episode-captions') }
+        @{ Manifest = 'Cargo.toml'; Args = @('--features', 'tig-history,speech-provider', '--bin', 'reel', '--bin', 'reel-tig-job', '--bin', 'reel-tig-speech', '--bin', 'reel-episode-captions', '--bin', 'reel-episode-conform'); Binaries = @('reel','reel-tig-job','reel-tig-speech','reel-episode-captions','reel-episode-conform') }
         @{ Manifest = 'crates/reel-workflow/Cargo.toml'; Args = @('--bin','reel-workflow'); Binaries = @('reel-workflow') }
         @{ Manifest = 'crates/reel-workflow-native/Cargo.toml'; Args = @('--features','film','--bin','reel-workflow-native'); Binaries = @('reel-workflow-native') }
         @{ Manifest = 'crates/reel-workflow-http/Cargo.toml'; Args = @('--bin','reel-workflow-http'); Binaries = @('reel-workflow-http') }
@@ -55,7 +55,7 @@ try {
         throw "Source changed during the build. Evidence remains at $stage"
     }
     [ordered]@{
-        schema = 'reel.workflow-package.v3'
+        schema = 'reel.workflow-package.v4'
         source_commit = $revision
         rustc = ($compiler -join "`n")
         files = @($files)
