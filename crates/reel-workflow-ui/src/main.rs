@@ -12,7 +12,7 @@ fn run(args: &[String]) -> Result<()> {
     if args == ["capabilities"] {
         println!(
             "{}",
-            serde_json::json!({"film_metadata_projection":true,"native_film_metadata_projection":cfg!(windows),"read_only_board":cfg!(windows),"lazy_previews":cfg!(windows),"journal_observations":cfg!(windows),"native_custody_verification":false,"job_execution":false,"selection":false})
+            serde_json::json!({"film_metadata_projection":true,"spoken_access_projection":true,"native_film_metadata_projection":cfg!(windows),"read_only_board":cfg!(windows),"lazy_previews":cfg!(windows),"journal_observations":cfg!(windows),"native_custody_verification":false,"job_execution":false,"selection":false})
         );
         return Ok(());
     }
@@ -26,6 +26,16 @@ fn run(args: &[String]) -> Result<()> {
             Path::new(output),
         )?;
         report_projection(board);
+        return Ok(());
+    }
+    if let [command, request, pin, output] = args
+        && command == "project-spoken"
+    {
+        report_projection(reel_workflow_ui::spoken::export(
+            Path::new(request),
+            pin,
+            Path::new(output),
+        )?);
         return Ok(());
     }
     #[cfg(windows)]
@@ -115,7 +125,7 @@ fn main() -> std::process::ExitCode {
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args == ["--help"] {
         println!(
-            "reel-workflow-ui capabilities\nreel-workflow-ui project-film REQUEST SHA256 REPOSITORY NEW_BOARD\nreel-workflow-ui project-native-film REQUEST SHA256 PACKET NATIVE_PROFILE NEW_BOARD (Windows)\nreel-workflow-ui check BOARD SHA256\nreel-workflow-ui serve BOARD SHA256 [--open] [--port N] [--idle-seconds N] [--max-seconds N]\nWindows-owned read-only view. No job execution, selection, hydration or retirement."
+            "reel-workflow-ui capabilities\nreel-workflow-ui project-film REQUEST SHA256 REPOSITORY NEW_BOARD\nreel-workflow-ui project-native-film REQUEST SHA256 PACKET NATIVE_PROFILE NEW_BOARD (Windows)\nreel-workflow-ui project-spoken REQUEST SHA256 NEW_BOARD\nreel-workflow-ui check BOARD SHA256\nreel-workflow-ui serve BOARD SHA256 [--open] [--port N] [--idle-seconds N] [--max-seconds N]\nWindows-owned read-only view. No job execution, selection, hydration or retirement."
         );
         return std::process::ExitCode::SUCCESS;
     }
