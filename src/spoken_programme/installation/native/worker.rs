@@ -45,10 +45,12 @@ pub fn run_foreground(raw: &[u8]) -> Result<()> {
         console::ConsoleForeground,
         parent::{CleanupWatch, ParentEvent, ParentSession},
     };
-    use reel_assets::jobs::{QuietEvent, QuietLimits, run_quiet_observed};
+    use reel_assets::jobs::{
+        QuietEvent, QuietLimits, current_peak_working_set_bytes, run_quiet_observed,
+    };
     use std::sync::{
         OnceLock,
-        atomic::{AtomicBool, AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     };
 
     let clock = OutputClock::start()?;
@@ -67,6 +69,7 @@ pub fn run_foreground(raw: &[u8]) -> Result<()> {
         })?,
     )?;
     let pid = AtomicU32::new(0);
+    let worker_peak = AtomicUsize::new(0);
     let cleanup = OnceLock::<CleanupWatch>::new();
     let cancel = AtomicBool::new(false);
     struct Cancel<'a>(&'a AtomicBool);
@@ -101,6 +104,17 @@ pub fn run_foreground(raw: &[u8]) -> Result<()> {
                         watch.check().map_err(|error| error.to_string())?;
                     }
                     if let QuietEvent::Process(info) = event {
+                        let foreground_peak = current_peak_working_set_bytes()?;
+                        if foreground_peak == 0
+                            || (info.exit_observed && info.peak_working_set_bytes == 0)
+                        {
+                            return Err("installation working-set measurement unavailable".into());
+                        }
+                        let peak = worker_peak
+                            .fetch_max(info.peak_working_set_bytes, Ordering::AcqRel)
+                            .max(info.peak_working_set_bytes);
+                        check_working_set(foreground_peak, peak)
+                            .map_err(|error| error.to_string())?;
                         pid.store(info.process_id, Ordering::Release);
                     }
                     Ok(())
@@ -145,8 +159,24 @@ pub fn run_foreground(raw: &[u8]) -> Result<()> {
             .map_err(|_| anyhow::anyhow!("installation process owner panicked"))?
             .map_err(anyhow::Error::msg)?;
         foreground.shutdown()?;
+        let foreground_peak =
+            current_peak_working_set_bytes().map_err(|error| anyhow::anyhow!("{error}"))?;
+        let worker_peak = worker_peak.load(Ordering::Acquire);
+        ensure!(
+            foreground_peak > 0 && worker_peak > 0,
+            "installation working-set measurement unavailable"
+        );
+        check_working_set(foreground_peak, worker_peak)?;
         cleanup.get().unwrap().check()
     })
+}
+
+fn check_working_set(foreground: usize, worker: usize) -> Result<()> {
+    ensure!(
+        foreground.saturating_add(worker) <= 512 * 1024 * 1024,
+        "installation combined working-set envelope exceeded"
+    );
+    Ok(())
 }
 
 struct DisplayAck {
@@ -761,6 +791,14 @@ mod tests {
     use crate::scene_delivery::FileRef;
     use reel_assets::jobs::{QuietEvent, QuietLimits, run_quiet_observed};
     use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    #[test]
+    fn combined_working_set_checks_the_sum_without_overflow() {
+        let cap = 512 * 1024 * 1024;
+        assert!(check_working_set(cap - 1, 1).is_ok());
+        assert!(check_working_set(cap - 1, 2).is_err());
+        assert!(check_working_set(usize::MAX, 1).is_err());
+    }
 
     #[test]
     #[ignore = "contained worker fixture; explicitly launched by parent"]

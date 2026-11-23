@@ -308,6 +308,11 @@ fn observe_process(process: HANDLE, exit_observed: bool) -> Result<QuietProcess>
         exit_observed,
     })
 }
+
+/// Return the Windows peak working set for the calling process.
+pub fn current_peak_working_set_bytes() -> Result<usize> {
+    Ok(observe_process(unsafe { GetCurrentProcess() }, false)?.peak_working_set_bytes)
+}
 /// Internal trusted execution primitive. Caller supplies held program/source
 /// guards, an admitted existing workspace and cancellation/authority checks.
 /// Atomically joins a kill-on-close job; suppresses stdout/stderr to NUL, without
