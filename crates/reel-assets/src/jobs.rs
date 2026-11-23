@@ -29,6 +29,31 @@ pub use adapters::{
     ResourceAuthority, ResourceRole, RetainedJob, RetainedObject, RetentionSink, RunContext,
 };
 
+/// Execution failed and the runner left this owned job available for recovery.
+#[derive(Debug)]
+pub struct WorkspacePreserved {
+    job_id: String,
+    cause: String,
+}
+
+impl WorkspacePreserved {
+    pub fn job_id(&self) -> &str {
+        &self.job_id
+    }
+}
+
+impl std::fmt::Display for WorkspacePreserved {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}; staging for job {} preserved for recovery",
+            self.cause, self.job_id
+        )
+    }
+}
+
+impl std::error::Error for WorkspacePreserved {}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Asset {
@@ -78,6 +103,9 @@ struct Job {
     /// Explicit diagnostics exception; normal jobs publish and retire their workspace.
     #[serde(default)]
     retain_workspace: bool,
+    /// Keep interrupted staging available for an explicitly authorized recovery.
+    #[serde(default)]
+    preserve_workspace_on_failure: bool,
     /// Native no-clobber producers create their own new output directories.
     #[serde(default = "prepare_output_parents_default")]
     prepare_output_parents: bool,
@@ -625,6 +653,12 @@ fn run_loaded(
             }
             if job.retain_workspace {
                 return Err(error);
+            }
+            if job.preserve_workspace_on_failure {
+                return Err(Box::new(WorkspacePreserved {
+                    job_id: reservation.id.clone(),
+                    cause: error.to_string(),
+                }));
             }
             let mut failure = json!({"schema":"reel.failed-job-result.v1","job_id":reservation.id,
                 "manifest_sha256":format!("{:x}",Sha256::digest(&bytes)),"error":error.to_string(),"outputs":{},
