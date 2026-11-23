@@ -202,7 +202,9 @@ fn video_clock(path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
 }
 
 fn video_clock_with(mut ffprobe: Command, path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
-    let out = ffprobe
+    use std::io::{BufRead, BufReader, Seek};
+    let mut packets = tempfile::tempfile()?;
+    let status = ffprobe
         .args([
             "-v",
             "error",
@@ -212,36 +214,40 @@ fn video_clock_with(mut ffprobe: Command, path: &Path, frames: u64, n: u64, d: u
             "-show_entries",
             "packet=pts_time,dts_time,flags",
             "-of",
-            "json",
+            "csv=p=0",
         ])
         .arg(path)
-        .output()?;
-    if !out.status.success() {
+        .stdout(packets.try_clone()?)
+        .status()?;
+    if !status.success() {
         bail!("video packet clock probe failed");
     }
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    let packets = value["packets"]
-        .as_array()
-        .context("video packets missing")?;
-    if packets.len() as u64 != frames
-        || !packets[0]["flags"]
-            .as_str()
-            .unwrap_or_default()
-            .contains('K')
-    {
-        bail!("video packet coverage or random access missing");
-    }
-    for (i, packet) in packets.iter().enumerate() {
-        let expected = i as f64 * d as f64 / n as f64;
-        for key in ["pts_time", "dts_time"] {
-            let actual: f64 = packet[key]
-                .as_str()
-                .context("video clock missing")?
-                .parse()?;
+    packets.rewind()?;
+    let mut reader = BufReader::new(packets);
+    let mut row = String::new();
+    let mut count = 0;
+    while reader.read_line(&mut row)? != 0 {
+        let mut fields = row.trim_end().split(',');
+        let (Some(pts), Some(dts), Some(flags), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            bail!("invalid video packet clock row");
+        };
+        if count >= frames || (count == 0 && !flags.contains('K')) {
+            bail!("video packet coverage or random access missing");
+        }
+        let expected = count as f64 * d as f64 / n as f64;
+        for clock in [pts, dts] {
+            let actual: f64 = clock.parse()?;
             if !actual.is_finite() || (actual - expected).abs() > 0.000_002 {
                 bail!("video PTS/DTS discontinuity");
             }
         }
+        count += 1;
+        row.clear();
+    }
+    if count == 0 || count != frames {
+        bail!("video packet coverage or random access missing");
     }
     Ok(())
 }
