@@ -15,6 +15,63 @@ struct JobRequest {
     scratch_bytes: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RebuildRequest {
+    schema: String,
+    previous: PathBuf,
+    declaration: PathBuf,
+    processing: Option<PathBuf>,
+    profile: compiler::CompilationProfile,
+    budget_bytes: u64,
+    scratch_bytes: u64,
+}
+
+pub fn plan_rebuild(request_path: &Path, previous_root: &Path, root: &Path) -> Result<Value> {
+    let request: RebuildRequest =
+        serde_json::from_slice(&producer::bounded(request_path, MAX_DECLARATION_BYTES)?)?;
+    require(
+        request.schema == "reel.spoken-workflow-rebuild.v1",
+        "invalid spoken workflow rebuild request",
+    )?;
+    relative(&request.previous)?;
+    relative(&request.declaration)?;
+    let impact = compiler::impact_file(
+        &previous_root.join(request.previous),
+        &root.join(&request.declaration),
+        request.profile,
+    )?;
+    let expected_editions: BTreeMap<_, _> = impact
+        .editions
+        .iter()
+        .filter(|edition| matches!(edition.action, "build" | "rebuild"))
+        .filter_map(|edition| {
+            Some((
+                edition.edition_id.clone(),
+                edition.current_recipe_sha256.clone()?,
+            ))
+        })
+        .collect();
+    let job = if expected_editions.is_empty() {
+        None
+    } else {
+        Some(build_job(
+            JobRequest {
+                schema: "reel.spoken-workflow-job.v1".into(),
+                declaration: request.declaration,
+                processing: request.processing,
+                profile: request.profile,
+                expected_editions,
+                budget_bytes: request.budget_bytes,
+                scratch_bytes: request.scratch_bytes,
+            },
+            root,
+            Some(&impact.current_declaration_sha256),
+        )?)
+    };
+    Ok(json!({"schema":"reel.spoken-workflow-rebuild-plan.v1","impact":impact,"job":job}))
+}
+
 fn relative(path: &Path) -> Result<String> {
     require(
         !path.as_os_str().is_empty()
@@ -65,6 +122,14 @@ pub fn describe_job(request_path: &Path, root: &Path) -> Result<Value> {
         request.schema == "reel.spoken-workflow-job.v1" && !request.expected_editions.is_empty(),
         "invalid spoken workflow job request",
     )?;
+    build_job(request, root, None)
+}
+
+fn build_job(
+    request: JobRequest,
+    root: &Path,
+    expected_declaration: Option<&str>,
+) -> Result<Value> {
     let declaration_path = relative(&request.declaration)?;
     let asset_root_path = request
         .declaration
@@ -81,6 +146,10 @@ pub fn describe_job(request_path: &Path, root: &Path) -> Result<Value> {
     let document = parse(&declaration)?;
     let runtime = producer::current_runtime()?;
     let full = compiler::compile_with_inputs(&document, &asset_root, &runtime, request.profile)?;
+    require(
+        expected_declaration.is_none_or(|hash| hash == full.declaration_semantics_sha256),
+        "spoken declaration changed while planning rebuild",
+    )?;
     let edition_ids: Vec<_> = request.expected_editions.keys().cloned().collect();
     let selected = compiler::select_editions(full, &edition_ids)?;
     let mut outputs = BTreeMap::from([

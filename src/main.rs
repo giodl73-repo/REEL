@@ -749,6 +749,19 @@ fn run_cli() -> Result<()> {
             let job = reel::spoken_programme::workflow::describe_job(&request, &asset_root)?;
             println!("{}", serde_json::to_string_pretty(&job)?);
         }
+        #[cfg(feature = "tig-publication")]
+        Command::SpokenEditionPlanRebuild {
+            request,
+            previous_root,
+            asset_root,
+        } => {
+            let plan = reel::spoken_programme::workflow::plan_rebuild(
+                &request,
+                &previous_root,
+                &asset_root,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&plan)?);
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -3066,6 +3079,15 @@ enum Command {
     #[cfg(feature = "tig-publication")]
     SpokenEditionDescribeJob {
         request: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
+    },
+    /// Plan exactly the editions changed by a replacement take for managed admission.
+    #[cfg(feature = "tig-publication")]
+    SpokenEditionPlanRebuild {
+        request: PathBuf,
+        #[arg(long)]
+        previous_root: PathBuf,
         #[arg(long)]
         asset_root: PathBuf,
     },
