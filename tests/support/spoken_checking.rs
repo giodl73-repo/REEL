@@ -342,24 +342,32 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
         .unwrap();
         fs::write(&declaration, serde_json::to_vec(&f.document).unwrap()).unwrap();
         fs::write(&plan, f.plan()).unwrap();
-        let output = std::process::Command::new(env!("CARGO_BIN_EXE_reel-interactive"))
+        let command = || {
+            let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reel-interactive"));
+            child
+                .arg("--demo")
+                .arg(&manifest)
+                .arg("--declaration")
+                .arg(&declaration)
+                .arg("--plan")
+                .arg(&plan)
+                .arg("--source-root")
+                .arg(f.temp.path())
+                .arg("--candidate")
+                .arg(f.output())
+                .arg("--access")
+                .arg(&root)
+                .arg("--compiler-producer")
+                .arg(std::env::current_exe().unwrap());
+            child
+        };
+        let output = command()
             .args(["--check", "--language", "es"])
-            .arg("--demo")
-            .arg(&manifest)
-            .arg("--declaration")
-            .arg(&declaration)
-            .arg("--plan")
-            .arg(&plan)
-            .arg("--source-root")
-            .arg(f.temp.path())
-            .arg("--candidate")
-            .arg(f.output())
-            .arg("--access")
-            .arg(&root)
-            .arg("--compiler-producer")
-            .arg(std::env::current_exe().unwrap())
             .output()
             .unwrap();
+        if let Some(endpoint) = std::env::var_os("REEL_INTERACTIVE_SYNTHETIC_ENDPOINT") {
+            run_interactive_output_smoke(command(), &endpoint).unwrap();
+        }
         assert!(
             output.status.success(),
             "{}",
@@ -483,6 +491,77 @@ fn interactive_replay_routes_pin_verified_edition_chapters() {
     let mut stale = bindings;
     stale.get_mut(&("summary", "es")).unwrap().access_sha256 = "";
     assert!(Session::start(&graph, &result, stale, "es").is_err());
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+fn run_interactive_output_smoke(
+    mut command: std::process::Command,
+    endpoint: &std::ffi::OsStr,
+) -> Result<()> {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        process::Stdio,
+        sync::mpsc,
+        time::Instant,
+    };
+    let mut child = command
+        .args(["--language", "es", "--endpoint"])
+        .arg(endpoint)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let result = (|| -> Result<()> {
+        let mut input = child.stdin.take().unwrap();
+        let output = child.stdout.take().unwrap();
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(output).lines() {
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let expect_line = |expected: &str| -> Result<()> {
+            loop {
+                let line =
+                    receive.recv_timeout(deadline.saturating_duration_since(Instant::now()))??;
+                if line == expected {
+                    return Ok(());
+                }
+            }
+        };
+        expect_line("choose")?;
+        writeln!(input, "choose summary")?;
+        expect_line("summary")?;
+        expect_line("Fin del informe")?;
+        writeln!(input, "language en")?;
+        expect_line("opening")?;
+        expect_line("choose")?;
+        writeln!(input, "activate")?;
+        expect_line("example")?;
+        expect_line("example-closing")?;
+        expect_line("End of briefing")?;
+        writeln!(input, "close")?;
+        drop(input);
+        loop {
+            if let Some(status) = child.try_wait()? {
+                anyhow::ensure!(status.success(), "synthetic playback failed");
+                return Ok(());
+            }
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "synthetic playback cleanup timed out"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
 }
 
 #[test]
