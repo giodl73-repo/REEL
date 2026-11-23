@@ -650,6 +650,14 @@ cannot replace the pinned executable. This test checks the visible control
 sequence and process exit. M12c also requires independent capture and numeric
 timing evidence.
 
+The test passed on the development host with the explicitly pinned Dell
+output and the two-pass synthetic English fixture. The visible sequence
+included Playing, Paused, LoopWait, Completed, Restarting, a new Playing
+pass and Stopped. Quit returned success after the owned worker exited.
+The test did not capture the output, establish physical onset or quiescence,
+or exercise device disconnect. The total test duration is not a measurement
+of any individual control deadline.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 
