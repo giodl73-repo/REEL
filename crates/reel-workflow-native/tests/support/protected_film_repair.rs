@@ -579,36 +579,57 @@ fn retained_image_and_derived_controls_rebuild_original_film_with_owned_recovery
         }),
     };
     save(evidence.join("film-request.json"), &request);
+    finish(
+        &evidence,
+        &runtime,
+        &request,
+        &evidence.join("film-ticket.json"),
+    );
+}
+
+fn finish(evidence: &Path, runtime: &Tool, request: &film_cli::Request, ticket_path: &Path) {
+    let baseline: serde_json::Value = load(evidence.join("baseline.json"));
+    let locations = &baseline["locations"];
+    let original: Packet = serde_json::from_value(locations["packet"].clone()).unwrap();
+    let source: NativeProfile = serde_json::from_value(locations["native"].clone()).unwrap();
+    let profile: admission::Profile =
+        serde_json::from_value(locations["admission_profile"].clone()).unwrap();
+    let receipt: admission::Receipt = serde_json::from_value(baseline["receipt"].clone()).unwrap();
+    let old_result: ReturnedResult = serde_json::from_value(baseline["result"].clone()).unwrap();
+    let old_ack: retention::Acknowledgement =
+        serde_json::from_value(baseline["acknowledgement"].clone()).unwrap();
     let sha = digest(&fs::read(evidence.join("film-request.json")).unwrap());
     call(
-        &runtime,
+        runtime,
         &[
             Path::new("prepare-film"),
             &evidence.join("film-request.json"),
             Path::new(&sha),
-            &evidence.join("film-ticket.json"),
+            ticket_path,
             Path::new("--apply"),
         ],
     );
-    let ticket = fs::read(evidence.join("film-ticket.json")).unwrap();
+    let ticket = fs::read(ticket_path).unwrap();
     let ticket_sha = digest(&ticket);
     let action = |command: &str, apply: bool| {
         let mut args = vec![
             PathBuf::from(command),
             evidence.join("film-request.json"),
             PathBuf::from(&sha),
-            evidence.join("film-ticket.json"),
+            ticket_path.to_owned(),
             PathBuf::from(&ticket_sha),
         ];
         if apply {
             args.push("--apply".into());
         }
         call(
-            &runtime,
+            runtime,
             &args.iter().map(PathBuf::as_path).collect::<Vec<_>>(),
         )
     };
-    action("run-film", true);
+    let done = action("run-film", true);
+    assert_eq!(done["task_completed"], true);
+    assert_eq!(done["retained_owner_acknowledged"], true);
     eprintln!("Rendered and retained the protected film repair");
     let ticket: serde_json::Value = serde_json::from_slice(&ticket).unwrap();
     let workspace = evidence
@@ -712,6 +733,84 @@ fn retained_image_and_derived_controls_rebuild_original_film_with_owned_recovery
     );
     save(
         evidence.join("complete.json"),
-        &json!({"actual_native_image_and_control_parents":true,"native_rebuild_binding":true,"control_payload_verified_under_child_claims":true,"same_original_recordings_and_clock":true,"actual_replacement_decoded":true,"owned_film_render_retained":true,"resume_preserved_picture":true,"child_slot_closed":true,"old_film_history_reopened":true,"bilingual_assembly_qualified":false,"selection_applied":false,"production_adopted":false,"capacity_released":false,"scratch_retired":false}),
+        &json!({"actual_native_image_and_control_parents":true,"native_rebuild_binding":true,"control_payload_verified_under_child_claims":true,"same_original_recordings_and_clock":true,"actual_replacement_decoded":true,"owned_film_render_retained":true,"resume_preserved_picture":true,"child_slot_closed":true,"old_film_history_reopened":true,"bilingual_assembly_qualified":false,"episode_scale_qualified":false,"selection_applied":false,"production_adopted":false,"capacity_released":false,"scratch_retired":false}),
+    );
+}
+
+#[test]
+#[ignore = "Continue ONLY the original admitted repair whose prepare failed before capacity/workspace creation; keep original receipt, generation, request, source, runtime and empty failed ticket; no new image/control/admission"]
+fn continue_original_protected_repair_after_control_gate_refusal() {
+    let evidence = PathBuf::from(
+        std::env::var_os("REEL_REPAIR_EVIDENCE").expect("Set preserved ORIGINAL repair root"),
+    );
+    assert!(evidence.is_absolute());
+    assert!(
+        git(
+            Path::new(env!("CARGO_MANIFEST_DIR")),
+            &["status", "--porcelain"]
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        fs::metadata(evidence.join("film-ticket.json"))
+            .unwrap()
+            .len(),
+        0
+    );
+    assert!(
+        fs::read_dir(evidence.join("workspaces"))
+            .unwrap()
+            .next()
+            .is_none()
+    );
+    let request: film_cli::Request = load(evidence.join("film-request.json"));
+    let receipt: admission::Receipt = load(evidence.join("film-admission.json"));
+    assert_eq!(receipt.work, request.receipt.work);
+    assert_eq!(receipt.activation, request.receipt.activation);
+    let claims = admission::Prepared::open(
+        &request.packet,
+        &request.source,
+        &request.admission,
+        &request.receipt.attempt_id,
+    )
+    .unwrap()
+    .reopen(&receipt)
+    .unwrap();
+    // Reproduce the original read-only refusal before any reservation/workspace
+    // action. This distinguishes the known gate conflict from an uncertain
+    // earlier workspace/capacity effect; the admitted generation is unchanged.
+    let mut inputs = NativeInputs::from_claims(&request.packet, &request.source, claims).unwrap();
+    film_controls::verify(
+        &request.packet,
+        &mut inputs,
+        request.control_derivation.as_ref().unwrap(),
+    )
+    .unwrap();
+    let gate_error = film_task::bind(&request.packet, &mut inputs)
+        .err()
+        .expect("Expected the original duplicate byte-gate refusal");
+    assert_eq!(gate_error.code, "native-input-io");
+    drop(inputs);
+    let recovery = evidence.join("recovery-v1");
+    fs::create_dir(&recovery).unwrap();
+    save(
+        recovery.join("read-gate-finding.json"),
+        &json!({"same_original_admission":true,"derivation_pass_verified":true,"duplicate_bind_refused_before_capacity":gate_error}),
+    );
+    fs::copy(
+        env!("CARGO_BIN_EXE_reel-workflow-native"),
+        recovery.join("reel-workflow-native.exe"),
+    )
+    .unwrap();
+    let runtime = tool(recovery.join("reel-workflow-native.exe"));
+    save(
+        recovery.join("source-version.json"),
+        &json!({"commit":git(Path::new(env!("CARGO_MANIFEST_DIR")),&["rev-parse","HEAD"]),"runtime":runtime,"original_request_sha256":digest(&fs::read(evidence.join("film-request.json")).unwrap()),"same_original_admission":true,"producer_runtime_preserved":true}),
+    );
+    finish(
+        &evidence,
+        &runtime,
+        &request,
+        &recovery.join("film-ticket.json"),
     );
 }
