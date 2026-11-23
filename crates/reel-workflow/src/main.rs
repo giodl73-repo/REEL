@@ -4,6 +4,12 @@ use std::{collections::BTreeMap, env, path::Path};
 fn run() -> Result<serde_json::Value> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
+        [command, packet, result, receipt] if command == "check-speech-handoff" => {
+            let packet = manual::read_control(Path::new(packet))?;
+            let result = manual::read_control(Path::new(result))?;
+            let timing = speech_handoff::check(&packet, &result, Path::new(receipt))?;
+            Ok(serde_json::json!({"ok":true,"receipt_pins_match":true,"receipt_reports_timing_qualified":timing}))
+        }
         [command,request,pin,directory] if command=="prepare-film-rebuild" => {
             film_rebuild::export(Path::new(request),pin,Path::new(directory))?;
             Ok(serde_json::json!({"ok":true,"scope":"private-affected-film-rebuild-plan","native_retention_verified":false,"selection_verified":false,"consumers_rebuilt":false}))
