@@ -377,6 +377,9 @@ jobs:
       - name: Verify English episode uses its own cue and conform
         if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::english_episode_assembles_with_its_own_take_and_alignment --locked -- --ignored --exact
+      - name: Verify one cel repair preserves both cue clocks
+        if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
+        run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::reference_scene_parent::one_shared_cel_repairs_both_language_renders_with_exact_audio --locked -- --ignored --exact
       - name: Verify bounded episode CLI and complete temporary-owner handoff
         if: matrix.lane == 'native-episodes-a' && (runner.os == 'Windows')
         run: cargo test --all-features --test tig_inputs fake_episode_lifecycle::episode_cli::bounded_episode_cli_reopens_source_verifies_components_and_retains_checked_movie --locked -- --ignored --exact
