@@ -719,8 +719,11 @@ source frames. The Dell attempts establish absence before playback.
 A new private session retained the exact `f42b864` runtime and checked source
 and selected the previously enrolled CA-2890 endpoint. After `check-session`
 passed, the undrained-output test reached live playback and observed successful
-process exit 248.96 ms after EOF. This run used synthetic playback and no audio
-capture. Live disconnect and isolated render-mix measurement remain open.
+process exit 248.96 ms after EOF. A separate two-pass run on that same pin
+submitted 288,000 source frames across 625 of 630 callbacks, with a reported
+480-frame period and a 1,056-frame largest observed callback. These are stream
+and process measurements from synthetic playback. Live disconnect and isolated
+render-mix measurement remain open.
 
 The opt-in test `capture::record_isolated_station_loopback` records the pinned
 render endpoint's WASAPI loopback. On an isolated synthetic test output, set
