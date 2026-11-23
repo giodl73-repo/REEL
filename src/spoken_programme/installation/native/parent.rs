@@ -14,6 +14,12 @@ use windows::Win32::System::Performance::QueryPerformanceCounter;
 
 #[derive(Clone, Copy)]
 pub struct DisplayTicket(u64);
+#[cfg(test)]
+impl DisplayTicket {
+    pub(super) fn fixture() -> Self {
+        Self(1)
+    }
+}
 pub struct DisplayItem {
     pub ticket: DisplayTicket,
     pub report: Output,

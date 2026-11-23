@@ -1,6 +1,11 @@
 //! Explicit blocking console primitives. Use only on owned I/O threads, never
 //! the audio callback or <=20 ms controller. No endpoint or playback is opened.
-use super::{input::InputSender, parent::LayoutObservation, *};
+use super::{
+    input::InputSender,
+    parent::{DisplayItem, DisplayTicket, LayoutObservation},
+    protocol::{Output, Preparation},
+    *,
+};
 use std::{
     fs::File,
     os::windows::io::{AsHandle, AsRawHandle},
@@ -284,12 +289,67 @@ impl ConsoleSurface {
             status.len() <= 80 && status.bytes().all(|c| (32..=126).contains(&c)),
             "installation plain console status profile"
         );
-        self.verify_transcript()?;
+        if self.expected.is_some() {
+            self.verify_transcript()?;
+        }
         let mut values = vec![b' ' as u16; 80];
         for (slot, value) in values.iter_mut().zip(status.encode_utf16()) {
             *slot = value;
         }
         self.write_cells(self.top + 20, 1, &values)
+    }
+    /// Return the foreground ticket only after the console operation succeeds.
+    /// Call on the output owner, since console writes and readback may block.
+    pub fn render(
+        &mut self,
+        item: DisplayItem,
+    ) -> Result<(DisplayTicket, Option<LayoutObservation>)> {
+        fn phase_label(phase: Preparation) -> &'static str {
+            match phase {
+                Preparation::Checking => "Checking",
+                Preparation::AwaitingText => "Awaiting transcript display",
+                Preparation::Fault => "Fault",
+                Preparation::Stopped => "Stopped",
+            }
+        }
+        let status = match item.report {
+            Output::Transcript { text, .. } => {
+                return Ok((item.ticket, Some(self.transcript(&text)?)));
+            }
+            Output::Preparing { phase, .. } | Output::PreparationEnded { phase, .. } => {
+                phase_label(phase).into()
+            }
+            Output::PreparationAck {
+                id, phase, refusal, ..
+            } => match refusal {
+                Some(reason) => format!("Command {id} refused: {reason:?}"),
+                None => format!("Command {id}: {}", phase_label(phase)),
+            },
+            Output::Ready { snapshot, .. }
+            | Output::State { snapshot, .. }
+            | Output::Ended { snapshot, .. } => format!("{:?}", snapshot.state),
+            Output::Ack {
+                id,
+                snapshot,
+                refusal,
+                ..
+            } => match refusal {
+                Some(reason) => format!("Command {id} refused: {reason:?}"),
+                None => format!("Command {id}: {:?}", snapshot.state),
+            },
+            Output::ResourcesClosed { .. } => "Worker resources closed".into(),
+            Output::SessionFault { .. } => "Fault".into(),
+            Output::CreditReleased { .. } | Output::Hello { .. } => {
+                anyhow::bail!("installation report has no console display")
+            }
+        };
+        let status = if item.fault_overlay && status != "Fault" {
+            format!("Fault | {status}")
+        } else {
+            status
+        };
+        self.status(&status)?;
+        Ok((item.ticket, None))
     }
     /// Blocking standard cooked read. Every returned chunk is stamped before
     /// parsing; queued lines keep that receipt, including multiple pasted lines.
@@ -365,6 +425,85 @@ impl ConsoleSurface {
                 length += 1;
             }
         }
+    }
+}
+
+type Rendered = (DisplayTicket, Option<LayoutObservation>);
+
+/// A single in-flight display ticket keeps output ordered and bounded.
+pub struct ConsoleRenderer {
+    requests: Option<std::sync::mpsc::SyncSender<DisplayItem>>,
+    rendered: std::sync::mpsc::Receiver<Result<Rendered>>,
+    thread: Option<JoinHandle<()>>,
+    pending: bool,
+}
+impl ConsoleRenderer {
+    pub fn start(mut surface: ConsoleSurface) -> Result<Self> {
+        let (requests, input) = std::sync::mpsc::sync_channel(1);
+        let (output, rendered) = std::sync::mpsc::sync_channel(1);
+        let thread = std::thread::Builder::new()
+            .name("reel-console-output".into())
+            .spawn(move || {
+                while let Ok(item) = input.recv() {
+                    let result = surface.render(item);
+                    let failed = result.is_err();
+                    if output.send(result).is_err() || failed {
+                        break;
+                    }
+                }
+            })?;
+        Ok(Self {
+            requests: Some(requests),
+            rendered,
+            thread: Some(thread),
+            pending: false,
+        })
+    }
+    pub fn submit(&mut self, item: DisplayItem) -> Result<()> {
+        ensure!(!self.pending, "installation console already rendering");
+        self.requests
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("installation renderer closed"))?
+            .try_send(item)
+            .map_err(|_| anyhow::anyhow!("installation renderer unavailable"))?;
+        self.pending = true;
+        Ok(())
+    }
+    pub fn completion(&mut self) -> Result<Option<Rendered>> {
+        if !self.pending {
+            return Ok(None);
+        }
+        match self.rendered.try_recv() {
+            Ok(result) => {
+                self.pending = false;
+                result.map(Some)
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => Ok(None),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                anyhow::bail!("installation renderer ended during display")
+            }
+        }
+    }
+    /// Close and join on the console owner, outside the controller loop.
+    pub fn shutdown(&mut self) -> Result<()> {
+        self.requests.take();
+        let Some(thread) = self.thread.take() else {
+            return Ok(());
+        };
+        while !thread.is_finished() {
+            unsafe {
+                let _ = CancelSynchronousIo(HANDLE(thread.as_handle().as_raw_handle()));
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        thread
+            .join()
+            .map_err(|_| anyhow::anyhow!("installation console renderer panicked"))
+    }
+}
+impl Drop for ConsoleRenderer {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
     }
 }
 
@@ -580,6 +719,26 @@ mod tests {
             .unwrap();
         assert!(reader.shutdown().unwrap().is_none());
         assert!(reader.finished() && commands.receive().is_none());
+        let mut renderer = ConsoleRenderer::start(surface).unwrap();
+        let display = || DisplayItem {
+            ticket: DisplayTicket::fixture(),
+            report: Output::Transcript {
+                text: text.clone(),
+                sha256: crate::production::sha256_bytes(text.as_bytes()),
+            },
+            fault_overlay: false,
+        };
+        renderer.submit(display()).unwrap();
+        assert!(renderer.submit(display()).is_err());
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some((_, layout)) = renderer.completion().unwrap() {
+                assert_eq!(layout.unwrap().columns, 80);
+                break;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
         std::fs::write(
             "console-resize-ready.marker",
             b"complete read and unchanged source cells",
@@ -590,8 +749,18 @@ mod tests {
             assert!(Instant::now() < until);
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(surface.layout().is_err());
-        drop(surface);
+        renderer.submit(display()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            match renderer.completion() {
+                Err(_) => break,
+                Ok(None) => {}
+                Ok(Some(_)) => panic!("renderer acknowledged an unsupported layout"),
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        renderer.shutdown().unwrap();
         let (mut input_mode, mut output_mode) = (CONSOLE_MODE::default(), CONSOLE_MODE::default());
         unsafe {
             GetConsoleMode(handle(&original_input), &mut input_mode).unwrap();
