@@ -419,6 +419,47 @@ fixture children. Formatting, whitespace, actionlint and relative documentation
 targets passed. Actual cooked input, persistent rendering, EOF/Ctrl+C, native
 cleanup/lifetime timing and station qualification remain open.
 
+## Actual Windows console primitive checkpoint
+
+The same assistant applied Platform/Audience, Sound, Editor and
+Rights/Provenance checklists to the native console primitives and explicit
+pseudoconsole attachment. These findings are not independent or human approval.
+
+| Lens | Finding / disposition |
+| --- | --- |
+| Platform/Audience — actual handles | A real pseudoconsole child initially had redirected standard handles; treating them as console handles failed. The surface now opens this process's attached `CONIN$`/`CONOUT$` explicitly and verifies real modes, code pages and geometry. It never allocates a replacement console or declares redirected files a terminal. |
+| Platform/Audience — persistent text | The VT scrolling-region prototype failed actual cooked echo: transcript cells moved. That approach was removed. Fixed text/status/input areas now reset the lower input area and cursor between complete reads, preserving ordinary line/echo/processed input. Native readback verifies every original Spanish cell. |
+| Editor/Sound | Forty normal echoed commands, three malformed commands and conventional Ctrl+Z EOF preserve all twenty original rows. Unknown/non-ASCII/65-character input consumes no command reservation. No source PCM, interval, cue order or DSP changes. This is console-buffer behavior, not audio playback or physical font/usability qualification. |
+| Platform/Audience — geometry and restoration | Actual resize to 79×29 causes layout refusal. The fixture starts with 1252 code pages, VT-input enabled and processed-output disabled; opening sets the required profile and actual destruction restores those deliberately different earlier values. Ctrl+C, blocked I/O cancellation and restoration-error propagation still require the complete actor lifecycle. |
+| Rights/Provenance — owned execution | The same atomic Job Object runner gains a lifetime-bound explicit borrowed HPCON, without copying the launcher. The owner retains the pseudoconsole through real child/tree reaping and services bounded output on its own thread before actual close/join. Existing quiet/log paths keep their prior setup. Test inputs are public engineering labels only; no private media or audio endpoint is read or opened. |
+
+The implementation uses the
+[documented Windows pseudoconsole attachment](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session)
+and independent output servicing. A native child asserts the actual console
+buffer/modes/input behavior; the host observes its held PID and actual runner
+completion, then closes the console and joins the output reader. Captured bytes
+are bounded to 256 KiB and contain the expected UTF-8 Spanish. The fixture marker
+is test orchestration, not a production display/cleanup receipt.
+
+Qualification on the exclusive Windows target:
+
+- Complete installation unit filter: **104 passed**, zero failed. Seven ordinary
+  ignored native/allocator fixture entries were explicitly parent-launched; the
+  new console child is not added again to the parent case count.
+- `reel-assets --all-targets`: **342 passed**, zero failed. Three existing
+  installed-runtime child fixtures were parent-launched. This reruns the default
+  process/asset paths after the runner change; a later listing confirms 345
+  entries including those three fixtures, not 345 executed ordinary cases.
+- Explicit original/runtime-input integration: **11 passed**, zero failed or
+  ignored, in 47.10 s; native CLI **five passed**, zero failed or ignored, in
+  0.60 s. Existing metadata CLI still opens no console/device.
+- Final all-target/all-feature Clippy passed with warnings denied in 44.02 s.
+
+That is **120 focused installation cases plus 342 asset cases**. Formatting,
+whitespace, actionlint and relative documentation targets passed. No physical
+terminal usability, integrated console actors, actual audio/capture/listening,
+full cleanup/lifetime timing or release is qualified by these primitives.
+
 ## Remaining proof
 
 The real transport must stay in the controller until native readiness, then
@@ -430,12 +471,15 @@ The authenticated worker routes preparation controls and actual controller
 events, and retains its command credits through report display acknowledgement.
 Parent ordering/display tickets and the eight-credit return path are now
 implemented, including a contained missing-original flow. Full contained
-success/cancellation and actual rendering tests, global foreground input/console
+success/cancellation and reader/renderer actor tests, global foreground console
 integration, native cancellation through the complete process owner and all
 aggregate deadlines remain open.
 The shared queue/protocol reservation path now exists. The actual cooked reader
 must use that exact pool at complete line receipt; an independent eight-line
-allowance must not be introduced when wiring Windows input.
+allowance must not be introduced when wiring Windows input. Actual native
+buffer/echo/EOF/resize/restoration primitives now have owned headless coverage;
+Ctrl+C, large invalid paste, OS viewport/scroll behavior, blocked read/write
+cancellation and explicit restoration failure still need integrated proof.
 Final delivery must be observed before IPC shutdown; actual tree reaping and
 combined working-set evidence must come from the held owner. A normal or failed
 join cannot manufacture a two-second cleanup pass. Lifetime termination still

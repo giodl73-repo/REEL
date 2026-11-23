@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 mod callback;
 #[cfg(windows)]
+pub mod console;
+#[cfg(windows)]
 pub mod controller;
 pub mod input;
 pub use callback::{

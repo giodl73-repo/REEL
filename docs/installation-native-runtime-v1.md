@@ -383,10 +383,10 @@ acknowledgement, native/process reaping or a complete cleanup receipt.
 `shutdown_channel` is a blocking IPC barrier for the enclosing cleanup owner;
 it must remain off the control loop and inside the shared cleanup budget.
 
-The APIs currently accept synthetic rendering confirmations in tests. Actual
-Windows cooked input/echo, persistent transcript, UTF-8 geometry, EOF/Ctrl+C,
-scroll/resize and blocked-output behavior are unimplemented. No console or
-end-to-end timing qualification follows from the protocol component.
+Parent/worker integration tests still use synthetic rendering confirmations.
+The native console primitives below have separate actual Windows API coverage;
+their owned I/O actors, Ctrl+C and blocked-output integration remain open. No
+end-to-end console/control timing qualification follows from the protocol tests.
 
 ### Completed lines and IPC share one reservation
 
@@ -429,9 +429,65 @@ refusal. Queue delay cannot be replaced with a fresh receipt time. Overflow is
 terminal, queued old commands are discarded after closure/fault, and local
 Status/Quit remain available. Parent destruction closes input admission.
 
-This completes the shared queue/protocol reservation mechanism. The actual
-cooked Windows reader, physical rendering and full cleanup/lifetime integration
+This completes the shared queue/protocol reservation mechanism. Wiring the
+native reader/renderer actors to it and completing cleanup/lifetime integration
 remain open; synthetic line producers are not console qualification.
+
+### Native console cells and ordinary cooked echo
+
+`native::console::ConsoleSurface` now supplies explicit **blocking** primitives
+for an already attached Windows console. It opens `CONIN$`/`CONOUT$` directly,
+so redirected standard handles cannot be mistaken for console handles. It does
+not allocate a replacement console. The surface observes UTF-8 input/output
+code pages and at least 80×30, enables line/echo/processed input, disables VT
+input and keeps processed output. It saves the earlier modes/code pages for
+restoration on destruction.
+
+```mermaid
+flowchart TB
+    accTitle: Fixed console areas preserve original text above ordinary input
+    accDescr: Rows one through twenty hold the exact original transcript. Row twenty-one holds plain status. Rows twenty-two through thirty are the input area. Before each complete cooked read the input area and cursor are reset without touching the transcript or status. Returned native chunks keep their original QPC and enqueue into the same shared command pool.
+    text["Rows 1–20<br/>exact original transcript; native cell readback"]
+    status["Row 21<br/>separate plain status"]
+    input["Rows 22–30<br/>fixed input area + normal cooked editing/echo"]
+    text --> status --> input
+    input --> read["ReadConsoleW<br/>stamp original native return QPC"]
+    read --> pool["Same shared eight-command pool<br/>no receipt/generation replacement"]
+```
+
+Transcript writes use native wide console cells and check that the requested
+rectangle was not clipped. Readback compares every original cell, including
+precomposed Spanish. Status writes touch only their own row. The input cursor
+and lower area reset between complete reads; no alternate screen or raw input
+is used. A VT scrolling-margin prototype failed the actual cooked-echo test and
+was removed: the implemented behavior does not depend on those margins.
+
+The reader retains at most a 64-code-unit native chunk and 32 command bytes,
+handles partial/pasted chunks without dropping later lines, and stamps each
+native return before parsing. Unknown, non-ASCII and overlong commands return
+Invalid without a reservation. Conventional Ctrl+Z/Enter returns EOF, retaining
+the original read counter for the owner's eventual Quit handling. Unsupported
+geometry or changed modes/code pages refuses rather than truncating text.
+
+An owned **headless Windows pseudoconsole** test now exercises forty echoed
+Status lines, three invalid lines, EOF, exact twenty-row Spanish preservation,
+an actual resize to 79×29 refusal and restoration from deliberately different
+1252/console-mode settings. Its independent output reader captures bounded
+UTF-8 output. This is real console-buffer/API behavior, not a physical font,
+terminal usability, playback or complete actor/cleanup pass.
+
+The pseudoconsole attachment extends the existing atomic Job Object runner;
+the old quiet/log paths keep their existing setup. A lifetime-bound borrowed
+HPCON is supplied explicitly; its owner retains it through actual process/tree
+barriers and drains output independently before closing it. This follows the
+[Windows pseudoconsole session API](https://learn.microsoft.com/en-us/windows/console/creating-a-pseudoconsole-session).
+No second process launcher, visible console window or media device is started.
+
+These synchronous primitives **must not be called on the ≤20 ms controller or
+audio callback**. The production reader/renderer actors, actual rendering
+completion tickets, Ctrl+C handler, blocked-read/write cancellation, explicit
+restoration-failure reporting and shared cleanup/lifetime deadlines remain
+required before adding a Run command or qualifying M12b.2.
 
 ### Existing runner and output ports
 
@@ -515,9 +571,9 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest input/foreground/worker checkpoint: 103 unit cases, five CLI cases and
-11 explicit original/runtime-input cases passed: **119 distinct focused cases**. The
-original-input invocation ran with zero ignored cases; the six ordinary ignored
+Latest console/input/foreground checkpoint: 104 unit cases, five CLI cases and
+11 explicit original/runtime-input cases passed: **120 distinct focused cases**. The
+original-input invocation ran with zero ignored cases; the seven ordinary ignored
 unit fixture entries are explicitly launched by their parent tests. These counts
 do not include duplicate reruns. The real source-worker integration retains
 original file guards through Ready/rechecks, releases them at actual teardown,

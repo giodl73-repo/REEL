@@ -209,7 +209,7 @@ pub fn run(
     let stdout = OpenOptions::new().write(true).create_new(true).open(log)?;
     let stdin = File::open("NUL")?;
     execute(
-        program, args, workspace, &stdin, &stdout, timeout, None, check, None,
+        program, args, workspace, &stdin, &stdout, timeout, None, check, None, None,
     )
     .map_err(|error| format!("{error}; inspect {}", log.display()).into())
 }
@@ -248,6 +248,51 @@ pub enum QuietEvent {
     /// The existing job shutdown and member-handle barriers actually completed.
     Reaped,
 }
+/// Borrow of an existing Windows pseudoconsole. Never closes or reconstructs it.
+/// The owner must service its input/output independently during the owned run.
+#[derive(Clone, Copy)]
+pub struct BorrowedPseudoConsole<'a> {
+    handle: isize,
+    _owner: std::marker::PhantomData<&'a ()>,
+}
+impl<'a> BorrowedPseudoConsole<'a> {
+    /// # Safety
+    /// `handle` must be a live HPCON from CreatePseudoConsole, kept alive for
+    /// `'a`. It is not a kernel HANDLE and must never be passed to CloseHandle.
+    pub unsafe fn from_raw(handle: isize) -> Result<Self> {
+        if handle == 0 {
+            return Err("Missing pseudoconsole handle".into());
+        }
+        Ok(Self {
+            handle,
+            _owner: std::marker::PhantomData,
+        })
+    }
+}
+/// Same atomic Job Object runner with an explicit, already-owned pseudoconsole.
+/// No window, log, second launcher or handle inheritance is introduced. The
+/// caller retains console ownership until the actual process/tree barriers.
+#[allow(clippy::too_many_arguments)]
+pub fn run_pseudoconsole_observed(
+    program: &Path,
+    args: &[String],
+    workspace: &Path,
+    timeout: Duration,
+    limits: QuietLimits,
+    console: BorrowedPseudoConsole<'_>,
+    observe: impl Fn(QuietEvent) -> Result<()>,
+) -> Result<()> {
+    quiet(
+        program,
+        args,
+        workspace,
+        timeout,
+        limits,
+        || Ok(()),
+        Some(&observe),
+        Some(console),
+    )
+}
 fn observe_process(process: HANDLE, exit_observed: bool) -> Result<QuietProcess> {
     let mut counters = PROCESS_MEMORY_COUNTERS::default();
     counters.cb = std::mem::size_of_val(&counters) as u32;
@@ -276,7 +321,7 @@ pub fn run_quiet(
     limits: QuietLimits,
     check: impl Fn() -> Result<()>,
 ) -> Result<()> {
-    quiet(program, args, workspace, timeout, limits, check, None)
+    quiet(program, args, workspace, timeout, limits, check, None, None)
 }
 /// The same owned runner with explicit primary-process observations. Called on
 /// the runner thread before spawn, immediately after spawn, on monitor ticks,
@@ -305,8 +350,10 @@ pub fn run_quiet_observed(
         limits,
         || Ok(()),
         Some(&observe),
+        None,
     )
 }
+#[allow(clippy::too_many_arguments)]
 fn quiet(
     program: &Path,
     args: &[String],
@@ -315,6 +362,7 @@ fn quiet(
     limits: QuietLimits,
     check: impl Fn() -> Result<()>,
     observer: Option<&dyn Fn(QuietEvent) -> Result<()>>,
+    console: Option<BorrowedPseudoConsole<'_>>,
 ) -> Result<()> {
     limits.validate()?;
     if !program.is_absolute()
@@ -341,6 +389,7 @@ fn quiet(
         Some(limits),
         check,
         observer,
+        console,
     )
 }
 
@@ -355,6 +404,7 @@ fn execute(
     bounded: Option<QuietLimits>,
     check: impl Fn() -> Result<()>,
     observer: Option<&dyn Fn(QuietEvent) -> Result<()>>,
+    console: Option<BorrowedPseudoConsole<'_>>,
 ) -> Result<()> {
     let program = wide(program.as_os_str());
     let cwd = wide(workspace.as_os_str());
@@ -437,30 +487,47 @@ fn execute(
         {
             return Err(std::io::Error::last_os_error().into());
         }
-        for handle in [stdout.as_raw_handle(), stdin.as_raw_handle()] {
-            if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0 {
+        if let Some(console) = console {
+            if UpdateProcThreadAttribute(
+                list,
+                0,
+                PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
+                console.handle as *const std::ffi::c_void,
+                std::mem::size_of::<isize>(),
+                ptr::null_mut(),
+                ptr::null(),
+            ) == 0
+            {
+                return Err(std::io::Error::last_os_error().into());
+            }
+        } else {
+            for handle in [stdout.as_raw_handle(), stdin.as_raw_handle()] {
+                if SetHandleInformation(handle, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT) == 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+            }
+            let inherited = [stdout.as_raw_handle(), stdin.as_raw_handle()];
+            if UpdateProcThreadAttribute(
+                list,
+                0,
+                PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
+                inherited.as_ptr().cast(),
+                std::mem::size_of_val(&inherited),
+                ptr::null_mut(),
+                ptr::null(),
+            ) == 0
+            {
                 return Err(std::io::Error::last_os_error().into());
             }
         }
-        let inherited = [stdout.as_raw_handle(), stdin.as_raw_handle()];
-        if UpdateProcThreadAttribute(
-            list,
-            0,
-            PROC_THREAD_ATTRIBUTE_HANDLE_LIST as usize,
-            inherited.as_ptr().cast(),
-            std::mem::size_of_val(&inherited),
-            ptr::null_mut(),
-            ptr::null(),
-        ) == 0
-        {
-            return Err(std::io::Error::last_os_error().into());
-        }
         let mut startup = STARTUPINFOEXW::default();
         startup.StartupInfo.cb = std::mem::size_of_val(&startup) as u32;
-        startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-        startup.StartupInfo.hStdInput = stdin.as_raw_handle();
-        startup.StartupInfo.hStdOutput = stdout.as_raw_handle();
-        startup.StartupInfo.hStdError = stdout.as_raw_handle();
+        if console.is_none() {
+            startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+            startup.StartupInfo.hStdInput = stdin.as_raw_handle();
+            startup.StartupInfo.hStdOutput = stdout.as_raw_handle();
+            startup.StartupInfo.hStdError = stdout.as_raw_handle();
+        }
         startup.lpAttributeList = list;
         let mut process = PROCESS_INFORMATION::default();
         if CreateProcessW(
@@ -468,8 +535,13 @@ fn execute(
             line.as_mut_ptr(),
             ptr::null(),
             ptr::null(),
-            1,
-            CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT,
+            i32::from(console.is_none()),
+            (if console.is_none() {
+                CREATE_NO_WINDOW
+            } else {
+                0
+            }) | EXTENDED_STARTUPINFO_PRESENT
+                | CREATE_UNICODE_ENVIRONMENT,
             environment.as_ptr().cast(),
             cwd.as_ptr(),
             &startup.StartupInfo,
