@@ -701,6 +701,13 @@ displayed Fault and exited with status 2 after Quit. No Start was sent and
 the system's endpoint settings were untouched. Actual disconnect remains a
 separate station check.
 
+The opt-in test `actual_station_exits_while_terminal_output_is_undrained`
+starts the pinned synthetic playback under ConPTY, stops reading terminal output
+after observing `Playing p1`, and sends EOF. It checks for successful process
+exit within two seconds before resuming output draining. The fixture opens no
+audio capture. A pass establishes cleanup while the host is withholding reads.
+Whether a particular console write blocked still requires direct observation.
+
 The opt-in test `capture::record_isolated_station_loopback` records the pinned
 render endpoint's WASAPI loopback. On an isolated synthetic test output, set
 `REEL_INSTALLATION_CAPTURE_SCOPE=isolated-synthetic-render` and

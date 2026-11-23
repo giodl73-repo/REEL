@@ -53,6 +53,7 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
         10,
         None,
         &[],
+        false,
     );
     let error = result.expect_err("a closed source fault must remain visible in the exit status");
     assert!(
@@ -132,6 +133,31 @@ fn actual_station_closes_live_playback_on_interrupt_and_eof() {
 
 #[cfg(windows)]
 #[test]
+#[ignore = "explicit station terminal backpressure; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_exits_while_terminal_output_is_undrained() {
+    let (path, request) = station_request();
+    let (result, steps, elapsed) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[(b"Ready p", b"start\r"), (b"Playing p1", b"\x1a\r")],
+        45,
+        None,
+        &[],
+        true,
+    );
+    assert_eq!(steps, 2, "station did not reach live playback: {result:?}");
+    result.unwrap();
+    let exit = elapsed
+        .last()
+        .copied()
+        .flatten()
+        .expect("missing exit time");
+    println!("EOF to confirmed process exit with output undrained: {exit:?}");
+    assert!(exit <= std::time::Duration::from_secs(2));
+}
+
+#[cfg(windows)]
+#[test]
 #[ignore = "explicit station metadata mismatch; requires REEL_INSTALLATION_STATION_SESSION"]
 fn actual_station_refuses_changed_endpoint_configuration() {
     let (_, mut request) = station_request();
@@ -148,6 +174,7 @@ fn actual_station_refuses_changed_endpoint_configuration() {
         45,
         None,
         &[],
+        false,
     );
     let error = result.expect_err("a changed endpoint configuration must fault");
     assert!(
@@ -501,6 +528,7 @@ fn run_station_with_delays(
         command_budget_seconds,
         trace.as_deref(),
         command_delays,
+        false,
     );
     assert_eq!(
         steps,
@@ -519,6 +547,7 @@ fn run_console(
     command_budget_seconds: u64,
     trace_path: Option<&std::path::Path>,
     command_delays: &[std::time::Duration],
+    hold_output_after_final_marker: bool,
 ) -> (Result<(), String>, usize, Vec<Option<std::time::Duration>>) {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
@@ -583,7 +612,9 @@ fn run_console(
     };
     let observed = Mutex::new(Vec::with_capacity(steps.len()));
     std::thread::scope(|scope| {
-        let reader = scope.spawn(|| {
+        let (release_output, held_output) = std::sync::mpsc::channel::<()>();
+        let observed_markers = &observed;
+        let reader = scope.spawn(move || {
             let mut chunk = [0; 4096];
             let mut next = 0;
             let mut matched = 0;
@@ -597,7 +628,14 @@ fn run_console(
                             matched += 1;
                             if matched == marker.len() {
                                 next += 1;
-                                observed.lock().unwrap().push((Instant::now(), qpc_ns()));
+                                observed_markers
+                                    .lock()
+                                    .unwrap()
+                                    .push((Instant::now(), qpc_ns()));
+                                if hold_output_after_final_marker && next == steps.len() {
+                                    // Stop reading until the parent observes child exit.
+                                    let _ = held_output.recv();
+                                }
                                 matched = 0;
                             }
                         } else {
@@ -681,6 +719,7 @@ fn run_console(
             }
             (result, steps, elapsed)
         });
+        drop(release_output);
         drop(input);
         drop(terminal);
         reader.join().unwrap();
