@@ -741,6 +741,14 @@ fn run_cli() -> Result<()> {
                 reel::spoken_programme::compiler::impact_file(&previous, &current, profile)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
+        #[cfg(feature = "tig-publication")]
+        Command::SpokenEditionDescribeJob {
+            request,
+            asset_root,
+        } => {
+            let job = reel::spoken_programme::workflow::describe_job(&request, &asset_root)?;
+            println!("{}", serde_json::to_string_pretty(&job)?);
+        }
         Command::CueRelativeCompile {
             contract,
             output_path,
@@ -3053,6 +3061,13 @@ enum Command {
         current: PathBuf,
         #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
         profile: reel::spoken_programme::compiler::CompilationProfile,
+    },
+    /// Describe a pinned compile, produce and check job for affected spoken editions.
+    #[cfg(feature = "tig-publication")]
+    SpokenEditionDescribeJob {
+        request: PathBuf,
+        #[arg(long)]
+        asset_root: PathBuf,
     },
     /// Compile semantic cue-relative anchors into deterministic sample/frame timing.
     CueRelativeCompile {

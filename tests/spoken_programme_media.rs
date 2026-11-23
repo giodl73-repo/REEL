@@ -685,6 +685,116 @@ fn cli_produces_and_checks_only_selected_spoken_editions() {
 }
 
 #[test]
+#[cfg(all(windows, feature = "tig-publication"))]
+fn managed_spoken_recipe_retains_audio_and_checked_access() {
+    let fixture = Fixture::new();
+    let root = fixture.temp.path();
+    let declaration = root.join("declaration.json");
+    fs::write(&declaration, serde_json::to_vec(&fixture.document).unwrap()).unwrap();
+    let invoke = |args: &[&str]| -> serde_json::Value {
+        let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        serde_json::from_slice(&result.stdout).unwrap()
+    };
+    let declaration_path = declaration.to_str().unwrap();
+    let impact = invoke(&["spoken-edition-impact", declaration_path, declaration_path]);
+    let selected: BTreeMap<_, _> = impact["editions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|edition| edition["language"] == "en")
+        .map(|edition| {
+            (
+                edition["edition_id"].as_str().unwrap(),
+                &edition["current_recipe_sha256"],
+            )
+        })
+        .collect();
+    let project = tempfile::tempdir().unwrap();
+    let request = project.path().join("request.json");
+    let cache = project.path().join("cache");
+    for dir in [
+        cache.as_path(),
+        &project.path().join(".local"),
+        &project.path().join("registry"),
+    ] {
+        fs::create_dir(dir).unwrap();
+    }
+    let write = |name: &str, value| {
+        fs::write(
+            project.path().join(name),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+    };
+    write(
+        ".local/storage-rust.json",
+        json!({
+            "cache_roots":[cache],"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}
+        }),
+    );
+    write(
+        "request.json",
+        json!({
+            "schema":"reel.spoken-workflow-job.v1","declaration":"declaration.json",
+            "profile":"engineering","expected_editions":selected,
+            "budget_bytes":192*1024*1024,"scratch_bytes":16*1024*1024
+        }),
+    );
+    let recipe = invoke(&[
+        "spoken-edition-describe-job",
+        request.to_str().unwrap(),
+        "--asset-root",
+        root.to_str().unwrap(),
+    ]);
+    let mut assets = recipe["inputs"].as_object().unwrap().clone();
+    for take in fixture
+        .document
+        .performances
+        .iter()
+        .filter(|take| take.language == "es")
+    {
+        assert!(!assets.contains_key(take.source.path.to_str().unwrap()));
+    }
+    for (name, item) in &assets {
+        let stored = reel_assets::ingest(project.path(), &root.join(name)).unwrap();
+        assert_eq!(stored["sha256"], item["sha256"]);
+        assert_eq!(stored["bytes"], item["bytes"]);
+    }
+    assets.extend(recipe["installed_tools"].as_object().unwrap().clone());
+    write("catalog.json", json!({"videos":[{"record":"inputs.json"}]}));
+    write("inputs.json", json!({"assets":assets}));
+    write("recipe.json", recipe);
+    let result =
+        reel_assets::jobs::run(project.path(), &project.path().join("recipe.json")).unwrap();
+    assert_eq!(result["workspace_retained"], false);
+    let access = &result["outputs"]["spoken-access/access.json"];
+    let package: serde_json::Value =
+        serde_json::from_slice(&fs::read(access["path"].as_str().unwrap()).unwrap()).unwrap();
+    let editions = package["editions"].as_array().unwrap();
+    assert_eq!(editions.len(), 2);
+    for (index, edition) in editions.iter().enumerate() {
+        assert_eq!(edition["language"], "en");
+        assert!(!edition["chapters"].as_array().unwrap().is_empty());
+        assert_eq!(
+            edition["wave"]["sha256"],
+            result["outputs"][format!("spoken-candidate/edition-{index:03}.wav")]["sha256"]
+        );
+        assert_eq!(
+            edition["transcript"]["sha256"],
+            result["outputs"][format!("spoken-access/edition-{index:03}.txt")]["sha256"]
+        );
+    }
+}
+
+#[test]
 fn cli_compiles_produces_and_refuses_overwrite() {
     let mut f = Fixture::new();
     f.document.id = "PRIVATE-PROGRAMME-CANARY".into();
