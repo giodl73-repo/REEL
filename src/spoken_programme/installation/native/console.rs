@@ -388,6 +388,14 @@ impl ConsoleSurface {
                 Preparation::Stopped => "Stopped",
             }
         }
+        fn playback_status(snapshot: Snapshot) -> String {
+            let position = if snapshot.state == State::LoopWait || snapshot.interval_frame != 0 {
+                format!("gap {}", snapshot.interval_frame)
+            } else {
+                format!("frame {}", snapshot.source_frame)
+            };
+            format!("{:?} p{} {position}", snapshot.state, snapshot.pass)
+        }
         let status = match item.report {
             Output::Transcript { text, .. } => {
                 return Ok((item.ticket, Some(self.transcript(&text)?)));
@@ -403,7 +411,7 @@ impl ConsoleSurface {
             },
             Output::Ready { snapshot, .. }
             | Output::State { snapshot, .. }
-            | Output::Ended { snapshot, .. } => format!("{:?}", snapshot.state),
+            | Output::Ended { snapshot, .. } => playback_status(snapshot),
             Output::Ack {
                 id,
                 snapshot,
@@ -411,7 +419,7 @@ impl ConsoleSurface {
                 ..
             } => match refusal {
                 Some(reason) => format!("Command {id} refused: {reason:?}"),
-                None => format!("Command {id}: {:?}", snapshot.state),
+                None => format!("Command {id}: {}", playback_status(snapshot)),
             },
             Output::ResourcesClosed { .. } => "Worker resources closed".into(),
             Output::SessionFault { .. } => "Fault".into(),
