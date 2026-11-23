@@ -604,8 +604,8 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-The latest Windows installation checkpoint passed 109 unit cases and all six
-public CLI cases. The seven ignored unit entries are child fixtures launched by
+The Windows installation unit checkpoint passed 110 cases. The preceding
+public CLI checkpoint passed all six cases. The seven ignored unit entries are child fixtures launched by
 their parent tests. An earlier original-input checkpoint passed 11 cases. The
 real source-worker integration retains
 original file guards through Ready/rechecks, releases them at actual teardown,
