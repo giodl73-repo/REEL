@@ -402,6 +402,18 @@ fn cli_exports_exact_per_consumer_parents_without_native_effects_or_overwrite() 
     let saved = fs::read(output.join("bound.json")).unwrap();
     assert!(!call(&digest(&raw)).status.success());
     assert_eq!(saved, fs::read(output.join("bound.json")).unwrap());
+    let export_pin = digest(&manifest);
+    let verified = native::verify_export(&output, &digest(&raw), &export_pin).unwrap();
+    assert_eq!(
+        verified.into_iter().collect::<BTreeSet<_>>(),
+        BTreeSet::from(["scene-en".into(), "scene-es".into()])
+    );
+    assert!(native::verify_export(&output, &digest(b"wrong"), &export_pin).is_err());
+    let packet_path = output.join("scene-en-packet.json");
+    let mut packet = fs::read(&packet_path).unwrap();
+    packet[0] ^= 1;
+    fs::write(packet_path, packet).unwrap();
+    assert!(native::verify_export(&output, &digest(&raw), &export_pin).is_err());
     assert_eq!(
         before,
         fs::read(case.profile.metadata_root.join("metadata.json")).unwrap()

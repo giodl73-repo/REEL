@@ -28,9 +28,10 @@ requests and the producing project's selection remain unchanged.
 
 The package contains `bound.json` and per-render `*-packet.json`,
 `*-source.json`, and `*-parents.json`. The command writes `export.json` last
-and returns its SHA-256 as `export_sha256`. Check that digest, the original
-request digest, and each listed file's length and SHA-256 before using the
-package for dispatch. Each file is at most 1 MiB and the complete metadata
+and returns its SHA-256 as `export_sha256`. Run
+`verify-film-rebuild-export DIRECTORY REQUEST_SHA256 EXPORT_SHA256` to check
+the original request digest and each listed file's length and SHA-256 before
+dispatch. Each file is at most 1 MiB and the complete metadata
 export is at most 16 MiB. Partial and existing packages are preserved.
 These are private machine controls, not shareable reports.
 
