@@ -156,7 +156,34 @@ fn contained_renderer_recovers_by_checking_without_rerendering_and_preserves_fai
     request.action = Action::Check;
     launch(&request, "check-request.json").unwrap();
     let checked = collect(&workspace, &request.limits).unwrap();
-    check_output_proof(&checked, &reconcile_check(&request).unwrap()).unwrap();
+    let checked_proof = reconcile_check(&request).unwrap();
+    check_output_proof(&checked, &checked_proof).unwrap();
+    let render_request = fs::read(workspace.join("render-request.json")).unwrap();
+    let render_result = workspace.join("render-result.json");
+    let original = fs::read(&render_result).unwrap();
+    preserve_recovered_outcome(&workspace, &render_request, &request, &checked_proof).unwrap();
+    assert_eq!(fs::read(&render_result).unwrap(), original);
+
+    fs::remove_file(&render_result).unwrap();
+    preserve_recovered_outcome(&workspace, &render_request, &request, &checked_proof).unwrap();
+    let recovered: serde_json::Value =
+        serde_json::from_slice(&fs::read(&render_result).unwrap()).unwrap();
+    assert_eq!(
+        recovered["schema"],
+        "reel.workflow-film-process-recovered-outcome.v1"
+    );
+    assert_eq!(
+        recovered["request_sha256"],
+        reel_workflow::digest(&render_request)
+    );
+    assert_eq!(
+        recovered["check_request_sha256"],
+        reel_workflow::digest(&fs::read(workspace.join("check-request.json")).unwrap())
+    );
+    assert_eq!(
+        recovered["outputs"],
+        serde_json::to_value(checked_proof).unwrap()
+    );
     for (name, output) in &checked.files {
         assert_eq!(before[name].sha256, output.reference().sha256);
     }

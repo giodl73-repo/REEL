@@ -78,6 +78,14 @@ struct Outcome {
     error: Option<reel_workflow::Error>,
     outputs: Option<BTreeMap<String, FileRef>>,
 }
+
+#[derive(Serialize)]
+struct RecoveredOutcome<'a> {
+    schema: &'static str,
+    request_sha256: String,
+    check_request_sha256: String,
+    outputs: &'a BTreeMap<String, FileRef>,
+}
 struct Files<'a>(&'a Request);
 fn hash_file(path: &Path, bytes: u64) -> anyhow::Result<String> {
     anyhow::ensure!(bytes <= 64 * 1024 * 1024 * 1024, "process input byte bound");
@@ -584,6 +592,55 @@ pub fn render(
     check_output_proof(&rendered, &proof)?;
     Ok(rendered)
 }
+
+fn preserve_recovered_outcome(
+    workspace: &Path,
+    render_request: &[u8],
+    check: &Request,
+    proof: &BTreeMap<String, FileRef>,
+) -> Result<()> {
+    let path = workspace.join("render-result.json");
+    let check_request = serde_json::to_vec(check)
+        .map_err(|_| error(ErrorKind::Invalid, "film-process-request-json"))?;
+    let raw = crate::admission::encode(&RecoveredOutcome {
+        schema: "reel.workflow-film-process-recovered-outcome.v1",
+        request_sha256: reel_workflow::digest(render_request),
+        check_request_sha256: reel_workflow::digest(&check_request),
+        outputs: proof,
+    })?;
+    match crate::staging::read_held(&path, reel_workflow::MAX_CONTROL_BYTES as u64) {
+        Ok((existing, _held)) => {
+            if existing == raw {
+                return Ok(());
+            }
+            let original: Outcome = reel_workflow::decode(&existing)?;
+            if original.schema != "reel.workflow-film-process-outcome.v2"
+                || original.request_sha256 != reel_workflow::digest(render_request)
+                || original.error.is_some()
+                || original.outputs.as_ref() != Some(proof)
+            {
+                return Err(error(
+                    ErrorKind::Integrity,
+                    "film-process-original-render-result",
+                ));
+            }
+            return Ok(());
+        }
+        Err(err) if err.kind == ErrorKind::Missing => (),
+        Err(err) => return Err(err),
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .and_then(|mut file| file.write_all(&raw).and_then(|_| file.sync_all()))
+        .map_err(|_| {
+            error(
+                ErrorKind::NeedsRecovery,
+                "film-process-recovered-outcome-preserve",
+            )
+        })
+}
 /// Reconcile an existing rendered directory without rendering again. Requires
 /// the original request bytes and uses a separate, explicit verification launch.
 pub fn recover(
@@ -622,6 +679,7 @@ pub fn recover(
         launch(&check, "check-request.json")?
     };
     check_output_proof(&rendered, &proof)?;
+    preserve_recovered_outcome(directory.path(), &expected, &check, &proof)?;
     Ok(rendered)
 }
 /// Internal trusted child port. The parent must hold source/program/output guards.
