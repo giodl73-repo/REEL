@@ -26,6 +26,17 @@ impl InputFiles for BrowserFixture {
 }
 impl BrowserFixture {
     fn new(f: &CompanionFixture, c: &api::Composition, forge: bool) -> Self {
+        Self::from_source(&f.root, &f.candidate, &f.receipt, &f.request.svg, c, forge)
+    }
+
+    fn from_source(
+        root: &Path,
+        candidate: &Path,
+        receipt: &[u8],
+        svg_source: &FileRef,
+        c: &api::Composition,
+        forge: bool,
+    ) -> Self {
         let controls = tempfile::tempdir().unwrap();
         let mut clock = c.clock_bytes().to_vec();
         if forge {
@@ -33,7 +44,7 @@ impl BrowserFixture {
             v["anchors"][1]["sample"] = json!(v["anchors"][1]["sample"].as_u64().unwrap() + 2000);
             clock = serde_json::to_vec_pretty(&v).unwrap();
         }
-        let receipt: producer::ProductionReceipt = serde_json::from_slice(&f.receipt).unwrap();
+        let receipt: producer::ProductionReceipt = serde_json::from_slice(receipt).unwrap();
         let original_wave = receipt
             .editions
             .iter()
@@ -43,7 +54,7 @@ impl BrowserFixture {
             .clone();
         let svg = FileRef {
             path: "admitted/svg".into(),
-            ..f.request.svg.clone()
+            ..svg_source.clone()
         };
         let wave = FileRef {
             path: format!("admitted/audio/{}", c.edition_id()).into(),
@@ -52,11 +63,11 @@ impl BrowserFixture {
         let mut paths = BTreeMap::new();
         let mut inputs = BTreeMap::new();
         for (alias, file, path) in [
-            ("opening.svg", svg, f.root.join(&f.request.svg.path)),
+            ("opening.svg", svg, root.join(&svg_source.path)),
             (
                 "audio.wav",
                 wave.clone(),
-                f.candidate.join(&original_wave.path),
+                candidate.join(&original_wave.path),
             ),
             (
                 "clock.json",
@@ -772,7 +783,7 @@ fn nonintegral_duration_and_rehashed_false_candidate_receipt_refuse() {
 }
 
 #[cfg(windows)]
-mod native {
+pub(super) mod native {
     use super::*;
     use reel::media_runtime::{Bindings, BoundPrograms, BoundTool, ByteIdentity};
     fn runtime() -> &'static (BoundPrograms, BoundTool, PathBuf) {
@@ -806,6 +817,66 @@ mod native {
                 ffmpeg.path,
             )
         })
+    }
+
+    pub(crate) fn render_shared_openings(
+        inputs: reel::spoken_programme::installation::Inputs<'_>,
+        root: &Path,
+        candidate: &Path,
+    ) {
+        let request = composition_request(root, "installation");
+        let visuals = root.to_path_buf();
+        let prepared = api::prepare(
+            request.clone(),
+            api::Inputs {
+                spoken: inputs.spoken,
+                sources: inputs.sources,
+                candidate: inputs.candidate,
+                visuals: &visuals,
+                access: inputs.access,
+                access_manifest: inputs.access_manifest,
+            },
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let receipt: producer::ProductionReceipt =
+            serde_json::from_slice(inputs.spoken.receipt_bytes).unwrap();
+        let (programs, browser, _) = runtime();
+        assert_eq!(prepared.compositions().len(), 2);
+        for (composition, expected_frames) in prepared.compositions().iter().zip([72, 84]) {
+            let files = BrowserFixture::from_source(
+                root,
+                candidate,
+                inputs.spoken.receipt_bytes,
+                &request.svg,
+                composition,
+                false,
+            );
+            let workspace = tempfile::tempdir().unwrap();
+            let output = workspace.path().join("shared-opening.mkv");
+            let rendered = api::render(
+                &prepared,
+                composition.edition_id(),
+                &files.plan,
+                &files,
+                programs,
+                browser,
+                workspace.path(),
+                &output,
+                || Ok(()),
+            )
+            .unwrap();
+            let edition = receipt
+                .editions
+                .iter()
+                .find(|edition| edition.edition_id == composition.edition_id())
+                .unwrap();
+            assert_eq!(rendered.frames, expected_frames);
+            assert_eq!(
+                rendered.pcm_sha256.as_deref(),
+                Some(edition.pcm_sha256.as_str())
+            );
+        }
     }
     #[test]
     #[ignore = "explicit bounded native browser qualification in Windows core shard 2"]
