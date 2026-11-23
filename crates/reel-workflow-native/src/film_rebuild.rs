@@ -289,6 +289,14 @@ pub fn export(path: &Path, pin: &str, directory: &Path) -> Result<String> {
 /// Check the complete export before dispatch. The returned task order is
 /// bound to both the original request and the published manifest.
 pub fn verify_export(directory: &Path, request_pin: &str, export_pin: &str) -> Result<Vec<String>> {
+    Ok(verified_manifest(directory, request_pin, export_pin)?.render_tasks)
+}
+
+fn verified_manifest(
+    directory: &Path,
+    request_pin: &str,
+    export_pin: &str,
+) -> Result<ExportManifest> {
     let limit = reel_workflow::MAX_CONTROL_BYTES;
     let (raw, _held) = crate::staging::read_held(&directory.join("export.json"), limit as u64)?;
     if digest(&raw) != export_pin {
@@ -330,7 +338,7 @@ pub fn verify_export(directory: &Path, request_pin: &str, export_pin: &str) -> R
         ));
     }
     let mut total = raw.len();
-    for (name, expected) in manifest.files {
+    for (name, expected) in &manifest.files {
         if expected.bytes > limit || expected.bytes > MAX_EXPORT_BYTES - total {
             return Err(error(
                 ErrorKind::Budget,
@@ -347,5 +355,9 @@ pub fn verify_export(directory: &Path, request_pin: &str, export_pin: &str) -> R
         }
         total += bytes.len();
     }
-    Ok(manifest.render_tasks)
+    Ok(manifest)
 }
+
+#[cfg(all(windows, feature = "film"))]
+#[path = "film_rebuild/dispatch.rs"]
+pub mod dispatch;

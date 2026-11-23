@@ -256,12 +256,12 @@ struct Owned {
     _controls: Vec<File>,
     _lease: capacity::Reservation,
 }
-fn open(
+pub(crate) fn validate_ticket(
     request: &Request,
     request_pin: &str,
     ticket_raw: &[u8],
     ticket_pin: &str,
-) -> Result<Owned> {
+) -> Result<Ticket> {
     if reel_workflow::digest(ticket_raw) != ticket_pin {
         return Err(error(ErrorKind::Integrity, "film-cli-ticket-pin"));
     }
@@ -274,6 +274,16 @@ fn open(
     {
         return Err(error(ErrorKind::Conflict, "film-cli-ticket-binding"));
     }
+    Ok(ticket)
+}
+
+fn open(
+    request: &Request,
+    request_pin: &str,
+    ticket_raw: &[u8],
+    ticket_pin: &str,
+) -> Result<Owned> {
+    let ticket = validate_ticket(request, request_pin, ticket_raw, ticket_pin)?;
     let parent = parent(request)?;
     if parent.path() != ticket.parent || parent.identity() != ticket.parent_identity {
         return Err(error(ErrorKind::Conflict, "film-cli-parent-replaced"));

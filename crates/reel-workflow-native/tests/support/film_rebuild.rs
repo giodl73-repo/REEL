@@ -403,6 +403,29 @@ fn cli_exports_exact_per_consumer_parents_without_native_effects_or_overwrite() 
     assert!(!call(&digest(&raw)).status.success());
     assert_eq!(saved, fs::read(output.join("bound.json")).unwrap());
     let export_pin = digest(&manifest);
+    #[cfg(feature = "film")]
+    {
+        let dispatch = serde_json::to_vec(&serde_json::json!({
+            "schema": "reel.workflow-film-rebuild-dispatch.v1",
+            "export_directory": output,
+            "rebuild_request_sha256": digest(&raw),
+            "export_sha256": export_pin,
+            "editions": {},
+        }))
+        .unwrap();
+        let path = root.path().join("dispatch.json");
+        fs::write(&path, &dispatch).unwrap();
+        let refused = Command::new(env!("CARGO_BIN_EXE_reel-workflow-native"))
+            .arg("dispatch-film-rebuild")
+            .arg(path)
+            .arg(digest(&dispatch))
+            .arg("--apply")
+            .output()
+            .unwrap();
+        assert!(!refused.status.success());
+        let response: serde_json::Value = serde_json::from_slice(&refused.stdout).unwrap();
+        assert_eq!(response["error"]["code"], "film-rebuild-dispatch-editions");
+    }
     let verified = native::verify_export(&output, &digest(&raw), &export_pin).unwrap();
     assert_eq!(
         verified.into_iter().collect::<BTreeSet<_>>(),

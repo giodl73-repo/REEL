@@ -73,6 +73,12 @@ fn run(args: &[String]) -> reel_workflow::Result<serde_json::Value> {
                 serde_json::json!({"ok":true,"export_sha256":export_sha256,"native_metadata_verified":true,"child_admitted":false,"consumers_rebuilt":false,"selection_verified":false}),
             )
         }
+        #[cfg(all(windows, feature = "film"))]
+        [command, request, pin, apply]
+            if command == "dispatch-film-rebuild" && apply == "--apply" =>
+        {
+            reel_workflow_native::film_rebuild::dispatch::execute(Path::new(request), pin)
+        }
         [command, directory, request_pin, export_pin]
             if command == "verify-film-rebuild-export" =>
         {
@@ -561,6 +567,7 @@ fn main() -> ExitCode {
             "reel-workflow-native prepare-film-rebuild REQUEST SHA256 NEW_DIRECTORY\n",
             "reel-workflow-native verify-film-rebuild-export DIRECTORY REQUEST_SHA256 EXPORT_SHA256\n",
             "Optional Windows film feature:\n",
+            "reel-workflow-native dispatch-film-rebuild DISPATCH SHA256 --apply\n",
             "reel-workflow-native prepare-film REQUEST REQUEST_SHA NEW_TICKET --apply\n",
             "reel-workflow-native run-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
             "reel-workflow-native resume-film REQUEST REQUEST_SHA TICKET TICKET_SHA --apply\n",
