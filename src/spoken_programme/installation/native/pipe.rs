@@ -306,7 +306,8 @@ impl Channel {
                                     anyhow::anyhow!("installation pipe write ended")
                                 })?;
                             } else {
-                                std::thread::sleep(Duration::from_millis(2));
+                                // A send that races this park leaves a wake token.
+                                std::thread::park();
                             }
                         }
                         Ok(())
@@ -346,6 +347,7 @@ impl Channel {
             self.request_stop();
             anyhow::bail!("installation pipe outgoing queue full");
         }
+        self.wake_writer();
         Ok(())
     }
     pub fn receive(&mut self) -> Option<Packet> {
@@ -353,6 +355,12 @@ impl Channel {
     }
     pub fn request_stop(&self) {
         self.facts.stopped.store(true, Ordering::Release);
+        self.wake_writer();
+    }
+    fn wake_writer(&self) {
+        if let Some(writer) = self.threads.get(1) {
+            writer.thread().unpark();
+        }
     }
     /// Returns success only after both real threads/handles have closed within
     /// two seconds. A broken OS operation may exceed it; actual joins still take

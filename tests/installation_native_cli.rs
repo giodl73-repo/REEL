@@ -22,7 +22,7 @@ fn session_request(root: &std::path::Path) -> serde_json::Value {
 
 #[cfg(windows)]
 #[test]
-fn actual_run_displays_missing_source_fault_and_exits_on_cooked_quit() {
+fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
         fs::File,
@@ -88,24 +88,28 @@ fn actual_run_displays_missing_source_fault_and_exits_on_cooked_quit() {
     });
     drop(in_read);
     drop(out_write);
-    let fault = AtomicBool::new(false);
+    let markers: [&[u8]; 3] = [b"Fault", b"Command unavailable", b"1: Fault"];
+    let observed = markers.map(|_| AtomicBool::new(false));
     std::thread::scope(|scope| {
         let reader = scope.spawn(|| {
             let mut chunk = [0; 4096];
-            let mut matched = 0;
+            let mut matched = [0; 3];
             while let Ok(count) = output.read(&mut chunk) {
                 if count == 0 {
                     break;
                 }
                 for &byte in &chunk[..count] {
-                    if byte == b"Fault"[matched] {
-                        matched += 1;
-                        if matched == 5 {
-                            fault.store(true, Ordering::Release);
-                            matched = 0;
+                    for (index, marker) in markers.iter().enumerate() {
+                        let offset = &mut matched[index];
+                        if byte == marker[*offset] {
+                            *offset += 1;
+                            if *offset == marker.len() {
+                                observed[index].store(true, Ordering::Release);
+                                *offset = 0;
+                            }
+                        } else {
+                            *offset = usize::from(byte == marker[0]);
                         }
-                    } else {
-                        matched = usize::from(byte == b'F');
                     }
                 }
             }
@@ -128,14 +132,24 @@ fn actual_run_displays_missing_source_fault_and_exits_on_cooked_quit() {
                 .map_err(|error| error.to_string())
             });
             let deadline = Instant::now() + Duration::from_secs(10);
-            while !fault.load(Ordering::Acquire) && !job.is_finished() && Instant::now() < deadline
+            let mut sent = 0;
+            for (observed, line) in
+                observed
+                    .iter()
+                    .zip([b"start\r".as_slice(), b"status\r", b"quit\r"])
             {
-                std::thread::sleep(Duration::from_millis(2));
+                while !observed.load(Ordering::Acquire)
+                    && !job.is_finished()
+                    && Instant::now() < deadline
+                {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                if !observed.load(Ordering::Acquire) || input.write_all(line).is_err() {
+                    break;
+                }
+                sent += 1;
             }
-            let quit = fault
-                .load(Ordering::Acquire)
-                .then(|| input.write_all(b"quit\r"));
-            (job.join().unwrap(), quit)
+            (job.join().unwrap(), sent)
         });
         drop(input);
         drop(terminal);
@@ -143,11 +157,15 @@ fn actual_run_displays_missing_source_fault_and_exits_on_cooked_quit() {
         let error = result
             .0
             .expect_err("a closed source fault must remain visible in the exit status");
-        assert!(error.starts_with("Job step exited 2;"), "{error}");
-        result
-            .1
-            .expect("foreground displayed source fault")
-            .unwrap();
+        assert!(
+            error.starts_with("Job step exited 2;"),
+            "after {} lines: {error}",
+            result.1
+        );
+        assert_eq!(
+            result.1, 3,
+            "expected Fault, refusal and Status before Quit"
+        );
     });
 }
 #[test]
