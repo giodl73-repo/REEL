@@ -19,6 +19,134 @@ fn session_request(root: &std::path::Path) -> serde_json::Value {
         "playback":{"runtime":file,"source_commit":"b".repeat(40),"cargo_lock":file,"cpal_version":"0.18.2"},
         "endpoint":binding()})
 }
+
+#[cfg(windows)]
+#[test]
+fn actual_run_displays_missing_source_fault_and_exits_on_cooked_quit() {
+    use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
+    use std::{
+        fs::File,
+        io::{Read, Write},
+        os::windows::io::{AsRawHandle, FromRawHandle},
+        sync::atomic::{AtomicBool, Ordering},
+        time::{Duration, Instant},
+    };
+    use windows::Win32::{
+        Foundation::HANDLE,
+        System::{
+            Console::{COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON},
+            Pipes::CreatePipe,
+        },
+    };
+    struct Terminal(HPCON);
+    impl Drop for Terminal {
+        fn drop(&mut self) {
+            unsafe { ClosePseudoConsole(self.0) };
+        }
+    }
+    fn pipe() -> (File, File) {
+        let (mut read, mut write) = (HANDLE::default(), HANDLE::default());
+        unsafe {
+            CreatePipe(&mut read, &mut write, None, 0).unwrap();
+            (
+                File::from_raw_handle(read.0),
+                File::from_raw_handle(write.0),
+            )
+        }
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    let program = std::path::Path::new(env!("CARGO_BIN_EXE_reel-installation"));
+    let lock = include_bytes!("../Cargo.lock");
+    let lock_path = root.path().join("Cargo.lock");
+    fs::write(&lock_path, lock).unwrap();
+    let image = fs::read(program).unwrap();
+    let mut request = session_request(root.path());
+    request["playback"]["runtime"] = json!({
+        "path":program, "sha256":reel::production::sha256_bytes(&image), "bytes":image.len()
+    });
+    request["playback"]["cargo_lock"] = json!({
+        "path":lock_path, "sha256":reel::production::sha256_bytes(lock), "bytes":lock.len()
+    });
+    drop(image);
+    fs::write(
+        root.path().join("session.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+
+    let (in_read, mut input) = pipe();
+    let (mut output, out_write) = pipe();
+    let terminal = Terminal(unsafe {
+        CreatePseudoConsole(
+            COORD { X: 80, Y: 30 },
+            HANDLE(in_read.as_raw_handle()),
+            HANDLE(out_write.as_raw_handle()),
+            0,
+        )
+        .unwrap()
+    });
+    drop(in_read);
+    drop(out_write);
+    let fault = AtomicBool::new(false);
+    std::thread::scope(|scope| {
+        let reader = scope.spawn(|| {
+            let mut chunk = [0; 4096];
+            let mut matched = 0;
+            while let Ok(count) = output.read(&mut chunk) {
+                if count == 0 {
+                    break;
+                }
+                for &byte in &chunk[..count] {
+                    if byte == b"Fault"[matched] {
+                        matched += 1;
+                        if matched == 5 {
+                            fault.store(true, Ordering::Release);
+                            matched = 0;
+                        }
+                    } else {
+                        matched = usize::from(byte == b'F');
+                    }
+                }
+            }
+        });
+        let borrowed = unsafe { BorrowedPseudoConsole::from_raw(terminal.0.0).unwrap() };
+        let result = std::thread::scope(|job_scope| {
+            let job = job_scope.spawn(|| {
+                run_pseudoconsole_observed(
+                    program,
+                    &["run".into(), "session.json".into()],
+                    root.path(),
+                    Duration::from_secs(15),
+                    QuietLimits {
+                        memory_bytes: 512 * 1024 * 1024,
+                        processes: 2,
+                    },
+                    borrowed,
+                    |_| Ok(()),
+                )
+                .map_err(|error| error.to_string())
+            });
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while !fault.load(Ordering::Acquire) && !job.is_finished() && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            let quit = fault
+                .load(Ordering::Acquire)
+                .then(|| input.write_all(b"quit\r"));
+            (job.join().unwrap(), quit)
+        });
+        drop(input);
+        drop(terminal);
+        reader.join().unwrap();
+        assert!(result.0.is_ok(), "{:?}", result.0);
+        result
+            .1
+            .expect("foreground displayed source fault")
+            .unwrap();
+    });
+}
 #[test]
 fn private_session_shape_checks_no_originals_or_endpoints_and_rejects_forged_status() {
     let root = tempfile::tempdir().unwrap();
