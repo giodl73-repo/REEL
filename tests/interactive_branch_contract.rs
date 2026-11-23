@@ -151,11 +151,13 @@ fn fixture() -> Graph {
         {"kind":"playback","id":"opening","next":"choose","selections":[
           {"language":"en","edition":"opening-en"},{"language":"es","edition":"opening-es"}]},
         {"kind":"choice","id":"choose","choices":[
-          {"id":"repeat","target":"opening","traversals":1},
+          {"id":"repeat-opening","target":"opening","traversals":1},
           {"id":"example","target":"example"},
-          {"id":"summary","target":"end"}]},
+          {"id":"summary","target":"summary"}]},
         {"kind":"playback","id":"example","next":"end","selections":[
           {"language":"en","edition":"example-en"},{"language":"es","edition":"example-es"}]},
+        {"kind":"playback","id":"summary","next":"end","selections":[
+          {"language":"en","edition":"summary-en"},{"language":"es","edition":"summary-es"}]},
         {"kind":"end","id":"end"}
       ]
     }"#,
@@ -166,6 +168,19 @@ fn fixture() -> Graph {
 #[test]
 fn authored_bilingual_graph_has_two_routes_and_one_bounded_repeat() {
     validate(&fixture()).unwrap();
+}
+
+#[test]
+fn graph_requires_an_exit_after_repeat_budget_is_spent() {
+    let mut graph = fixture();
+    let Node::Choice { choices, .. } = &mut graph.nodes[1] else {
+        panic!("fixture needs a choice node after the opening");
+    };
+    choices.retain(|choice| choice.id == "repeat-opening");
+    assert_eq!(
+        validate(&graph).unwrap_err().to_string(),
+        "choice choose has no exit after repeats"
+    );
 }
 
 #[test]
