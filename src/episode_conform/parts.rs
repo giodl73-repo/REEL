@@ -202,7 +202,9 @@ fn video_clock(path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
 }
 
 fn video_clock_with(mut ffprobe: Command, path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
-    let out = ffprobe
+    use std::io::{BufRead, BufReader, Seek};
+    let mut packets = tempfile::tempfile()?;
+    let status = ffprobe
         .args([
             "-v",
             "error",
@@ -212,36 +214,40 @@ fn video_clock_with(mut ffprobe: Command, path: &Path, frames: u64, n: u64, d: u
             "-show_entries",
             "packet=pts_time,dts_time,flags",
             "-of",
-            "json",
+            "csv=p=0",
         ])
         .arg(path)
-        .output()?;
-    if !out.status.success() {
+        .stdout(packets.try_clone()?)
+        .status()?;
+    if !status.success() {
         bail!("video packet clock probe failed");
     }
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    let packets = value["packets"]
-        .as_array()
-        .context("video packets missing")?;
-    if packets.len() as u64 != frames
-        || !packets[0]["flags"]
-            .as_str()
-            .unwrap_or_default()
-            .contains('K')
-    {
-        bail!("video packet coverage or random access missing");
-    }
-    for (i, packet) in packets.iter().enumerate() {
-        let expected = i as f64 * d as f64 / n as f64;
-        for key in ["pts_time", "dts_time"] {
-            let actual: f64 = packet[key]
-                .as_str()
-                .context("video clock missing")?
-                .parse()?;
+    packets.rewind()?;
+    let mut reader = BufReader::new(packets);
+    let mut row = String::new();
+    let mut count = 0;
+    while reader.read_line(&mut row)? != 0 {
+        let mut fields = row.trim_end().split(',');
+        let (Some(pts), Some(dts), Some(flags), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            bail!("invalid video packet clock row");
+        };
+        if count >= frames || (count == 0 && !flags.contains('K')) {
+            bail!("video packet coverage or random access missing");
+        }
+        let expected = count as f64 * d as f64 / n as f64;
+        for clock in [pts, dts] {
+            let actual: f64 = clock.parse()?;
             if !actual.is_finite() || (actual - expected).abs() > 0.000_002 {
                 bail!("video PTS/DTS discontinuity");
             }
         }
+        count += 1;
+        row.clear();
+    }
+    if count == 0 || count != frames {
+        bail!("video packet coverage or random access missing");
     }
     Ok(())
 }
@@ -359,6 +365,40 @@ pub(super) fn declared_control<'a>(
         .iter()
         .find(|f| f.path == relative)
         .context("undeclared programme control")
+}
+
+const MAX_PART_CONTROL_BYTES: u64 = 4 * 1024 * 1024;
+
+fn read_part_control(path: &Path, pin: &scene_delivery::FileRef) -> Result<Vec<u8>> {
+    if pin.bytes > MAX_PART_CONTROL_BYTES {
+        bail!("programme part control exceeds byte bound");
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(pin.bytes + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != pin.bytes || sha(&bytes) != pin.sha256 {
+        bail!("programme part control differs from declared bytes");
+    }
+    Ok(bytes)
+}
+
+fn read_part_set(
+    path: &Path,
+    root: &Path,
+    scope: &[scene_delivery::FileRef],
+) -> Result<(PartSet, Vec<u8>)> {
+    let set: PartSet = serde_json::from_slice(&read_part_control(
+        path,
+        declared_control(path, root, scope)?,
+    )?)?;
+    let manifest_path = root.join(&set.manifest.path);
+    let declared_manifest = declared_control(&manifest_path, root, scope)?;
+    if declared_manifest != &set.manifest {
+        bail!("programme manifest differs from declared scope");
+    }
+    let bytes = read_part_control(&manifest_path, declared_manifest)?;
+    Ok((set, bytes))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -554,11 +594,11 @@ fn checked_source_proofs(
     let mut signature = None;
     let mut proofs = Vec::new();
     for item in &set.proofs {
-        if item.bytes > 4 * 1024 * 1024 {
+        if item.bytes > MAX_PART_CONTROL_BYTES {
             bail!("portable part proof too large");
         }
-        let proof: Proof =
-            serde_json::from_slice(&fs::read(scene_delivery::checked_file(root, item)?)?)?;
+        let path = scene_delivery::checked_file(root, item)?;
+        let proof: Proof = serde_json::from_slice(&read_part_control(&path, item)?)?;
         proof.range.validate(&manifest)?;
         if proof.schema != PROOF
             || proof.manifest_sha256 != sha(manifest_bytes)
@@ -804,13 +844,7 @@ fn prepare_originals(proofs: &[Proof]) -> Result<Vec<PreparedPart>> {
 /// contiguous prefix. Uses the same checked evidence as part finalization.
 pub fn next_range(set_path: &Path, root: &Path, end: usize) -> Result<Range> {
     let scope = checkpoint::snapshot_job_scope(root)?;
-    declared_control(set_path, root, &scope)?;
-    let set: PartSet = serde_json::from_slice(&checkpoint::bounded_bytes(set_path)?)?;
-    if set.manifest.bytes > 4 * 1024 * 1024 {
-        bail!("programme manifest exceeds range planning bound");
-    }
-    let manifest_path = scene_delivery::checked_file(root, &set.manifest)?;
-    let bytes = checkpoint::bounded_bytes(&manifest_path)?;
+    let (set, bytes) = read_part_set(set_path, root, &scope)?;
     let manifest: Manifest = serde_json::from_slice(&bytes)?;
     let proofs = checked_source_proofs(
         &set,
@@ -846,12 +880,7 @@ pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> 
         bail!("programme output must be a new directory");
     }
     let scope = checkpoint::snapshot_job_scope(root)?;
-    declared_control(set_path, root, &scope)?;
-    if fs::metadata(set_path)?.len() > 4 * 1024 * 1024 {
-        bail!("programme part set too large");
-    }
-    let set: PartSet = serde_json::from_slice(&fs::read(set_path)?)?;
-    let bytes = fs::read(scene_delivery::checked_file(root, &set.manifest)?)?;
+    let (set, bytes) = read_part_set(set_path, root, &scope)?;
     let proofs = checked_proofs(&set, root, &bytes)?;
     let prepared = prepare_originals(&proofs)?;
     finalize_checked(root, output, &bytes, &prepared, &set.proofs, None)
@@ -1079,6 +1108,7 @@ fn finalize_checked(
 }
 
 fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
+    use std::io::{BufRead, BufReader, Seek};
     let out = command("ffprobe")
         .args([
             "-v",
@@ -1086,8 +1116,9 @@ fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
             "-select_streams",
             "a:0",
             "-show_streams",
-            "-show_frames",
             "-show_format",
+            "-show_entries",
+            "stream=codec_name,sample_rate,channels:format=duration",
             "-of",
             "json",
         ])
@@ -1104,27 +1135,56 @@ fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
     {
         bail!("final audio is not selected stereo MP3");
     }
+    let mut frames = tempfile::tempfile()?;
+    let status = command("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=best_effort_timestamp_time,nb_samples",
+            "-of",
+            "compact",
+        ])
+        .arg(path)
+        .stdout(frames.try_clone()?)
+        .status()?;
+    if !status.success() {
+        bail!("MP3 frame probe failed");
+    }
+    frames.rewind()?;
+    let mut reader = BufReader::new(frames);
+    let mut row = String::new();
     let mut cursor = 0u64;
-    for frame in value["frames"]
-        .as_array()
-        .context("MP3 decoded frames missing")?
-    {
-        let time: f64 = frame["best_effort_timestamp_time"]
-            .as_str()
-            .context("MP3 timestamp missing")?
-            .parse()?;
+    while reader.read_line(&mut row)? != 0 {
+        let mut fields = row.trim_end().split('|');
+        if fields.next() != Some("frame") {
+            bail!("invalid MP3 frame row");
+        }
+        let mut time = None;
+        let mut frame_samples = None;
+        for field in fields {
+            if let Some(value) = field.strip_prefix("best_effort_timestamp_time=") {
+                time = Some(value.parse::<f64>()?);
+            } else if let Some(value) = field.strip_prefix("nb_samples=") {
+                frame_samples = Some(value.parse::<u64>()?);
+            }
+        }
+        let time = time.context("MP3 timestamp missing")?;
         if !time.is_finite() || (time - cursor as f64 / f64::from(rate)).abs() > 0.002 {
             bail!("MP3 priming/clock discontinuity");
         }
         cursor = cursor
-            .checked_add(
-                frame["nb_samples"]
-                    .as_u64()
-                    .context("MP3 samples missing")?,
-            )
+            .checked_add(frame_samples.context("MP3 samples missing")?)
             .context("MP3 count overflow")?;
+        if cursor.saturating_sub(samples) > 2304 {
+            bail!("MP3 decoded endpoint outside codec tail bound");
+        }
+        row.clear();
     }
-    if cursor < samples || cursor - samples > 2304 {
+    if cursor == 0 || cursor < samples {
         bail!("MP3 decoded endpoint outside codec tail bound");
     }
     let duration: f64 = value["format"]["duration"]
