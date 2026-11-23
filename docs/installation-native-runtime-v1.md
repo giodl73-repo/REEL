@@ -721,7 +721,9 @@ and selected the previously enrolled CA-2890 endpoint. After `check-session`
 passed, the undrained-output test reached live playback and observed successful
 process exit 248.96 ms after EOF. A separate two-pass run on that same pin
 submitted 288,000 source frames across 625 of 630 callbacks, with a reported
-480-frame period and a 1,056-frame largest observed callback. These are stream
+480-frame period and a 1,056-frame largest observed callback. A control run on
+that pin measured 14.37 ms to the Start acknowledgement, 61.07 ms to visible
+Playing and 28.27 ms to the Stop acknowledgement. These are stream, console
 and process measurements from synthetic playback. Live disconnect and isolated
 render-mix measurement remain open.
 
