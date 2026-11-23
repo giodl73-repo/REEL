@@ -97,14 +97,28 @@ pub fn execute(path: &Path, pin: &str) -> Result<serde_json::Value> {
     }
 
     let mut editions = BTreeMap::new();
-    for (id, entry, request, owned, _held_request, _held_ticket) in controls {
+    let mut controls = controls.into_iter();
+    while let Some((id, entry, request, owned, _held_request, _held_ticket)) = controls.next() {
         let action = match entry.action {
             Action::Run => film_cli::Action::Run,
             Action::Resume => film_cli::Action::Resume,
             Action::Verify => film_cli::Action::Verify,
         };
-        let outcome = film_cli::execute_owned(&request, owned, action)?;
-        editions.insert(id, outcome);
+        match film_cli::execute_owned(&request, owned, action) {
+            Ok(outcome) => {
+                editions.insert(id, outcome);
+            }
+            Err(error) => {
+                let pending_tasks: Vec<_> = controls.map(|(id, ..)| id).collect();
+                return Ok(serde_json::json!({
+                    "ok": false,
+                    "error": error,
+                    "failed_task": id,
+                    "editions": editions,
+                    "pending_tasks": pending_tasks,
+                }));
+            }
+        }
     }
     Ok(serde_json::json!({"ok":true,"editions":editions}))
 }
