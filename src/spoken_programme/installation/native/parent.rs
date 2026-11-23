@@ -379,6 +379,7 @@ impl ParentSession {
         result
     }
     fn poll(&mut self) -> Result<()> {
+        self.stop_input_at_lifetime()?;
         ensure!(!self.input.failed(), "installation foreground input failed");
         self.deadlines()?;
         ensure!(
@@ -435,10 +436,17 @@ impl ParentSession {
                     && now.saturating_sub(credit.received_us) > 100_000),
             "installation foreground acknowledgement deadline"
         );
-        ensure!(
-            now < MAX_SESSION_MS * 1000 || self.quit,
-            "installation foreground lifetime reached"
-        );
+        self.cleanup.check()
+    }
+    pub(super) fn stop_input_at_lifetime(&mut self) -> Result<()> {
+        let now = self
+            .clock
+            .now_us()
+            .ok_or_else(|| anyhow::anyhow!("installation foreground clock"))?;
+        if now >= MAX_SESSION_MS * 1000 {
+            self.quit = true;
+            self.input.close();
+        }
         Ok(())
     }
     fn observation_counter(&mut self, value: i64) -> Result<()> {
@@ -1602,6 +1610,37 @@ pub(super) mod tests {
                 .command(Command::Start, counter().unwrap())
                 .is_err()
         );
+    }
+    #[test]
+    fn lifetime_expiry_closes_input_and_still_confirms_the_worker_final_report() {
+        let mut f = fixture();
+        let (origin, frequency) = OutputClock::start().unwrap().origin();
+        let clock = OutputClock::from_origin(origin - frequency * 119, frequency).unwrap();
+        f.parent.clock = clock;
+        f.parent.cleanup.clock = clock;
+        while clock.now_us().unwrap() < MAX_SESSION_MS * 1000 {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        f.parent.tick().unwrap();
+        assert!(f.parent.quit_requested() && f.parent.command_pool().closed());
+        assert!(f.peer.receive().is_none());
+        let observed_counter = counter().unwrap();
+        deliver(
+            &mut f,
+            0,
+            Output::PreparationEnded {
+                phase: Preparation::Stopped,
+                observed_counter,
+            },
+        )
+        .unwrap();
+        let display = item(&mut f);
+        f.parent.displayed(display.ticket, None).unwrap();
+        assert!(matches!(
+            Input::parse(&receive(&mut f.peer)).unwrap(),
+            Input::FinalShown { report_counter } if report_counter == observed_counter
+        ));
+        assert!(f.parent.final_displayed() && !f.parent.failed());
     }
     #[test]
     fn final_observation_requires_quit_and_is_not_displayed_by_queue_acceptance() {

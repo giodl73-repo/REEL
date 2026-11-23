@@ -516,6 +516,7 @@ impl ConsoleForeground {
         })
     }
     pub fn tick(&mut self) -> Result<()> {
+        self.parent.stop_input_at_lifetime()?;
         self.parent.poll_console_interrupt(&self.interrupt)?;
         if !self.parent.quit_requested() {
             self.parent

@@ -507,6 +507,10 @@ The runner samples both processes' Windows peak working sets and rejects a
 combined total above 512 MiB. The foreground checks the total again after
 console shutdown using the recorded worker peak. Summing the separate peaks
 is conservative because they may occur at different times.
+At the 120-second lifetime limit the foreground closes input admission and
+keeps rendering worker reports during the remaining cleanup allowance. It
+waits for the worker's own lifetime transition, then confirms the final report
+without sending an extra Quit command.
 
 The reader and renderer own their blocking operations on separate threads.
 `ParentSession::tick_with_renderer` polls the renderer and acknowledges each
