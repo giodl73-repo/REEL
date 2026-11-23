@@ -113,7 +113,35 @@ fn actual_station_expiry_closes_paused_playback_without_quit() {
 }
 
 #[cfg(windows)]
-fn run_station(sequence: &[(&[u8], &[u8])], command_budget_seconds: u64) {
+#[test]
+#[ignore = "explicit station metadata mismatch; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_refuses_changed_endpoint_configuration() {
+    let (_, mut request) = station_request();
+    let old = &request.endpoint.configuration_sha256;
+    let first = if old.starts_with('0') { "1" } else { "0" };
+    request.endpoint.configuration_sha256 = format!("{first}{}", &old[1..]);
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("different-configuration.json");
+    fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (result, steps) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[(b"Fault", b"quit\r")],
+        45,
+    );
+    let error = result.expect_err("a changed endpoint configuration must fault");
+    assert!(
+        error.starts_with("Job step exited 2;"),
+        "after {steps} steps: {error}"
+    );
+    assert_eq!(steps, 1);
+}
+
+#[cfg(windows)]
+fn station_request() -> (
+    std::path::PathBuf,
+    reel::spoken_programme::installation::native::SessionRequest,
+) {
     use reel::spoken_programme::installation::native::SessionRequest;
     let path = std::path::PathBuf::from(
         std::env::var_os("REEL_INSTALLATION_STATION_SESSION")
@@ -125,6 +153,12 @@ fn run_station(sequence: &[(&[u8], &[u8])], command_budget_seconds: u64) {
         (request.edition_id.as_str(), request.passes),
         ("en-technical", 2)
     );
+    (path, request)
+}
+
+#[cfg(windows)]
+fn run_station(sequence: &[(&[u8], &[u8])], command_budget_seconds: u64) {
+    let (path, request) = station_request();
     let (result, steps) = run_console(
         &request.playback.runtime.path,
         &path,

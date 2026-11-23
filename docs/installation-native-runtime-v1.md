@@ -682,6 +682,13 @@ The pinned Dell development session passed this test in 120.39 seconds total.
 The test's outer wall clock includes setup. For the independent cleanup gate,
 retain the expiry and process-exit timestamps from a synchronized clock.
 
+The opt-in `actual_station_refuses_changed_endpoint_configuration` test
+changes only the configuration fingerprint in a temporary request. On the
+same Dell output whose valid request completed playback, the changed request
+displayed Fault and exited with status 2 after Quit. No Start was sent and
+the system's endpoint settings were untouched. Actual disconnect remains a
+separate station check.
+
 The opt-in test `capture::record_isolated_station_loopback` records the pinned
 render endpoint's WASAPI loopback. On an isolated synthetic test output, set
 `REEL_INSTALLATION_CAPTURE_SCOPE=isolated-synthetic-render` and
