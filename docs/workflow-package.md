@@ -27,3 +27,11 @@ existing request without resending it. `reel-workflow-native` handles managed
 operations. The bundle also includes `reel`, `reel-tig-job` and
 `reel-tig-speech`. Check the target workflow's pinned native tools, media
 dependencies and owned profiles separately before running a production job.
+
+Verify an existing bundle against the source commit you intended to build.
+Use `-Smoke` on a bundle you built locally to also run `--help` on each
+executable after all six hashes match.
+
+```powershell
+pwsh -NoProfile -File tools/verify-workflow-package.ps1 -Bundle F:/releases/reel-workflow -SourceCommit (git rev-parse HEAD) -Smoke
+```
