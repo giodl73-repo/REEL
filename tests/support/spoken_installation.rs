@@ -149,7 +149,7 @@ fn selection() -> api::Selection {
     }
 }
 
-fn shared_quiet_programme() -> InstallationFixture {
+fn shared_quiet_programme(english_replacement: bool) -> InstallationFixture {
     let mut f = Fixture::new();
     for (language, index) in [("en", 0), ("es", 3)] {
         f.signals[index][..4800 * 2].fill(0);
@@ -183,12 +183,15 @@ fn shared_quiet_programme() -> InstallationFixture {
             .push(edition.id.clone());
         f.document.editions.push(edition);
     }
+    if english_replacement {
+        f.signals[0][10_000] += 1;
+    }
     InstallationFixture::from_programme(f)
 }
 
 #[test]
 fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
-    let shared = shared_quiet_programme();
+    let shared = shared_quiet_programme(false);
     assert_eq!(shared.f.document.editions.len(), 6);
     let receipt: producer::ProductionReceipt = serde_json::from_slice(&shared.receipt).unwrap();
     for (language, expected_frames) in [("en", 144_000), ("es", 168_000)] {
@@ -243,11 +246,40 @@ fn installation_admits_dedicated_editions_from_the_shared_quiet_programme() {
     );
 }
 
+#[test]
+#[ignore = "explicit retained-version comparison for the shared synthetic programme"]
+fn replacing_the_shared_english_opening_preserves_spanish_pcm() {
+    let original = shared_quiet_programme(false);
+    let replacement = shared_quiet_programme(true);
+    let before: producer::ProductionReceipt = serde_json::from_slice(&original.receipt).unwrap();
+    let after: producer::ProductionReceipt = serde_json::from_slice(&replacement.receipt).unwrap();
+    assert_eq!((before.editions.len(), after.editions.len()), (6, 6));
+    for edition in &before.editions {
+        let changed = after
+            .editions
+            .iter()
+            .find(|item| item.edition_id == edition.edition_id)
+            .unwrap();
+        let retained = fs::read(original.candidate.join(&edition.wave.path)).unwrap();
+        assert_eq!(hash(&retained), edition.wave.sha256);
+        assert_eq!(edition.samples, changed.samples);
+        if edition.edition_id.starts_with("es-") {
+            assert_eq!(edition.wave.sha256, changed.wave.sha256);
+            assert_eq!(
+                retained,
+                fs::read(replacement.candidate.join(&changed.wave.path)).unwrap()
+            );
+        } else {
+            assert_ne!(edition.wave.sha256, changed.wave.sha256);
+        }
+    }
+}
+
 #[cfg(all(windows, feature = "tig-publication"))]
 #[test]
 #[ignore = "explicit native browser render of the shared programme openings"]
 fn shared_installation_openings_render_with_exact_pcm() {
-    let shared = shared_quiet_programme();
+    let shared = shared_quiet_programme(false);
     super::companion::native::render_shared_openings(
         shared.inputs(),
         &shared.root,
@@ -259,7 +291,7 @@ fn shared_installation_openings_render_with_exact_pcm() {
 #[test]
 #[ignore = "explicit shared-source reading, lesson and installation fixture using a local test font"]
 fn reading_lesson_and_installation_use_the_same_checked_programme() {
-    let shared = shared_quiet_programme();
+    let shared = shared_quiet_programme(false);
     let mut opening_frames = Vec::new();
     for language in ["en", "es"] {
         let prepared = api::prepare(
