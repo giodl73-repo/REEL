@@ -29,7 +29,7 @@ type NativeScenes<'a> =
 #[cfg(not(feature = "tig-publication"))]
 type NativeScenes<'a> = BTreeMap<String, &'a ()>;
 mod checkpoint;
-#[cfg(all(windows, feature = "tig-publication"))]
+#[cfg(feature = "tig-publication")]
 pub(crate) use checkpoint::describe_native_prefix;
 pub mod parts;
 

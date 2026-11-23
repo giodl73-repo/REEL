@@ -155,7 +155,7 @@ pub(super) fn replay_native_segment(
     Ok((restored, record.receipt, record.first))
 }
 
-#[cfg(all(windows, feature = "tig-publication"))]
+#[cfg(feature = "tig-publication")]
 pub(crate) fn describe_native_prefix(
     work: &Path,
     ticket_sha256: &str,
