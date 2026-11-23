@@ -57,5 +57,7 @@ reading index, lesson package, companion packages and installation admission.
 Reading carried the exact programme receipt and access manifest hashes. The
 lesson carried the reading-index hash. Each companion kept the exact audio and
 transcript hashes of its installation opening, with separate visual evidence.
-The run checked local packages. Browser execution, interactive replay and
+The run checked local packages. A separate Windows browser test at `825dcb7`
+rendered the same fixture's opening companions as 72 EN frames and 84 ES
+frames. Both outputs preserved the checked PCM hash. Interactive replay and
 station qualification still require their own runs.
