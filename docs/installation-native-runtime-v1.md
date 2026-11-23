@@ -596,7 +596,7 @@ checklists. These are review lenses, not independent reviewers or approvals.
 | Guarded original reads and strict bounded invocation | `held_original_input_denies_mutation_and_rename_without_executable_requirement`, request-shape/cancellation/deadline and CLI cases. Passed locally. |
 | Startup Stop retains the actual session | Native-ready handoff, Stop before first owned fill and cancelled blocked-open controlled-backend cases passed locally. Foreground/contained-process integration remains pending. |
 | Callback teardown returns pending ownership | Drop-before-first-fill, queued Stop, completion, preempted writer and racing return cases passed locally. Actual native error/close integration remains pending. |
-| Exact private wire context | Framing, actual peers, strict bodies, held runtime/request authentication and scope at actual core application passed locally. The headless CLI test covers the missing-source fault through display, cooked Quit and process exit. |
+| Exact private wire context | Framing, actual peers, strict bodies, held runtime/request authentication and scope at actual core application passed locally. The headless Windows CLI test waits for the missing-source Fault, verifies that Start is refused and Status displays the fault, then sends Quit and checks exit status 2. Pipe writers wake when a packet is queued, preserving the original 100 ms acknowledgement deadline. |
 | Aggregate clocks and source verification cancellation | Source port shares the Run origin and one initial/fresh-check deadline; queued cancellation/expiry and real original rechecks passed locally. Complete foreground Start/Restart aggregates, Stop/Quit integration and blocked-operation containment remain pending. |
 | Exact persistent text and line commands | Headless Windows fixtures cover Spanish cells, repeated cooked lines, resize refusal, EOF, Ctrl+C and console restoration. Blocked output and operator usability still need station verification. |
 | Real contained lifecycle and unchanged PCM | Controlled native output port passed source/interval sample oracles, allocation/free, cancelled handoff, oversized period/buffer and actual mock-stream close tests. Actual contained worker/driver lifecycle remains pending. |
@@ -604,11 +604,10 @@ checklists. These are review lenses, not independent reviewers or approvals.
 No complete M12b.2, actual playback, device/listening/usability or release claim
 follows from these source/output ports. M13 still depends on full M12.
 
-Latest console/input/foreground checkpoint: 104 unit cases, five CLI cases and
-11 explicit original/runtime-input cases passed: **120 distinct focused cases**. The
-original-input invocation ran with zero ignored cases; the seven ordinary ignored
-unit fixture entries are explicitly launched by their parent tests. These counts
-do not include duplicate reruns. The real source-worker integration retains
+The latest Windows installation checkpoint passed 109 unit cases and all six
+public CLI cases. The seven ignored unit entries are child fixtures launched by
+their parent tests. An earlier original-input checkpoint passed 11 cases. The
+real source-worker integration retains
 original file guards through Ready/rechecks, releases them at actual teardown,
 and proves that a genuine later recheck permit cannot revive Stop.
 
