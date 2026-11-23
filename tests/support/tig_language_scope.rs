@@ -36,7 +36,7 @@ fn save_commit(f: &mut Fixture) {
     );
     f.profile["commit"] = json!(git(f.root(), &["rev-parse", "HEAD"]));
 }
-fn bilingual() -> (Fixture, reel::tig_scene::Request) {
+pub(super) fn bilingual() -> (Fixture, reel::tig_scene::Request) {
     let (mut f, mut request) = native_scene_fixture();
     let mut voice = load(&f, "records/cue-main.tig");
     voice["id"] = "cue/english".into();

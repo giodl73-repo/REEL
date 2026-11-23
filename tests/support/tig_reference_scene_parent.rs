@@ -14,7 +14,18 @@ use tig_store::source_claims::Command;
 #[test]
 #[ignore = "requires native FFmpeg; source-owned retained scenes assemble with old receipts offline"]
 fn verified_scene_owners_assemble_current_parent_and_survive_independent_withdrawal() {
-    let mut p = Project::new();
+    exercise_repaired_master(Project::new());
+}
+
+#[test]
+#[ignore = "requires native FFmpeg and a temporary synthetic episode"]
+fn english_repaired_master_assembles_on_its_own_cue_clock() {
+    let (bootstrap, request) = crate::language_scope::bilingual();
+    exercise_repaired_master(Project::from_scene_fixture(bootstrap, request));
+}
+
+fn exercise_repaired_master(mut p: Project) {
+    let language = p.requests[2].language.clone();
     let mut original = read(p.repo.path().join("records/cel-b.tig"));
     let blue = json!(p.publish("hot", &picture([0, 0, 255])));
     if original["selected"] != blue {
@@ -80,6 +91,18 @@ fn verified_scene_owners_assemble_current_parent_and_survive_independent_withdra
     )
     .unwrap();
     drop(inputs);
+    let original_receipt = read(old.output.join("receipt.json"));
+    let repaired_receipt = read(repaired_output.join("receipt.json"));
+    for field in ["content_samples", "delivery_frames"] {
+        assert!(!original_receipt[field].is_null());
+        assert_eq!(original_receipt[field], repaired_receipt[field]);
+    }
+    for name in ["D.wav", "M.wav", "E.wav", "mix.wav"] {
+        assert_eq!(
+            Object::from_bytes(&fs::read(old.output.join(name)).unwrap()),
+            Object::from_bytes(&fs::read(repaired_output.join(name)).unwrap())
+        );
+    }
     let master = p.publish(
         "hot",
         &fs::read(repaired_output.join("master.mkv")).unwrap(),
@@ -96,6 +119,7 @@ fn verified_scene_owners_assemble_current_parent_and_survive_independent_withdra
     let parent_files = parent_controls::exercise(&p, &request);
     let mut source = p.source();
     let initial = tig_episode::plan(&mut source, &request).unwrap();
+    assert_eq!(initial.language, language);
     assert_eq!(initial.changed_components, 1);
     let metadata = p.data.path().join("reference-parent-metadata");
     let mut writer = MetadataStore::create(

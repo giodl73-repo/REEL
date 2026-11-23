@@ -136,6 +136,9 @@ impl Project {
     }
     fn new() -> Self {
         let (bootstrap, request) = native_scene_fixture();
+        Self::from_scene_fixture(bootstrap, request)
+    }
+    fn from_scene_fixture(bootstrap: Fixture, request: tig_scene::Request) -> Self {
         let repo = tempfile::tempdir().unwrap();
         let data = tempfile::tempdir().unwrap();
         for name in ["records", "definitions"] {
@@ -282,7 +285,7 @@ impl Project {
         for unit in UNITS {
             let mut scene = native.clone();
             scene["scene_id"] = json!(unit);
-            scene["languages"]["es"]["events"]
+            scene["languages"][request.language.as_str()]["events"]
                 .as_array_mut()
                 .unwrap()
                 .truncate(1);
@@ -296,7 +299,11 @@ impl Project {
                 "scene-b" => "cel/b".to_owned(),
                 _ => format!("cel/{unit}"),
             };
-            record["authored"]["binding_ids"] = json!({"a":{"id":cel},"take":{"id":"cue/main"},"alignment":{"id":"alignment/main"}});
+            record["authored"]["binding_ids"]["a"] = json!({"id":cel});
+            record["authored"]["binding_ids"]
+                .as_object_mut()
+                .unwrap()
+                .remove("b");
             for stream in record["streams"].as_array_mut().unwrap() {
                 match stream["slot"].as_str().unwrap() {
                     "catalog.json" => {
@@ -322,7 +329,7 @@ impl Project {
             write(
                 project.repo.path(),
                 &format!("records/output-{unit}.tig"),
-                &json!({"schema":"tig.instance.design-1","id":format!("output/{unit}"),"definition":{"id":"types/output","sha256":output_def.sha256,"bytes":output_def.bytes},"authored":{"scene":{"id":format!("scene/{unit}")},"language":"es","component_kind":"scene","source_segment_id":unit},"selected":null,"streams":[],"status":{},"metadata":{}}),
+                &json!({"schema":"tig.instance.design-1","id":format!("output/{unit}"),"definition":{"id":"types/output","sha256":output_def.sha256,"bytes":output_def.bytes},"authored":{"scene":{"id":format!("scene/{unit}")},"language":request.language,"component_kind":"scene","source_segment_id":unit},"selected":null,"streams":[],"status":{},"metadata":{}}),
             );
         }
         fs::remove_file(project.repo.path().join("records/scene.tig")).unwrap();
@@ -575,7 +582,7 @@ impl Project {
             let receipt = reference(s.output.join("receipt.json").strip_prefix(root).unwrap().to_str().unwrap(),&s.delivery_receipt);
             json!({"kind":"scene","id":s.unit,"master":master,"source_receipt":receipt,"delivery_job":pin(root,&s.job),"delivery_receipt":receipt,"semantic_delivery":pin(root,&s.job.parent().unwrap().join("semantic-delivery.json"))})
         }).collect();
-        let manifest = json!({"schema":"reel.episode-conform.v1","episode_id":"episode-1","language":"es","output_sample_rate":48000,"catalog":pin(root,&controls.join("catalog.json")),"master_template_definition":pin(root,&controls.join("master.json")),"episode":pin(root,&controls.join("episode.json")),"season_bindings":pin(root,&controls.join("season.json")),"episode_bindings":pin(root,&controls.join("episode-bindings.json")),"segments":segments});
+        let manifest = json!({"schema":"reel.episode-conform.v1","episode_id":"episode-1","language":self.requests[0].language,"output_sample_rate":48000,"catalog":pin(root,&controls.join("catalog.json")),"master_template_definition":pin(root,&controls.join("master.json")),"episode":pin(root,&controls.join("episode.json")),"season_bindings":pin(root,&controls.join("season.json")),"episode_bindings":pin(root,&controls.join("episode-bindings.json")),"segments":segments});
         let name = format!("episode-{version}.json");
         write(root, &name, &manifest);
         let output = root.join(format!("episode-{version}"));
@@ -657,6 +664,38 @@ impl Project {
             &fs::read(self.repo.path().join("records/episode.tig")).unwrap(),
         )
     }
+}
+
+#[test]
+#[ignore = "requires explicit native media tools and a temporary synthetic episode"]
+fn english_episode_assembles_with_its_own_take_and_alignment() {
+    let (bootstrap, request) = crate::language_scope::bilingual();
+    let mut project = Project::from_scene_fixture(bootstrap, request);
+    let request = &project.requests[2];
+    assert_eq!(request.language, "en");
+    let mut source = project.source();
+    let directory = project.data.path().join("english-scene");
+    tig_scene::compile(&mut source, request, &directory).unwrap();
+    let job = reel::tig_inputs::read_job(&directory.join("delivery/job.json")).unwrap();
+    let take = read(project.repo.path().join("records/cue-english.tig"));
+    let selected: Object = serde_json::from_value(take["selected"].clone()).unwrap();
+    assert_eq!(job.audio[0].source.sha256, selected.sha256.as_str());
+    assert_eq!(job.audio[0].source.bytes, selected.bytes);
+    assert_eq!(job.audio[0].cue_id.as_deref(), Some("en-1"));
+    drop(source);
+
+    let scenes = (0..UNITS.len())
+        .map(|index| project.render_delivery(index, "en-v1"))
+        .collect::<Vec<_>>();
+    let (_, master) = project.assemble(&scenes, "en-v1");
+    assert!(master.is_file());
+    let conform_name = "episode-en-v1.json";
+    let manifest = read(project.data.path().join(conform_name));
+    assert_eq!(manifest["language"], "en");
+    let assembly = add_episode_assembly(&mut project, conform_name);
+    let plan = reel::tig_episode::plan(&mut project.source(), &assembly).unwrap();
+    assert_eq!(plan.language, "en");
+    assert_eq!(plan.changed_components, 0);
 }
 
 fn storage_transition(
@@ -1400,6 +1439,9 @@ fn add_episode_assembly(p: &mut Project, conform_name: &str) -> reel::tig_episod
         &fs::read(p.data.path().join("controls/episode.json")).unwrap(),
     );
     let conform = p.publish("hot", &fs::read(p.data.path().join(conform_name)).unwrap());
+    let language = p.requests[0].language.clone();
+    let slot = format!("retained-{language}");
+    let assembly_id = format!("assemble/{language}");
     let record = |name: &str, id: &str, authored: Value, selected: Value, streams: Value| json!({"schema":"tig.instance.design-1","id":id,"definition":{"id":format!("types/{name}"),"sha256":definitions[name].sha256,"bytes":definitions[name].bytes},"authored":authored,"selected":selected,"streams":streams,"status":{},"metadata":{}});
     write(
         p.repo.path(),
@@ -1409,7 +1451,7 @@ fn add_episode_assembly(p: &mut Project, conform_name: &str) -> reel::tig_episod
             "source/episode",
             json!({"episode_id":"episode-1","scene_ids":UNITS.iter().map(|id| json!({"id":format!("scene/{id}")})).collect::<Vec<_>>()}),
             json!(native),
-            json!([{"slot":"retained-es","role":"evidence/conform","group":"source","object":conform}]),
+            json!([{"slot":slot,"role":"evidence/conform","group":"source","object":conform}]),
         ),
     );
     write(
@@ -1417,14 +1459,14 @@ fn add_episode_assembly(p: &mut Project, conform_name: &str) -> reel::tig_episod
         "records/assembly.tig",
         &record(
             "assembly",
-            "assemble/es",
-            json!({"episode":{"id":"source/episode"},"language":"es","conform_slot":"retained-es","components":UNITS.iter().map(|id| ((*id).to_string(),json!({"id":format!("output/{id}")}))).collect::<BTreeMap<_,_>>()}),
+            &assembly_id,
+            json!({"episode":{"id":"source/episode"},"language":language,"conform_slot":slot,"components":UNITS.iter().map(|id| ((*id).to_string(),json!({"id":format!("output/{id}")}))).collect::<BTreeMap<_,_>>()}),
             Value::Null,
             json!([]),
         ),
     );
     p.commit("bind declarative episode assembly to independently versioned component outputs");
-    serde_json::from_value(json!({"schema":reel::tig_episode::SCHEMA,"assembly_id":"assemble/es","assembly_definition":"types/assembly","episode_definition":"types/episode-source","scene_definitions":["types/scene"],"component_definitions":["types/output"]})).unwrap()
+    serde_json::from_value(json!({"schema":reel::tig_episode::SCHEMA,"assembly_id":assembly_id,"assembly_definition":"types/assembly","episode_definition":"types/episode-source","scene_definitions":["types/scene"],"component_definitions":["types/output"]})).unwrap()
 }
 
 fn publication_failures_and_parallel_writers(p: &Project) {
