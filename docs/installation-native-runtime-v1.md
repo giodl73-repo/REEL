@@ -690,6 +690,14 @@ control runs passed Start, Pause, Resume, loop completion, Restart, Stop
 and Quit with the updated player. These reruns did not measure the individual
 command timings independently.
 
+A later console timing run measured an outer send-to-visible bound of
+12.9–14.4 ms for Status while Ready. On an active Dell stream, one successful
+run measured 29.2 ms for Pause and 30.7 ms for Resume. Duplicate snapshots
+following a numbered acknowledgement could overwrite the reply in ConPTY.
+The controller retains the latest cursor internally and avoids sending that
+duplicate console row. Other runs missed Ready or exited before the numbered
+Pause reply. Repeatability and physical capture remain open.
+
 One assistant applies Platform/Audience, Editor, Sound and Rights/Provenance
 checklists. These are review lenses, not independent reviewers or approvals.
 

@@ -632,12 +632,19 @@ impl Controller {
         }
         // The console needs the latest cursor, not one display per audio
         // callback. State, generation, pass and command changes stay immediate.
-        let cursor_only = snapshot
-            == (Snapshot {
-                source_frame: snapshot.source_frame,
-                interval_frame: snapshot.interval_frame,
-                ..previous
-            });
+        let with_current_cursor = |state: Snapshot| Snapshot {
+            source_frame: snapshot.source_frame,
+            interval_frame: snapshot.interval_frame,
+            ..state
+        };
+        if matches!(
+            self.events.back(),
+            Some(Event::Ack { record, .. }) if with_current_cursor(record.snapshot) == snapshot
+        ) {
+            self.last_cursor_report_us = now;
+            return;
+        }
+        let cursor_only = snapshot == with_current_cursor(previous);
         if !cursor_only || now.saturating_sub(self.last_cursor_report_us) >= 100_000 {
             self.last_cursor_report_us = now;
             self.emit(Event::State(snapshot));
@@ -742,6 +749,38 @@ mod tests {
         assert_eq!(record.snapshot, controller.observed());
         assert_eq!(record.snapshot.state, State::Ready);
         assert!(controller.event().is_none(), "duplicate Ready report");
+    }
+    #[test]
+    fn callback_cursor_does_not_overwrite_resume_acknowledgement() {
+        let (mut controller, _, _) = fixture();
+        let acknowledged = Snapshot {
+            state: State::Playing,
+            command_sequence: 1,
+            ..controller.observed()
+        };
+        controller.emit(Event::Ack {
+            id: 1,
+            record: Trace {
+                at_ms: 1,
+                snapshot: acknowledged,
+                refusal: None,
+            },
+        });
+        let advanced = Snapshot {
+            source_frame: 480,
+            ..acknowledged
+        };
+        controller.observe_callback(advanced, 1_000);
+        assert_eq!(controller.observed(), advanced);
+        assert!(matches!(controller.event(), Some(Event::Ack { id: 1, .. })));
+        assert!(controller.event().is_none(), "duplicate playback report");
+        let next_pass = Snapshot {
+            pass: 2,
+            source_frame: 0,
+            ..advanced
+        };
+        controller.observe_callback(next_pass, 2_000);
+        assert!(matches!(controller.event(), Some(Event::State(state)) if state == next_pass));
     }
     #[test]
     fn expiry_reclaims_a_paused_callback_and_reports_the_real_stopped_core() {
