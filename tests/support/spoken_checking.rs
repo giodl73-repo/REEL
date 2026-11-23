@@ -240,6 +240,64 @@ fn branch_admission_uses_verified_bilingual_records() {
 }
 
 #[test]
+fn interactive_replay_routes_pin_verified_edition_chapters() {
+    #[derive(serde::Deserialize)]
+    struct ReplaySelection {
+        edition: String,
+        module: String,
+        samples: [u64; 2],
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ReplayFixture {
+        sample_rate: u32,
+        selections: BTreeMap<String, BTreeMap<String, ReplaySelection>>,
+        expected_visits_by_choice: BTreeMap<String, Vec<String>>,
+    }
+
+    let fixture: ReplayFixture = serde_json::from_str(include_str!(
+        "../fixtures/spoken-programme/interactive-replay.json"
+    ))
+    .unwrap();
+    let f = lexical_fixture();
+    let policy = ProcessingPolicy::identity();
+    f.produce(&policy).unwrap();
+    let mut result = checked(&f, &policy).unwrap();
+    let root = f.temp.path().join("replay-access");
+    checker::write_access(&mut result, &root, || Ok(())).unwrap();
+    let manifest = fs::read(root.join("access.json")).unwrap();
+    checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
+    assert_eq!(result.access().sample_rate, fixture.sample_rate);
+    for language in ["en", "es"] {
+        for (choice, visits) in &fixture.expected_visits_by_choice {
+            assert_eq!(&visits[..2], ["opening", "choose"]);
+            assert_eq!(visits[2], *choice);
+            assert_eq!(visits.last().unwrap(), "end");
+            for visit in std::iter::once(&visits[0]).chain(&visits[2..visits.len() - 1]) {
+                let selection = &fixture.selections[language][visit];
+                let edition = result
+                    .access()
+                    .editions
+                    .iter()
+                    .find(|edition| {
+                        edition.edition_id == selection.edition && edition.language == language
+                    })
+                    .unwrap();
+                let chapter = edition
+                    .chapters
+                    .iter()
+                    .find(|chapter| chapter.module_id == selection.module)
+                    .unwrap();
+                assert_eq!(
+                    [chapter.start_sample, chapter.end_sample],
+                    selection.samples
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn access_rehashes_cannot_change_words_roles_chapters_or_bindings() {
     let f = lexical_fixture();
     let policy = ProcessingPolicy::identity();
