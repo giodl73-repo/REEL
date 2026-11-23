@@ -28,6 +28,8 @@ synthetic request example.
 
 All direct consumers of the exact old image must be covered. Supported direct
 consumers are whole-scene FilmRender tasks without an existing upstream binding.
+Direct renders depending on another affected task also refuse until that new
+upstream result can be rebound; an old dependency receipt is never reused there.
 Controls must name the exact old job and new image, match the consumer language
 and bind the exact image result. Manual text/control results remain handoffs;
 their declarations do not prove deterministic tool execution or validate their

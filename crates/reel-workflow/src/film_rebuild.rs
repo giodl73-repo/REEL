@@ -117,6 +117,16 @@ pub fn prepare(q: &Request) -> Result<Prepared> {
         }
     }
     let pending: BTreeSet<_> = affected.difference(&direct).cloned().collect();
+    // A direct renderer can also be downstream of another changed consumer.
+    // Its old dependency receipt cannot authorize the new upstream render.
+    // Withhold that topology until exact result rebinding is supported.
+    if q.baseline
+        .tasks
+        .iter()
+        .any(|t| direct.contains(&t.id) && t.depends_on.iter().any(|id| affected.contains(id)))
+    {
+        return fail(ErrorKind::Unsupported, "film-rebuild-affected-prerequisite");
+    }
     let mut tasks: BTreeMap<_, _> = q
         .baseline
         .tasks

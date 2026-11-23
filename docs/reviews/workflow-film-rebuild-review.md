@@ -8,6 +8,8 @@ Provenance checklists. This is not independent review or human approval.
   requires all direct consuming languages and withholds stale downstream
   assemblies. Existing upstream closures refuse until their origins can be
   merged explicitly; repeated repairs are not claimed as fully supported.
+  Direct renders with affected prerequisites refuse instead of retaining stale
+  upstream result summaries. The scheduler refusal test covers this topology.
 - Sound Designer: selected recordings and bus settings are copied only from the
   same language's original job. Tests use differing English/Spanish contracts,
   recordings and durations. No alignment, breath, mix or caption regeneration is

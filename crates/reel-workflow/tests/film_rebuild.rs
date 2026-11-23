@@ -257,9 +257,21 @@ fn incomplete_languages_stale_control_wrong_clock_lane_and_alias_collisions_refu
         "alias",
         "stale-parent",
         "existing-upstream",
+        "affected-prerequisite",
     ] {
         let mut q = fixture();
         match mutation {
+            "affected-prerequisite" => {
+                let es = q.consumers[0].task_id.clone();
+                let en = q.consumers[1].task_id.clone();
+                q.baseline
+                    .tasks
+                    .iter_mut()
+                    .find(|t| t.id == en)
+                    .unwrap()
+                    .depends_on
+                    .push(es);
+            }
             "missing-consumer" => {
                 q.consumers.pop();
             }
