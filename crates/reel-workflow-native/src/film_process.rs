@@ -629,17 +629,21 @@ fn preserve_recovered_outcome(
         Err(err) if err.kind == ErrorKind::Missing => (),
         Err(err) => return Err(err),
     }
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .and_then(|mut file| file.write_all(&raw).and_then(|_| file.sync_all()))
-        .map_err(|_| {
-            error(
-                ErrorKind::NeedsRecovery,
-                "film-process-recovered-outcome-preserve",
-            )
-        })
+    let persist = || -> std::io::Result<()> {
+        let mut staged = tempfile::Builder::new()
+            .prefix("recovered-render-result-")
+            .tempfile_in(workspace)?;
+        staged.write_all(&raw)?;
+        staged.as_file().sync_all()?;
+        staged.persist_noclobber(path)?;
+        Ok(())
+    };
+    persist().map_err(|_| {
+        error(
+            ErrorKind::NeedsRecovery,
+            "film-process-recovered-outcome-preserve",
+        )
+    })
 }
 /// Reconcile an existing rendered directory without rendering again. Requires
 /// the original request bytes and uses a separate, explicit verification launch.
