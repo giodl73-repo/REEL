@@ -1,5 +1,8 @@
-//! Metadata only. No real endpoint ID or playback/capture enrollment.
+//! Windows CLI coverage. Hardware playback requires an explicit station request.
 #![cfg(feature = "installation-native")]
+#[path = "support/installation_capture.rs"]
+mod capture;
+
 use serde_json::json;
 use std::{fs, process::Command};
 fn tool() -> Command {
@@ -8,6 +11,283 @@ fn tool() -> Command {
 fn binding() -> serde_json::Value {
     json!({"profile":"reel.installation.win11-wasapi-pcm24.v1","device_id":"wasapi:{0.0.0.00000000}.{11111111-1111-1111-1111-111111111111}",
     "os_build":26300,"driver_version":"10.0.test-only","configuration_sha256":"a".repeat(64)})
+}
+fn session_request(root: &std::path::Path) -> serde_json::Value {
+    let file =
+        json!({"path":root.join("missing-source-control"),"sha256":"a".repeat(64),"bytes":1});
+    json!({"schema":"reel.installation-session.v1","edition_id":"es-technical","passes":2,
+        "original":{"declaration":file,"plan":file,"receipt":file,"processing":null,"access_manifest":file,
+            "compiler_producer":file,"source_root":root.join("unopened-sources"),
+            "candidate_root":root.join("unopened-candidate"),"access_root":root.join("unopened-access")},
+        "playback":{"runtime":file,"source_commit":"b".repeat(40),"cargo_lock":file,"cpal_version":"0.18.2"},
+        "endpoint":binding()})
+}
+
+#[cfg(windows)]
+#[test]
+fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
+    let root = tempfile::tempdir().unwrap();
+    let program = std::path::Path::new(env!("CARGO_BIN_EXE_reel-installation"));
+    let lock = include_bytes!("../Cargo.lock");
+    let lock_path = root.path().join("Cargo.lock");
+    fs::write(&lock_path, lock).unwrap();
+    let image = fs::read(program).unwrap();
+    let mut request = session_request(root.path());
+    request["playback"]["runtime"] = json!({
+        "path":program, "sha256":reel::production::sha256_bytes(&image), "bytes":image.len()
+    });
+    request["playback"]["cargo_lock"] = json!({
+        "path":lock_path, "sha256":reel::production::sha256_bytes(lock), "bytes":lock.len()
+    });
+    drop(image);
+    let path = root.path().join("session.json");
+    fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (result, steps) = run_console(
+        program,
+        &path,
+        &[
+            (b"Fault", b"start\r"),
+            (b"Command unavailable", b"status\r"),
+            (b"1: Fault", b"quit\r"),
+        ],
+        10,
+    );
+    let error = result.expect_err("a closed source fault must remain visible in the exit status");
+    assert!(
+        error.starts_with("Job step exited 2;"),
+        "after {steps} steps: {error}"
+    );
+    assert_eq!(steps, 3, "expected Fault, refusal and Status before Quit");
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "explicit station playback; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_run_exercises_playback_commands_and_reaps_worker() {
+    run_station(&[
+        (b"Ready p", b"start\r"),
+        (b"Playing p1", b"pause\r"),
+        (b"Paused p1", b"resume\r"),
+        (b"LoopWait p1", b""),
+        (b"Completed p2", b"restart\r"),
+        (b"Restarting p", b""),
+        (b"Playing p1", b"stop\r"),
+        (b"Stopped p1", b"quit\r"),
+    ]);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "uninterrupted station playback; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_run_plays_uninterrupted_marker_passes() {
+    run_station(&[
+        (b"Ready p", b"start\r"),
+        (b"Playing p1", b""),
+        (b"LoopWait p1", b""),
+        (b"Playing p2", b""),
+        (b"Completed p2", b"quit\r"),
+    ]);
+}
+
+#[cfg(windows)]
+fn run_station(sequence: &[(&[u8], &[u8])]) {
+    use reel::spoken_programme::installation::native::SessionRequest;
+    let path = std::path::PathBuf::from(
+        std::env::var_os("REEL_INSTALLATION_STATION_SESSION")
+            .expect("provide the enrolled station request path"),
+    );
+    assert!(path.is_absolute());
+    let request = SessionRequest::parse(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        (request.edition_id.as_str(), request.passes),
+        ("en-technical", 2)
+    );
+    let (result, steps) = run_console(&request.playback.runtime.path, &path, sequence, 70);
+    assert_eq!(
+        steps,
+        sequence.len(),
+        "station run stopped before the full control sequence: {result:?}"
+    );
+    result.unwrap();
+}
+
+#[cfg(windows)]
+fn run_console(
+    program: &std::path::Path,
+    request: &std::path::Path,
+    steps: &[(&[u8], &[u8])],
+    command_budget_seconds: u64,
+) -> (Result<(), String>, usize) {
+    use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
+    use std::{
+        fs::File,
+        io::{Read, Write},
+        os::windows::io::{AsRawHandle, FromRawHandle},
+        sync::atomic::{AtomicUsize, Ordering},
+        time::{Duration, Instant},
+    };
+    use windows::Win32::{
+        Foundation::HANDLE,
+        System::{
+            Console::{COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON},
+            Pipes::CreatePipe,
+        },
+    };
+    struct Terminal(HPCON);
+    impl Drop for Terminal {
+        fn drop(&mut self) {
+            unsafe { ClosePseudoConsole(self.0) };
+        }
+    }
+    fn pipe() -> (File, File) {
+        let (mut read, mut write) = (HANDLE::default(), HANDLE::default());
+        unsafe {
+            CreatePipe(&mut read, &mut write, None, 0).unwrap();
+            (
+                File::from_raw_handle(read.0),
+                File::from_raw_handle(write.0),
+            )
+        }
+    }
+
+    let (in_read, mut input) = pipe();
+    let (mut output, out_write) = pipe();
+    let terminal = Terminal(unsafe {
+        CreatePseudoConsole(
+            COORD { X: 80, Y: 30 },
+            HANDLE(in_read.as_raw_handle()),
+            HANDLE(out_write.as_raw_handle()),
+            0,
+        )
+        .unwrap()
+    });
+    drop(in_read);
+    drop(out_write);
+    let observed = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let reader = scope.spawn(|| {
+            let mut chunk = [0; 4096];
+            let mut next = 0;
+            let mut matched = 0;
+            while let Ok(count) = output.read(&mut chunk) {
+                if count == 0 {
+                    break;
+                }
+                for &byte in &chunk[..count] {
+                    if let Some((marker, _)) = steps.get(next) {
+                        if byte == marker[matched] {
+                            matched += 1;
+                            if matched == marker.len() {
+                                next += 1;
+                                observed.store(next, Ordering::Release);
+                                matched = 0;
+                            }
+                        } else {
+                            matched = usize::from(byte == marker[0]);
+                        }
+                    }
+                }
+            }
+        });
+        let borrowed = unsafe { BorrowedPseudoConsole::from_raw(terminal.0.0).unwrap() };
+        let result = std::thread::scope(|job_scope| {
+            let job = job_scope.spawn(|| {
+                run_pseudoconsole_observed(
+                    program,
+                    &["run".into(), request.to_str().unwrap().into()],
+                    request.parent().unwrap(),
+                    Duration::from_secs(command_budget_seconds + 5),
+                    QuietLimits {
+                        memory_bytes: 512 * 1024 * 1024,
+                        processes: 2,
+                    },
+                    borrowed,
+                    |_| Ok(()),
+                )
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+            });
+            let deadline = Instant::now() + Duration::from_secs(command_budget_seconds);
+            let mut sent = 0;
+            for (index, (_, line)) in steps.iter().enumerate() {
+                while observed.load(Ordering::Acquire) <= index
+                    && !job.is_finished()
+                    && Instant::now() < deadline
+                {
+                    std::thread::sleep(Duration::from_millis(2));
+                }
+                if observed.load(Ordering::Acquire) <= index || input.write_all(line).is_err() {
+                    break;
+                }
+                sent += 1;
+            }
+            (job.join().unwrap(), sent)
+        });
+        drop(input);
+        drop(terminal);
+        reader.join().unwrap();
+        result
+    })
+}
+#[test]
+fn private_session_shape_checks_no_originals_or_endpoints_and_rejects_forged_status() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("session.json");
+    let mut request = session_request(root.path());
+    fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let output = tool().arg("validate-session").arg(&path).output().unwrap();
+    assert!(output.status.success());
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["session_shape_checked"], true);
+    for field in [
+        "originals_checked",
+        "endpoint_probed",
+        "device_playback_checked",
+    ] {
+        assert_eq!(report[field], false);
+    }
+    let text = String::from_utf8(output.stdout).unwrap();
+    for private in ["es-technical", "11111111", "missing-source", "unopened-"] {
+        assert!(!text.contains(private));
+    }
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+    request["authority_verified"] = json!(true);
+    fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
+    assert!(
+        !tool()
+            .arg("validate-session")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    fs::write(&path, vec![b' '; 16 * 1024 + 1]).unwrap();
+    assert!(
+        !tool()
+            .arg("validate-session")
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success()
+    );
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
+}
+#[test]
+fn missing_originals_produce_no_source_success_or_private_error_output() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("session.json");
+    fs::write(
+        &path,
+        serde_json::to_vec(&session_request(root.path())).unwrap(),
+    )
+    .unwrap();
+    let output = tool().arg("check-session").arg(&path).output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let error = String::from_utf8(output.stderr).unwrap();
+    assert!(error.contains("no playback qualification"));
+    assert!(!error.contains("missing-source") && !error.contains("11111111"));
+    assert_eq!(fs::read_dir(root.path()).unwrap().count(), 1);
 }
 #[test]
 fn binding_shape_validation_is_private_and_needs_no_device() {

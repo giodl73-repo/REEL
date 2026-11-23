@@ -68,6 +68,13 @@ files use exclusive creation and existing content is never overwritten.
 Optional per-track VTT `line:N%` preserves an explicitly selected caption-family
 placement; no lyric text, translation or speaker credit is synthesized.
 
+Optional per-track `reading_holds` extend selected cues on the segment-local
+millisecond clock. Each entry declares a one-based `cue_index`, its
+`expected_end_ms` in the pinned source SRT, and a later `end_ms`. List entries in
+ascending cue order. The assembler records them in the timing receipt and
+refuses stale cue ends, overlaps and extensions past the source content.
+Use the track's selection evidence to bind the authored timing decision.
+
 The producing repository owns selection, rights, text/translation authority and
 approval. `selection_evidence` is retained and hash-checked as an opaque existing
 owner record; this adapter does not interpret that repository's record grammar,

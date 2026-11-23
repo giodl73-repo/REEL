@@ -26,6 +26,13 @@ pub fn inspect(
     request: &film_inspect::Request,
     inputs: &mut NativeInputs,
 ) -> Result<film_inspect::Sidecar> {
+    film_inspect::inspect(request, &mut reader(request, inputs)?)
+}
+
+pub fn reader<'a>(
+    request: &'a film_inspect::Request,
+    inputs: &'a mut NativeInputs,
+) -> Result<impl film_inspect::Reader + 'a> {
     if request.source_commit != inputs.snapshot.packet.source_commit
         || request.project != inputs.snapshot.packet.project
     {
@@ -55,12 +62,9 @@ pub fn inspect(
             ));
         }
     }
-    film_inspect::inspect(
-        request,
-        &mut Reader {
-            commit: &request.source_commit,
-            controls,
-            inputs,
-        },
-    )
+    Ok(Reader {
+        commit: &request.source_commit,
+        controls,
+        inputs,
+    })
 }

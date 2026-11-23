@@ -29,7 +29,7 @@ fn next_session() -> Outcome<u64> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum State {
     Ready,
     Starting,
@@ -41,7 +41,8 @@ pub enum State {
     Stopped,
     Fault,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Command {
     Start,
     Pause,
@@ -52,6 +53,17 @@ pub enum Command {
     Quit,
 }
 impl Command {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::Pause => "pause",
+            Self::Resume => "resume",
+            Self::Restart => "restart",
+            Self::Stop => "stop",
+            Self::Status => "status",
+            Self::Quit => "quit",
+        }
+    }
     pub fn parse(line: &str) -> std::result::Result<Self, TransportError> {
         if line.len() > 32 || !line.is_ascii() {
             return Err(TransportError::InvalidCommand);
@@ -67,15 +79,11 @@ impl Command {
             Self::Quit,
         ]
         .into_iter()
-        .zip([
-            "start", "pause", "resume", "restart", "stop", "status", "quit",
-        ])
-        .find(|(_, name)| s.eq_ignore_ascii_case(name))
-        .map(|(c, _)| c)
+        .find(|c| s.eq_ignore_ascii_case(c.as_str()))
         .ok_or(TransportError::InvalidCommand)
     }
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 pub enum TransportError {
     InvalidCommand,
     InvalidState,
@@ -113,7 +121,8 @@ pub enum Notice {
     BackendFault { generation: u64 },
     RestartRejected { generation: u64 },
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Snapshot {
     pub state: State,
     pub generation: u64,
@@ -143,7 +152,7 @@ pub struct Transport {
     last_callback: u64,
     stage_deadline: u64,
     restart_verified: bool,
-    queue: VecDeque<(u64, Command)>,
+    queue: VecDeque<(u64, Command, Option<u64>)>,
     next_sequence: u64,
     trace: Vec<Trace>,
     effects: Effects,
@@ -200,7 +209,19 @@ impl Transport {
         (self.samples.len() / 2) as u64
     }
     pub fn enqueue(&mut self, line: &str) -> Outcome<u64> {
+        self.enqueue_expected(line, None)
+    }
+    /// Check applicability when the real core applies the command, not when a
+    /// potentially stale controller snapshot was last observed. Run-wide safety
+    /// controls remain applicable across generation changes.
+    pub fn enqueue_for_generation(&mut self, line: &str, generation: u64) -> Outcome<u64> {
+        self.enqueue_expected(line, Some(generation))
+    }
+    fn enqueue_expected(&mut self, line: &str, mut expected: Option<u64>) -> Outcome<u64> {
         let command = Command::parse(line)?;
+        if matches!(command, Command::Stop | Command::Quit | Command::Status) {
+            expected = None;
+        }
         if self.snapshot.session_closed
             || (self.snapshot.state == State::Fault
                 && !matches!(command, Command::Status | Command::Quit))
@@ -212,7 +233,8 @@ impl Transport {
             return Err(TransportError::QueueFull);
         }
         self.next_sequence += 1;
-        self.queue.push_back((self.next_sequence, command));
+        self.queue
+            .push_back((self.next_sequence, command, expected));
         Ok(self.next_sequence)
     }
     fn record(&mut self, refusal: Option<TransportError>) {
@@ -284,8 +306,12 @@ impl Transport {
                 }
                 _ => {}
             }
-            while let Some((sequence, command)) = self.queue.pop_front() {
+            while let Some((sequence, command, expected)) = self.queue.pop_front() {
                 self.snapshot.command_sequence = sequence;
+                if expected.is_some_and(|generation| generation != self.snapshot.generation) {
+                    self.record(Some(TransportError::StaleGeneration));
+                    continue;
+                }
                 let valid = self.command(command);
                 self.record(if valid {
                     None
@@ -407,6 +433,15 @@ impl Transport {
     /// The caller serializes access. No allocation/locks/I/O in this routine;
     /// trace/queue storage was preallocated and cannot grow beyond its cap.
     pub fn fill(&mut self, generation: u64, now: u64, out: &mut [f32]) -> Outcome<Effects> {
+        self.fill_counted(generation, now, out)
+            .map(|(effects, _)| effects)
+    }
+    pub(super) fn fill_counted(
+        &mut self,
+        generation: u64,
+        now: u64,
+        out: &mut [f32],
+    ) -> Outcome<(Effects, u32)> {
         out.fill(0.0);
         if generation != self.snapshot.generation {
             return Err(TransportError::StaleGeneration);
@@ -416,12 +451,14 @@ impl Transport {
             return Err(TransportError::InvalidBuffer);
         }
         let mut effects = self.poll(now, Notice::None);
+        let mut submitted = 0;
         self.last_callback = self.last;
         for frame in out.chunks_exact_mut(2) {
             match self.snapshot.state {
                 State::Playing => {
                     let at = self.snapshot.source_frame as usize * 2;
                     frame.copy_from_slice(&self.samples[at..at + 2]);
+                    submitted += 1;
                     self.snapshot.source_frame += 1;
                     if self.snapshot.source_frame == self.source_frames() {
                         self.snapshot.state = if self.snapshot.pass == self.passes {
@@ -452,7 +489,7 @@ impl Transport {
             effects.recheck = None;
             self.effects = Effects::default()
         }
-        Ok(effects)
+        Ok((effects, submitted))
     }
     pub fn restart_ticket(&self) -> Outcome<RestartTicket> {
         if self.snapshot.state != State::Restarting || self.restart_verified {
