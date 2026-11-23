@@ -710,6 +710,14 @@ with `--ignored --exact --nocapture`. After it reports that capture started,
 run the uninterrupted playback test in a separate process. The recorder
 saves up to 45 seconds of stereo samples and a packet clock sidecar. The
 observation point is the Windows render mix before physical output.
+
+The contained `actual_station_observes_native_period_and_silent_callbacks`
+test opens the pinned render stream without attaching source PCM. Four Dell
+runs requested a 480-frame buffer, reported a 480-frame native period, and
+observed a largest callback of 1,056 frames among the first five callbacks.
+Each run submitted zero source frames and closed the stream. The callback
+size remained below the 2,048-frame limit. These observations cover silent
+startup and do not establish callback cadence across an entire session.
 Keep the sidecar next to the PCM with the same basename. The analyzer binds
 the sidecar to the exact audio hash and length, checks packet coverage and
 timestamp continuity, then measures both source spans and the loop gap again

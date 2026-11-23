@@ -298,6 +298,109 @@ fn station_request() -> (
 }
 
 #[cfg(windows)]
+#[test]
+#[ignore = "explicit native buffer observation; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_observes_native_period_and_silent_callbacks() {
+    use reel_assets::jobs::{QuietLimits, run_quiet};
+    use std::time::Duration;
+    let (path, _) = station_request();
+    let root = tempfile::tempdir().unwrap();
+    fs::copy(path, root.path().join("session.json")).unwrap();
+    run_quiet(
+        &std::env::current_exe().unwrap(),
+        &[
+            "--ignored".into(),
+            "--exact".into(),
+            "silent_native_buffer_fixture".into(),
+        ],
+        root.path(),
+        Duration::from_secs(8),
+        QuietLimits {
+            memory_bytes: 512 * 1024 * 1024,
+            processes: 1,
+        },
+        || Ok(()),
+    )
+    .unwrap();
+    println!(
+        "{}",
+        fs::read_to_string(root.path().join("buffer-observation.json")).unwrap()
+    );
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "contained child for the explicit silent native buffer test"]
+fn silent_native_buffer_fixture() {
+    use reel::spoken_programme::installation::native::{
+        SessionRequest,
+        output::{OutputClock, OutputEvent, OutputWorker},
+    };
+    use std::time::Duration;
+    let request = SessionRequest::parse(&fs::read("session.json").unwrap()).unwrap();
+    let clock = OutputClock::start().unwrap();
+    let mut output = OutputWorker::new(request.endpoint, clock).unwrap();
+    output.open(1, 2_000_000).unwrap();
+    let (period, sink) = loop {
+        match output.event() {
+            Some(OutputEvent::Opened {
+                generation: 1,
+                reported_period_frames,
+                sink,
+            }) => {
+                break (reported_period_frames, sink);
+            }
+            Some(_) => panic!("native stream did not open"),
+            None => {}
+        }
+        assert!(clock.now_us().unwrap() < 2_000_000, "native open deadline");
+        std::thread::sleep(Duration::from_millis(2));
+    };
+    while sink.stats().callbacks < 5 {
+        assert!(
+            !sink.failed() && clock.now_us().unwrap() < 2_000_000,
+            "silent callback deadline"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let stats = sink.stats();
+    assert!(sink.ready());
+    assert!((1..=2048).contains(&period));
+    assert!((1..=2048).contains(&stats.largest_callback_frames));
+    assert_eq!(
+        (stats.owned_callbacks, stats.submitted_source_frames),
+        (0, 0)
+    );
+    let close_deadline = clock.now_us().unwrap() + 2_000_000;
+    output.close(1, close_deadline).unwrap();
+    loop {
+        match output.event() {
+            Some(OutputEvent::Closed { generation: 1 }) => break,
+            Some(_) => panic!("native stream did not close"),
+            None => {}
+        }
+        assert!(
+            clock.now_us().unwrap() < close_deadline,
+            "native close deadline"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    output.shutdown().unwrap();
+    fs::write(
+        "buffer-observation.json",
+        serde_json::to_vec(&json!({
+            "requested_frames": 480,
+            "reported_period_frames": period,
+            "largest_observed_callback_frames": stats.largest_callback_frames,
+            "silent_callbacks": stats.callbacks,
+            "submitted_source_frames": stats.submitted_source_frames,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+}
+
+#[cfg(windows)]
 fn run_station(
     sequence: &[(&[u8], &[u8])],
     command_budget_seconds: u64,
