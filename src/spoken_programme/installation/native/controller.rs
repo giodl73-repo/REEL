@@ -310,7 +310,12 @@ impl Controller {
         }
         if snapshot != self.observed {
             self.observed = snapshot;
-            self.emit(Event::State(snapshot));
+            // The acknowledgement already carries this exact snapshot. A
+            // second display would immediately overwrite the numbered reply.
+            if !matches!(self.events.back(), Some(Event::Ack { record, .. }) if record.snapshot == snapshot)
+            {
+                self.emit(Event::State(snapshot));
+            }
         }
         self.effects(effects);
         if snapshot.session_closed {

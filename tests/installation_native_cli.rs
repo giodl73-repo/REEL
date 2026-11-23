@@ -42,7 +42,7 @@ fn actual_run_keeps_status_and_quit_available_after_refusing_start_in_fault() {
     drop(image);
     let path = root.path().join("session.json");
     fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
-    let (result, steps) = run_console(
+    let (result, steps, _) = run_console(
         program,
         &path,
         &[
@@ -123,7 +123,7 @@ fn actual_station_refuses_changed_endpoint_configuration() {
     let root = tempfile::tempdir().unwrap();
     let path = root.path().join("different-configuration.json");
     fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
-    let (result, steps) = run_console(
+    let (result, steps, _) = run_console(
         &request.playback.runtime.path,
         &path,
         &[(b"Fault", b"quit\r")],
@@ -135,6 +135,24 @@ fn actual_station_refuses_changed_endpoint_configuration() {
         "after {steps} steps: {error}"
     );
     assert_eq!(steps, 1);
+}
+
+#[cfg(windows)]
+#[test]
+#[ignore = "explicit station console timing; requires REEL_INSTALLATION_STATION_SESSION"]
+fn actual_station_status_acknowledgement_meets_outer_deadline() {
+    let (path, request) = station_request();
+    let (result, steps, elapsed) = run_console(
+        &request.playback.runtime.path,
+        &path,
+        &[(b"Ready p", b"status\r"), (b"Command 1: Ready", b"quit\r")],
+        45,
+    );
+    assert_eq!(steps, 2, "{result:?}");
+    result.unwrap();
+    let status = elapsed[1].expect("Status timing missing");
+    println!("Status sent to console acknowledgement: {status:?}");
+    assert!(status <= std::time::Duration::from_millis(100));
 }
 
 #[cfg(windows)]
@@ -159,7 +177,7 @@ fn station_request() -> (
 #[cfg(windows)]
 fn run_station(sequence: &[(&[u8], &[u8])], command_budget_seconds: u64) {
     let (path, request) = station_request();
-    let (result, steps) = run_console(
+    let (result, steps, _) = run_console(
         &request.playback.runtime.path,
         &path,
         sequence,
@@ -179,13 +197,13 @@ fn run_console(
     request: &std::path::Path,
     steps: &[(&[u8], &[u8])],
     command_budget_seconds: u64,
-) -> (Result<(), String>, usize) {
+) -> (Result<(), String>, usize, Vec<Option<std::time::Duration>>) {
     use reel_assets::jobs::{BorrowedPseudoConsole, QuietLimits, run_pseudoconsole_observed};
     use std::{
         fs::File,
         io::{Read, Write},
         os::windows::io::{AsRawHandle, FromRawHandle},
-        sync::atomic::{AtomicUsize, Ordering},
+        sync::Mutex,
         time::{Duration, Instant},
     };
     use windows::Win32::{
@@ -225,7 +243,7 @@ fn run_console(
     });
     drop(in_read);
     drop(out_write);
-    let observed = AtomicUsize::new(0);
+    let observed = Mutex::new(Vec::with_capacity(steps.len()));
     std::thread::scope(|scope| {
         let reader = scope.spawn(|| {
             let mut chunk = [0; 4096];
@@ -241,7 +259,7 @@ fn run_console(
                             matched += 1;
                             if matched == marker.len() {
                                 next += 1;
-                                observed.store(next, Ordering::Release);
+                                observed.lock().unwrap().push(Instant::now());
                                 matched = 0;
                             }
                         } else {
@@ -270,20 +288,27 @@ fn run_console(
                 .map_err(|error| error.to_string())
             });
             let deadline = Instant::now() + Duration::from_secs(command_budget_seconds);
-            let mut sent = 0;
+            let mut elapsed = Vec::with_capacity(steps.len());
+            let mut last_command = None;
             for (index, (_, line)) in steps.iter().enumerate() {
-                while observed.load(Ordering::Acquire) <= index
-                    && !job.is_finished()
-                    && Instant::now() < deadline
-                {
+                let mut seen = observed.lock().unwrap().get(index).copied();
+                while seen.is_none() && !job.is_finished() && Instant::now() < deadline {
                     std::thread::sleep(Duration::from_millis(2));
+                    seen = observed.lock().unwrap().get(index).copied();
                 }
-                if observed.load(Ordering::Acquire) <= index || input.write_all(line).is_err() {
+                let Some(seen) = seen else {
                     break;
+                };
+                let duration = last_command.map(|sent| seen.duration_since(sent));
+                if !line.is_empty() {
+                    last_command = Some(Instant::now());
+                    if input.write_all(line).is_err() {
+                        break;
+                    }
                 }
-                sent += 1;
+                elapsed.push(duration);
             }
-            (job.join().unwrap(), sent)
+            (job.join().unwrap(), elapsed.len(), elapsed)
         });
         drop(input);
         drop(terminal);
