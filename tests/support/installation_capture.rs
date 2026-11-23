@@ -129,3 +129,133 @@ fn measure_retained_station_capture() {
     );
     assert!(capture_passes(gap, spans), "capture failed timing gates");
 }
+
+#[cfg(windows)]
+#[test]
+#[ignore = "records an explicitly isolated synthetic WASAPI render endpoint"]
+fn record_isolated_station_loopback() {
+    use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+    use reel::media_runtime::ByteIdentity;
+    use std::{
+        io::Write,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+            mpsc::{RecvTimeoutError, sync_channel},
+        },
+        time::{Duration, Instant},
+    };
+
+    assert_eq!(
+        std::env::var("REEL_INSTALLATION_CAPTURE_SCOPE").as_deref(),
+        Ok("isolated-synthetic-render")
+    );
+    let request_path = std::env::var_os("REEL_INSTALLATION_STATION_SESSION").unwrap();
+    let request = reel::spoken_programme::installation::native::SessionRequest::parse(
+        &std::fs::read(request_path).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        (request.edition_id.as_str(), request.passes),
+        ("en-technical", 2)
+    );
+    let output = PathBuf::from(std::env::var_os("REEL_INSTALLATION_CAPTURE_OUTPUT").unwrap());
+    let parent = output.parent().unwrap();
+    assert!(output.is_absolute() && !output.exists());
+    let clock_path = output.with_extension("clock.json");
+    assert!(!clock_path.exists());
+
+    let id: cpal::DeviceId = request.endpoint.device_id.parse().unwrap();
+    assert_eq!(id.host(), cpal::HostId::Wasapi);
+    let host = cpal::host_from_id(cpal::HostId::Wasapi).unwrap();
+    let mut devices = host
+        .output_devices()
+        .unwrap()
+        .filter(|device| device.id().is_ok_and(|found| found == id));
+    let device = devices.next().expect("pinned render endpoint unavailable");
+    assert!(devices.next().is_none(), "ambiguous render endpoint");
+    let mix = device.default_output_config().unwrap();
+    assert_eq!(
+        (mix.sample_rate(), mix.channels(), mix.sample_format()),
+        (RATE as u32, 2, cpal::SampleFormat::F32)
+    );
+
+    // This test owns the capture stream. Its error callback and bounded queue
+    // make discontinuities and consumer stalls visible to the recorder.
+    let (send, receive) = sync_channel(32);
+    let failed = Arc::new(AtomicBool::new(false));
+    let data_failed = Arc::clone(&failed);
+    let error_failed = Arc::clone(&failed);
+    let stream = device
+        .build_input_stream::<f32, _, _>(
+            mix.config(),
+            move |data, info| {
+                if data.is_empty()
+                    || data.len() > 4096
+                    || data.len() % 2 != 0
+                    || send.try_send((data.to_vec(), info.timestamp())).is_err()
+                {
+                    data_failed.store(true, Ordering::Release);
+                }
+            },
+            move |_| error_failed.store(true, Ordering::Release),
+            Some(Duration::from_secs(2)),
+        )
+        .unwrap();
+    let mut audio = tempfile::NamedTempFile::new_in(parent).unwrap();
+    let mut clock = tempfile::NamedTempFile::new_in(parent).unwrap();
+    let mut packets = Vec::new();
+    let mut frames = 0;
+    stream.play().unwrap();
+    println!("Isolated render loopback started. Run the two-pass playback now.");
+    let deadline = Instant::now() + Duration::from_secs(45);
+    while Instant::now() < deadline && !failed.load(Ordering::Acquire) {
+        match receive.recv_timeout(Duration::from_millis(25)) {
+            Ok((data, timestamp)) => {
+                packets.push(serde_json::json!({
+                    "offset_frames": frames,
+                    "frames": data.len() / 2,
+                    "capture_qpc_ns": u64::try_from(timestamp.capture.as_nanos()).unwrap(),
+                    "callback_qpc_ns": u64::try_from(timestamp.callback.as_nanos()).unwrap(),
+                }));
+                frames += data.len() / 2;
+                assert!(frames <= 46 * RATE);
+                let bytes: Vec<u8> = data.into_iter().flat_map(f32::to_le_bytes).collect();
+                audio.write_all(&bytes).unwrap();
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => panic!("capture stream ended early"),
+        }
+    }
+    drop(stream);
+    assert!(
+        !failed.load(Ordering::Acquire),
+        "capture callback, geometry or queue failure"
+    );
+    assert!(frames > 0, "capture delivered no frames");
+    audio.as_file().sync_all().unwrap();
+    let audio_identity = ByteIdentity::observe_file(audio.path()).unwrap();
+    let recorder_identity = ByteIdentity::observe_file(&std::env::current_exe().unwrap()).unwrap();
+    serde_json::to_writer_pretty(
+        &mut clock,
+        &serde_json::json!({
+            "capture_point": "WASAPI endpoint loopback before physical output",
+            "binding": request.endpoint,
+            "cpal_version": "0.18.2",
+            "sample_rate": RATE,
+            "channels": 2,
+            "encoding": "f32le",
+            "audio_sha256": audio_identity.sha256,
+            "audio_bytes": audio_identity.bytes,
+            "recorder_sha256": recorder_identity.sha256,
+            "recorder_bytes": recorder_identity.bytes,
+            "total_frames": frames,
+            "packets": packets,
+        }),
+    )
+    .unwrap();
+    clock.as_file().sync_all().unwrap();
+    audio.persist_noclobber(&output).unwrap();
+    clock.persist_noclobber(clock_path).unwrap();
+}

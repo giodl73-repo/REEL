@@ -673,6 +673,16 @@ This run sends only Start and Quit so the two passes and loop interval are
 continuous. Start the separate recorder before invoking the test and retain its
 state and recording after the test exits.
 
+The opt-in test `capture::record_isolated_station_loopback` records the pinned
+render endpoint's WASAPI loopback. On an isolated synthetic test output, set
+`REEL_INSTALLATION_CAPTURE_SCOPE=isolated-synthetic-render` and
+`REEL_INSTALLATION_CAPTURE_OUTPUT` to a new absolute `.f32le` path, in
+addition to the station request variable. Invoke the recorder by exact name
+with `--ignored --exact --nocapture`. After it reports that capture started,
+run the uninterrupted playback test in a separate process. The recorder
+saves up to 45 seconds of stereo samples and a packet clock sidecar. The
+observation point is the Windows render mix before physical output.
+
 An uninterrupted Dell run exposed a foreground display queue overflow.
 The callback's cursor was being sent to the console at audio callback rate.
 The controller still tracks every callback cursor, but publishes cursor-only
