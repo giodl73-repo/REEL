@@ -30,6 +30,18 @@ fn sha(value: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 impl Spec {
+    pub fn from_pinned_draft(repository: String, bytes: &[u8], pin: &str) -> Result<Self> {
+        if bytes.len() > reel_workflow::MAX_CONTROL_BYTES {
+            return Err(error(ErrorKind::Budget, "github-issue-draft-bytes"));
+        }
+        if reel_workflow::digest(bytes) != pin {
+            return Err(error(ErrorKind::Integrity, "github-issue-draft-pin"));
+        }
+        let draft = serde_json::from_slice(bytes)
+            .map_err(|_| error(ErrorKind::Invalid, "github-issue-draft-json"))?;
+        Self::from_draft(repository, &draft)
+    }
+
     /// Bind an exported draft's canonical subject/version to an explicit target.
     /// This does not re-read the film or authenticate its original observation.
     pub fn from_draft(
