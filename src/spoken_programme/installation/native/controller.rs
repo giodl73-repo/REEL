@@ -310,7 +310,12 @@ impl Controller {
         }
         if snapshot != self.observed {
             self.observed = snapshot;
-            self.emit(Event::State(snapshot));
+            // The acknowledgement already carries this exact snapshot. A
+            // second display would immediately overwrite the numbered reply.
+            if !matches!(self.events.back(), Some(Event::Ack { record, .. }) if record.snapshot == snapshot)
+            {
+                self.emit(Event::State(snapshot));
+            }
         }
         self.effects(effects);
         if snapshot.session_closed {
@@ -723,6 +728,20 @@ mod tests {
             Transport::new(samples.into(), "Engineering signal\n".into(), [7; 32], 2, 0).unwrap(),
         );
         (Controller::new(core, output, clock), harness, clock)
+    }
+    #[test]
+    fn ready_status_keeps_its_numbered_acknowledgement_as_the_latest_report() {
+        let (mut controller, _, clock) = fixture();
+        controller
+            .command(1, Command::Status, 0, clock.now_us().unwrap())
+            .unwrap();
+        controller.tick().unwrap();
+        let Some(Event::Ack { id: 1, record }) = controller.event() else {
+            panic!("expected numbered Status acknowledgement");
+        };
+        assert_eq!(record.snapshot, controller.observed());
+        assert_eq!(record.snapshot.state, State::Ready);
+        assert!(controller.event().is_none(), "duplicate Ready report");
     }
     #[test]
     fn expiry_reclaims_a_paused_callback_and_reports_the_real_stopped_core() {
