@@ -7,13 +7,15 @@ fn run() -> Result<()> {
         println!(
             "Usage: reel-episode-conform <command> ...\n\
              Commands:\n\
-             \x20 produce-parts <manifest> --asset-root <dir> --range <range.json> --output-dir <new-dir>\n\
+             \x20 produce-parts <manifest> --asset-root <dir> --range <range.json> --output-dir <new-dir> [--runtime <runtime.json>]\n\
              \x20 next-part-range <part-set> --asset-root <dir> --end <exclusive-index>\n\
              \x20 finalize-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
              \x20 compose-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
              \x20 describe-resume <prepared> --asset-root <job-dir> --start-step <number>\n\
              \x20 build <manifest> --input-root <dir> --asset-root <dir> --output-dir <new-dir>"
         );
+        #[cfg(feature = "tig-publication")]
+        println!("  describe-part-job <request> --asset-root <dir>");
         return Ok(());
     }
     if let [
@@ -40,6 +42,46 @@ fn run() -> Result<()> {
                 Path::new(out),
             )?;
             println!("portable native lossless/compact/PCM parts and proof retained");
+            return Ok(());
+        }
+    }
+    if let [
+        _,
+        command,
+        manifest,
+        root_flag,
+        root,
+        range_flag,
+        range,
+        out_flag,
+        out,
+        runtime_flag,
+        runtime,
+    ] = args.as_slice()
+    {
+        if command == "produce-parts"
+            && root_flag == "--asset-root"
+            && range_flag == "--range"
+            && out_flag == "--output-dir"
+            && runtime_flag == "--runtime"
+        {
+            reel::episode_conform::parts::produce_from_file_with_runtime(
+                Path::new(manifest),
+                Path::new(root),
+                Path::new(range),
+                Path::new(out),
+                Path::new(runtime),
+            )?;
+            println!("portable native lossless/compact/PCM parts and proof retained");
+            return Ok(());
+        }
+    }
+    #[cfg(feature = "tig-publication")]
+    if let [_, command, request, root_flag, root] = args.as_slice() {
+        if command == "describe-part-job" && root_flag == "--asset-root" {
+            let job =
+                reel::episode_conform::parts::describe_job(Path::new(request), Path::new(root))?;
+            println!("{}", serde_json::to_string_pretty(&job)?);
             return Ok(());
         }
     }
