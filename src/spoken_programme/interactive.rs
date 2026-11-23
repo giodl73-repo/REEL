@@ -83,3 +83,43 @@ pub fn admit_checked_selection(package: &CheckedPackage, requested: Selection<'_
     admit_selection(requested, &candidates)?;
     Ok(())
 }
+
+/// A checked companion anchor with its position relative to the selected branch span.
+#[derive(Debug, PartialEq, Eq)]
+pub struct CompanionPlacement {
+    pub id: String,
+    pub frame: u64,
+}
+
+pub fn companion_placements(
+    package: &CheckedPackage,
+    span: Selection<'_>,
+    composition: &super::companion::Composition,
+) -> Result<Vec<CompanionPlacement>> {
+    admit_checked_selection(package, span)?;
+    ensure!(
+        composition.edition_id() == span.edition
+            && composition.access_sha256() == span.access_sha256,
+        "companion edition or access identity differs"
+    );
+    let clock: crate::presentation_clock::SourceClock =
+        serde_json::from_slice(composition.clock_bytes())?;
+    ensure!(
+        clock.source_sha256 == span.programme_sha256
+            && clock.sample_rate == package.access().sample_rate
+            && span.end_frame <= clock.total_samples,
+        "companion clock differs from branch source or span"
+    );
+    Ok(clock
+        .anchors
+        .into_iter()
+        .filter_map(|anchor| {
+            (span.first_frame..span.end_frame)
+                .contains(&anchor.sample)
+                .then(|| CompanionPlacement {
+                    id: anchor.id,
+                    frame: anchor.sample - span.first_frame,
+                })
+        })
+        .collect())
+}
