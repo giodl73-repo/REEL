@@ -84,6 +84,14 @@ impl<'a> Session<'a> {
         self.node.map(Node::id)
     }
 
+    pub fn language(&self) -> &str {
+        self.language
+    }
+
+    pub fn is_ended(&self) -> bool {
+        matches!(self.node, Some(Node::End { .. }))
+    }
+
     pub fn visit(&self) -> u64 {
         self.visit
     }

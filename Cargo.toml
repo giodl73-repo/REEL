@@ -160,3 +160,8 @@ opt-level = 3
 
 [profile.test.package.sha2]
 opt-level = 3
+
+[[bin]]
+name = "reel-interactive"
+path = "src/bin/reel-interactive.rs"
+required-features = ["installation-native"]
