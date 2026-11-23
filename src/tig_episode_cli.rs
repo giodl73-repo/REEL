@@ -384,7 +384,7 @@ pub fn describe_resume(profile: &Path, inspection: &Path) -> Result<Value> {
     }
     let mut journal = SourceJournal::open(&p.journal_root, &ticket.journal_minimum)?;
     worker::check(&ticket, &mut journal)?;
-    let (prefix, files) = crate::episode_conform::describe_native_prefix(
+    let prefix = crate::episode_conform::describe_native_prefix(
         &workspace.join("native-normalization"),
         requested.ticket.sha256.as_str(),
         requested.completed,
@@ -398,7 +398,7 @@ pub fn describe_resume(profile: &Path, inspection: &Path) -> Result<Value> {
     let marker = json!({
         "schema":"reel.native-episode-normalization-prefix.v1",
         "ticket":requested.ticket,
-        "segments":prefix
+        "segments":prefix.segments
     });
     let marker_bytes = identity::canonical_json(&marker)?;
     if marker_bytes.len() > 256 * 1024 {
@@ -406,7 +406,7 @@ pub fn describe_resume(profile: &Path, inspection: &Path) -> Result<Value> {
     }
     let marker_path = "native-normalization/resume.json";
     let mut seeds = BTreeMap::new();
-    for (path, file) in files {
+    for (path, file) in prefix.files {
         let name = Path::new("native-normalization").join(path);
         let name = name
             .to_str()

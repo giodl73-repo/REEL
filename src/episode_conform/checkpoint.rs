@@ -156,14 +156,17 @@ pub(super) fn replay_native_segment(
 }
 
 #[cfg(feature = "tig-publication")]
+pub(crate) struct NativePrefixInspection {
+    pub segments: Vec<scene_delivery::FileRef>,
+    pub files: BTreeMap<PathBuf, scene_delivery::FileRef>,
+}
+
+#[cfg(feature = "tig-publication")]
 pub(crate) fn describe_native_prefix(
     work: &Path,
     ticket_sha256: &str,
     completed: usize,
-) -> Result<(
-    Vec<scene_delivery::FileRef>,
-    BTreeMap<PathBuf, scene_delivery::FileRef>,
-)> {
+) -> Result<NativePrefixInspection> {
     if !(1..=2047).contains(&completed) {
         bail!("native normalization resume requires a bounded nonempty prefix");
     }
@@ -209,7 +212,10 @@ pub(crate) fn describe_native_prefix(
             bail!("native normalization checkpoint collides with generated media");
         }
     }
-    Ok((prefix, files))
+    Ok(NativePrefixInspection {
+        segments: prefix,
+        files,
+    })
 }
 
 /// Resolve only media expressly pinned by a verified checkpoint record.

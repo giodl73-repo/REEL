@@ -626,7 +626,7 @@ pub struct PresentationVerificationCache {
     pub policy: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MediaFacts {
     pub requires_lossless_normalization: bool,
@@ -3251,32 +3251,33 @@ fn build_internal_with_inputs(
             break;
         }
         #[cfg(feature = "tig-publication")]
-        if let Some((directory, scope, manifest_hash)) = &native_checkpoint {
-            if let Some(pin) = scope.prefix.get(index) {
-                let binding = checkpoint::NativeSegmentBinding {
-                    ticket_sha256: scope.ticket_sha256,
-                    manifest_sha256: manifest_hash,
-                    ordinal: index,
-                    segment,
-                    sample_rate: manifest.output_sample_rate,
-                    start_frame: frame_cursor,
-                    start_sample: sample_cursor,
-                };
-                let (selected, record, first) =
-                    checkpoint::replay_native_segment(directory, pin, &binding, source)?;
-                if let Some(prior) = &common {
-                    if serde_json::to_vec(prior)? != serde_json::to_vec(&first)? {
-                        bail!("native checkpoint episode format changed between segments");
-                    }
-                } else {
-                    common = Some(first);
+        if let Some(((directory, scope, manifest_hash), pin)) = native_checkpoint
+            .as_ref()
+            .and_then(|state| state.1.prefix.get(index).map(|pin| (state, pin)))
+        {
+            let binding = checkpoint::NativeSegmentBinding {
+                ticket_sha256: scope.ticket_sha256,
+                manifest_sha256: manifest_hash,
+                ordinal: index,
+                segment,
+                sample_rate: manifest.output_sample_rate,
+                start_frame: frame_cursor,
+                start_sample: sample_cursor,
+            };
+            let (selected, record, first) =
+                checkpoint::replay_native_segment(directory, pin, &binding, source)?;
+            if let Some(prior) = &common {
+                if prior != &first {
+                    bail!("native checkpoint episode format changed between segments");
                 }
-                frame_cursor += record.frames;
-                sample_cursor += record.samples;
-                records.push(record);
-                normalized.push(selected);
-                continue;
+            } else {
+                common = Some(first);
             }
+            frame_cursor += record.frames;
+            sample_cursor += record.samples;
+            records.push(record);
+            normalized.push(selected);
+            continue;
         }
         let retained = retained_sources[index];
         let facts = probe_segment(source, programs, retained)?;
