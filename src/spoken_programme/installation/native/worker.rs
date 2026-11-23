@@ -654,7 +654,11 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert_eq!(rejected, mode != 0);
+        assert_eq!(rejected, matches!(mode, 1 | 2));
+        if mode == 3 {
+            std::thread::sleep(Duration::from_secs(30));
+            panic!("overdue fixture escaped containment");
+        }
         let mut closure = worker.finish().unwrap();
         assert!(matches!(
             closure.report,
@@ -683,6 +687,10 @@ mod tests {
     #[test]
     fn actual_contained_worker_authenticates_before_original_failure_and_keeps_status_quit() {
         contained(0);
+    }
+    #[test]
+    fn quit_deadline_cancels_a_stalled_contained_worker() {
+        contained(3);
     }
     #[test]
     fn actual_contained_worker_rejects_wrong_display_ack_generation() {
@@ -732,6 +740,7 @@ mod tests {
         )
         .unwrap();
         let actual_pid = AtomicU32::new(0);
+        let cleanup = std::sync::OnceLock::<super::super::parent::CleanupWatch>::new();
         let cancel = Arc::new(AtomicBool::new(false));
         struct Cancel(Arc<AtomicBool>);
         impl Drop for Cancel {
@@ -741,6 +750,7 @@ mod tests {
         }
         std::thread::scope(|scope| {
             let child_cancel = cancel.clone();
+            let cleanup_watch = &cleanup;
             let (program, directory, pid) = (binding.runtime_path(), root.path(), &actual_pid);
             let job = scope.spawn(move || run_quiet_observed(program, &[
                 "--ignored".into(), "--exact".into(),
@@ -748,11 +758,12 @@ mod tests {
                 "--test-threads=1".into(),
             ], directory, Duration::from_secs(16), QuietLimits { memory_bytes: 256 * 1024 * 1024, processes: 1 }, |event| {
                 if child_cancel.load(Ordering::Acquire) { return Err("controlled session cancelled".into()); }
+                if let Some(watch) = cleanup_watch.get() { watch.check().map_err(|error| error.to_string())?; }
                 if let QuietEvent::Process(info) = event { pid.store(info.process_id, Ordering::Release); }
                 Ok(())
             }).map_err(|error| error.to_string()));
             let _cancel = Cancel(cancel.clone());
-            if mode == 0 {
+            if matches!(mode, 0 | 3) {
                 use super::super::parent::{ParentEvent, ParentSession};
                 let deadline = Instant::now() + Duration::from_secs(12);
                 while actual_pid.load(Ordering::Acquire) == 0 {
@@ -767,6 +778,7 @@ mod tests {
                     clock,
                 )
                 .unwrap();
+                assert!(cleanup.set(foreground.cleanup_watch()).is_ok());
                 let input_pool = foreground.command_pool();
                 let (mut input, mut lines) = input_pool.channel();
                 let (mut fault, mut status, mut status_ack, mut quit) =
@@ -831,6 +843,15 @@ mod tests {
                         quit_receipt = counter().unwrap();
                         input.line("quit", quit_receipt).unwrap();
                         quit = true;
+                    }
+                    if mode == 3 && foreground.quit_requested() {
+                        let error = job.join().unwrap().unwrap_err();
+                        assert!(error.contains("process cleanup deadline"), "{error}");
+                        assert!(
+                            clock.now_us().unwrap() - clock.elapsed_at(quit_receipt).unwrap()
+                                < 3_000_000
+                        );
+                        return;
                     }
                     assert!(Instant::now() < deadline);
                     std::thread::sleep(Duration::from_millis(2));

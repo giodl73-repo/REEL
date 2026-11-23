@@ -10,7 +10,13 @@ use super::{
     wire::Packet,
     *,
 };
-use std::{collections::VecDeque, sync::Arc};
+use std::{
+    collections::VecDeque,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
 use windows::Win32::System::Performance::QueryPerformanceCounter;
 
 #[derive(Clone, Copy)]
@@ -40,6 +46,33 @@ pub struct LayoutObservation {
     pub input_code_page: u32,
     pub output_code_page: u32,
 }
+/// Share with the held process runner so it can cancel an overdue worker
+/// even when the foreground is joining console I/O.
+#[derive(Clone)]
+pub struct CleanupWatch {
+    clock: OutputClock,
+    deadline: Arc<AtomicU64>,
+}
+impl CleanupWatch {
+    pub fn check(&self) -> Result<()> {
+        ensure!(
+            self.clock
+                .now_us()
+                .is_some_and(|now| now < self.deadline.load(Ordering::Acquire)),
+            "installation process cleanup deadline"
+        );
+        Ok(())
+    }
+    fn quit(&self, receipt: i64) {
+        let started = self
+            .clock
+            .elapsed_at(receipt)
+            .or_else(|| self.clock.now_us())
+            .unwrap_or(0);
+        self.deadline
+            .fetch_min(started.saturating_add(2_000_000), Ordering::AcqRel);
+    }
+}
 struct Credit {
     lease: CommandLease,
     id: u64,
@@ -68,6 +101,7 @@ struct PendingDisplay {
 /// supplied here must come from the existing held process owner, not a child
 /// report. Construction performs no console I/O, originals check or device work.
 pub struct ParentSession {
+    cleanup: CleanupWatch,
     input: CommandPool,
     channel: Channel,
     gate: ParentGate,
@@ -102,6 +136,10 @@ impl ParentSession {
         clock: OutputClock,
     ) -> Result<Self> {
         Ok(Self {
+            cleanup: CleanupWatch {
+                clock,
+                deadline: Arc::new(AtomicU64::new(MAX_SESSION_MS * 1000 + 2_000_000)),
+            },
             input: CommandPool::new(),
             gate: ParentGate::new(runtime.context(), worker_pid, nonce)?,
             channel,
@@ -160,6 +198,9 @@ impl ParentSession {
     pub fn quit_requested(&self) -> bool {
         self.quit
     }
+    pub fn cleanup_watch(&self) -> CleanupWatch {
+        self.cleanup.clone()
+    }
     fn emit(&mut self, event: ParentEvent) -> Result<()> {
         ensure!(self.events.len() < 256, "installation parent event bound");
         self.events.push_back(event);
@@ -191,7 +232,7 @@ impl ParentSession {
         if self.input.failed() {
             self.fault();
         }
-        if self.local_command(command)? {
+        if self.local_command(command, received_counter)? {
             return Ok(None);
         }
         self.command_available(command)?;
@@ -217,7 +258,7 @@ impl ParentSession {
         if self.input.failed() {
             self.fault();
         }
-        if self.local_command(command)? {
+        if self.local_command(command, received_counter)? {
             return Ok(None);
         }
         self.command_available(command)?;
@@ -227,7 +268,7 @@ impl ParentSession {
         }
         result.map(Some)
     }
-    fn local_command(&mut self, command: Command) -> Result<bool> {
+    fn local_command(&mut self, command: Command, receipt: i64) -> Result<bool> {
         if command == Command::Status
             && (!self.authorized
                 || self.protocol_fault
@@ -246,6 +287,7 @@ impl ParentSession {
                 || self.input.closed())
         {
             self.quit = true;
+            self.cleanup.quit(receipt);
             self.emit(ParentEvent::QuitRequested)?;
             return Ok(true);
         }
@@ -320,6 +362,7 @@ impl ParentSession {
         });
         if command == Command::Quit {
             self.quit = true;
+            self.cleanup.quit(received_counter);
         }
         Ok(id)
     }
@@ -750,7 +793,7 @@ impl ParentSession {
     fn quit_from_console(&mut self, receipt: i64) -> Result<()> {
         if let Err(error) = self.command(Command::Quit, receipt) {
             self.fault();
-            self.local_command(Command::Quit)?;
+            self.local_command(Command::Quit, receipt)?;
             return Err(error);
         }
         Ok(())
