@@ -96,9 +96,12 @@ impl Prepared<'_> {
             fresh.seal == self.seal,
             "installation original selection changed"
         );
+        // The fresh seal proves the frozen PCM/text are still the same. Share
+        // that allocation with the transport instead of retaining a second
+        // identical playback buffer beside Prepared.
         Ok(Transport::new(
-            fresh.samples,
-            fresh.transcript,
+            self.samples.clone(),
+            self.transcript.clone(),
             fresh.seal,
             fresh.selection.passes,
             now_ms,

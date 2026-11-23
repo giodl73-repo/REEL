@@ -1,5 +1,29 @@
 use super::*;
 
+#[test]
+fn queued_generation_is_checked_at_application_and_safety_controls_are_run_wide() {
+    let mut t = fixture(1);
+    t.enqueue_for_generation("start", 0).unwrap();
+    t.enqueue_for_generation("pause", 0).unwrap();
+    t.poll(0, Notice::Opened { generation: 1 });
+    assert_eq!(t.snapshot().state, State::Playing);
+    assert!(
+        t.trace()
+            .iter()
+            .any(|event| event.refusal == Some(TransportError::StaleGeneration))
+    );
+    t.enqueue_for_generation("pause", 1).unwrap();
+    t.poll(1, Notice::None);
+    assert_eq!(t.snapshot().state, State::Paused);
+    t.enqueue_for_generation("stop", 0).unwrap();
+    t.poll(2, Notice::None);
+    assert_eq!(t.snapshot().state, State::Stopped);
+    t.enqueue_for_generation("status", 0).unwrap();
+    t.enqueue_for_generation("quit", 0).unwrap();
+    t.poll(3, Notice::None);
+    assert!(t.snapshot().session_closed);
+}
+
 fn fixture(passes: u8) -> Transport {
     // Independent values, including signed rails. No WAVE decoder/producer is
     // used as this transport oracle; original-file qualification is separate.
