@@ -14,12 +14,15 @@ pub mod compiler;
 #[cfg(feature = "tig-history")]
 pub mod history;
 pub mod installation;
+pub mod interactive;
 pub mod layers;
 #[cfg(feature = "print")]
 pub mod lesson;
 pub mod producer;
 #[cfg(feature = "print")]
 pub mod reading;
+#[cfg(feature = "tig-publication")]
+pub mod workflow;
 
 pub const SCHEMA: &str = "reel.spoken-edition.v1";
 pub const VALIDATION_SCHEMA: &str = "reel.spoken-edition-validation.v1";

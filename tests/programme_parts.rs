@@ -39,6 +39,88 @@ fn path(path: &Path) -> &str {
     path.to_str().unwrap()
 }
 
+#[cfg(all(windows, feature = "tig-publication"))]
+fn run_managed_part(executable: &Path, source: &Path, output: &Path) {
+    let fixture = tempfile::tempdir().unwrap();
+    let project = fixture.path();
+    let cache = project.join("cache");
+    for dir in [
+        cache.as_path(),
+        &project.join(".local"),
+        &project.join("registry"),
+    ] {
+        fs::create_dir(dir).unwrap();
+    }
+    write(
+        project,
+        ".local/storage-rust.json",
+        &json!({
+            "cache_roots":[cache],"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}
+        }),
+    );
+    let request = project.join("request.json");
+    let mut parameters = json!({
+        "schema":"reel.programme-part-job-request.v1",
+        "manifest":"manifest.json","range":"range.json","runtime":"runtime.json",
+        "budget_bytes":1,"scratch_bytes":16*1024*1024,"timeout_seconds":180,
+        "lossless_max_bytes":8*1024*1024,"video_max_bytes":8*1024*1024,
+        "pcm_max_bytes":2*1024*1024
+    });
+    let describe = || {
+        cli(
+            executable,
+            &[
+                "describe-part-job",
+                path(&request),
+                "--asset-root",
+                path(source),
+            ],
+        )
+    };
+    write(project, "request.json", &parameters);
+    let refused = describe();
+    assert!(!refused.status.success());
+    assert!(String::from_utf8_lossy(&refused.stderr).contains("does not fit runner limits"));
+    parameters["budget_bytes"] = json!(64 * 1024 * 1024);
+    write(project, "request.json", &parameters);
+    let described = describe();
+    assert!(
+        described.status.success(),
+        "{}",
+        String::from_utf8_lossy(&described.stderr)
+    );
+    let recipe: Value = serde_json::from_slice(&described.stdout).unwrap();
+    for (name, pin) in recipe["inputs"].as_object().unwrap() {
+        let stored = reel_assets::ingest(project, &source.join(name)).unwrap();
+        assert_eq!(stored["sha256"], pin["sha256"]);
+        assert_eq!(stored["bytes"], pin["bytes"]);
+    }
+    write(
+        project,
+        "catalog.json",
+        &json!({"videos":[{"record":"inputs.json"}]}),
+    );
+    let mut registered_inputs = recipe["inputs"].as_object().unwrap().clone();
+    registered_inputs.extend(recipe["installed_tools"].as_object().unwrap().clone());
+    write(project, "inputs.json", &json!({"assets":registered_inputs}));
+    write(project, "recipe.json", &recipe);
+    let result = reel_assets::jobs::run(project, &project.join("recipe.json")).unwrap();
+    assert_eq!(result["workspace_retained"], false);
+    assert!(!Path::new(result["workspace"].as_str().unwrap()).exists());
+    let registered = reel_assets::generic_objects(project).unwrap();
+    fs::create_dir(output).unwrap();
+    let outputs = result["outputs"].as_object().unwrap();
+    assert_eq!(outputs.len(), 4);
+    for (name, file) in outputs {
+        let oid = file["sha256"].as_str().unwrap();
+        let bytes = file["bytes"].as_u64().unwrap();
+        let retained = Path::new(file["path"].as_str().unwrap());
+        assert_eq!(registered.get(oid), Some(&bytes));
+        reel_assets::verify(retained, oid, bytes).unwrap();
+        fs::copy(retained, output.join(name.strip_prefix("native/").unwrap())).unwrap();
+    }
+}
+
 #[test]
 fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
     // Required dependencies: failure to launch is a test failure, never a skip.
@@ -177,26 +259,105 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
         ] {
             fs::copy(source.join(name), root.join(name)).unwrap();
         }
-        write(
-            &root,
-            "range.json",
-            &json!({"start":i,"end":i+1,"start_frame":i*90,"start_sample":i*144000}),
-        );
+        let expected_range =
+            json!({"start":i,"end":i+1,"start_frame":i*90,"start_sample":i*144000});
+        let range = if i == 0 {
+            expected_range.clone()
+        } else {
+            let prefix = json!({"schema":"reel.programme-part-set.v2",
+                "manifest":reference(&final_root,"manifest.json"),"proofs":proofs});
+            write(&final_root, "set.json", &prefix);
+            job(&final_root);
+            if i == 1 {
+                let refused_output = temp.path().join("incomplete-delivery");
+                let refused = cli(
+                    &executable,
+                    &[
+                        "finalize-parts",
+                        path(&final_root.join("set.json")),
+                        "--asset-root",
+                        path(&final_root),
+                        "--output-dir",
+                        path(&refused_output),
+                    ],
+                );
+                assert!(!refused.status.success());
+                assert!(
+                    String::from_utf8_lossy(&refused.stderr)
+                        .contains("incomplete programme part coverage")
+                );
+                assert!(!refused_output.exists());
+            }
+            let planned = cli(
+                &executable,
+                &[
+                    "next-part-range",
+                    path(&final_root.join("set.json")),
+                    "--asset-root",
+                    path(&final_root),
+                    "--end",
+                    &(i + 1).to_string(),
+                ],
+            );
+            assert!(
+                planned.status.success(),
+                "{}",
+                String::from_utf8_lossy(&planned.stderr)
+            );
+            serde_json::from_slice(&planned.stdout).unwrap()
+        };
+        assert_eq!(range, expected_range);
+        write(&root, "range.json", &range);
+        let runtime = root.join("runtime.json");
+        if cfg!(windows) {
+            use reel::media_runtime::ByteIdentity;
+            let program = |name: &str| {
+                let search = std::env::var_os("PATH").unwrap();
+                let path = std::env::split_paths(&search)
+                    .map(|directory| directory.join(name))
+                    .find(|path| path.is_file())
+                    .unwrap()
+                    .canonicalize()
+                    .unwrap();
+                let pin = ByteIdentity::observe_file(&path).unwrap();
+                json!({"path":path,"sha256":pin.sha256,"bytes":pin.bytes})
+            };
+            write(
+                &root,
+                "runtime.json",
+                &json!({
+                    "host":ByteIdentity::observe_file(&executable).unwrap(),
+                    "ffmpeg":program("ffmpeg.exe"),
+                    "ffprobe":program("ffprobe.exe"),
+                    "dependencies":{}
+                }),
+            );
+        }
         job(&root);
         let output = temp.path().join(format!("part-{i}"));
-        success(cli(
-            &executable,
-            &[
-                "produce-parts",
-                path(&root.join("manifest.json")),
-                "--asset-root",
-                path(&root),
-                "--range",
-                path(&root.join("range.json")),
-                "--output-dir",
-                path(&output),
-            ],
-        ));
+        let manifest_path = root.join("manifest.json");
+        let range_path = root.join("range.json");
+        let mut args = vec![
+            "produce-parts",
+            path(&manifest_path),
+            "--asset-root",
+            path(&root),
+            "--range",
+            path(&range_path),
+            "--output-dir",
+            path(&output),
+        ];
+        if cfg!(windows) {
+            args.extend(["--runtime", path(&runtime)]);
+        }
+        #[cfg(all(windows, feature = "tig-publication"))]
+        if i == 0 {
+            run_managed_part(&executable, &root, &output);
+        } else {
+            success(cli(&executable, &args));
+        }
+        #[cfg(not(all(windows, feature = "tig-publication")))]
+        success(cli(&executable, &args));
         let proof: Value =
             serde_json::from_slice(&fs::read(output.join("part-proof.json")).unwrap()).unwrap();
         // Existing v1 lossless normalization is the parity oracle, including
@@ -265,6 +426,7 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
         "reorder",
         "duplicate",
         "gap",
+        "manifest-pin",
         "language",
         "source",
         "profile",
@@ -280,6 +442,8 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
             altered["proofs"][1] = altered["proofs"][0].clone();
         } else if mutation == "gap" {
             altered["proofs"].as_array_mut().unwrap().remove(1);
+        } else if mutation == "manifest-pin" {
+            altered["manifest"]["sha256"] = "0".repeat(64).into();
         } else {
             let mut proof: Value = serde_json::from_slice(&original_proof).unwrap();
             match mutation {
@@ -312,6 +476,12 @@ fn moving_tone_mixed_clocks_holds_portable_parts_copy_and_continuous_mp3() {
             ],
         );
         assert!(!result.status.success(), "mutation {mutation} accepted");
+        if mutation == "manifest-pin" {
+            assert!(
+                String::from_utf8_lossy(&result.stderr)
+                    .contains("programme manifest differs from declared scope")
+            );
+        }
         assert!(!rejected.exists());
         fs::write(final_root.join("proof-0.json"), &original_proof).unwrap();
     }

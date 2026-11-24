@@ -195,6 +195,9 @@ pub fn check(
         request.expected_runtime,
         profile,
     )?;
+    let raw = serde_json::from_slice(request.plan_bytes)
+        .map_err(|_| anyhow::anyhow!("spoken check plan JSON invalid"))?;
+    let plan = compiler::replay_selection(plan, &raw)?;
     require(
         serde_json::to_vec_pretty(&plan)? == request.plan_bytes,
         "spoken check plan differs from controls/runtime",
@@ -592,6 +595,14 @@ pub struct FileCheckRequest<'a> {
 }
 
 pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
+    Ok(check_file_package(paths, &producer::current_runtime()?)?.summary)
+}
+
+/// Check the original controls and return the verified records for local consumers.
+pub fn check_file_package(
+    paths: FileCheckRequest<'_>,
+    runtime: &CompilerIdentity,
+) -> Result<CheckedPackage> {
     require(
         paths.access.is_none() || paths.write_access.is_none(),
         "spoken access modes conflict",
@@ -610,7 +621,6 @@ pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
         })
         .transpose()?
         .unwrap_or_else(ProcessingPolicy::identity);
-    let runtime = producer::current_runtime()?;
     tick()?;
     let mut checked = check(
         CheckRequest {
@@ -618,7 +628,7 @@ pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
             plan_bytes: &plan,
             receipt_bytes: &receipt,
             processing: &processing,
-            expected_runtime: &runtime,
+            expected_runtime: runtime,
         },
         paths.source_root,
         paths.candidate,
@@ -635,5 +645,5 @@ pub fn check_file(paths: FileCheckRequest<'_>) -> Result<CheckSummary> {
     if let Some(root) = paths.write_access {
         write_access(&mut checked, root, &mut tick)?;
     }
-    Ok(checked.summary)
+    Ok(checked)
 }

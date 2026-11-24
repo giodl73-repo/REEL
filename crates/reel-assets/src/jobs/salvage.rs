@@ -76,6 +76,39 @@ fn quiescent(cfg: &Config, job: &str) -> Result<()> {
     }
     Ok(())
 }
+/// Resolve a named staging workspace against the configured cache roots and
+/// refuse while its admission or lease is present.
+pub fn quiescent_workspace<'a>(
+    cfg: &'a Config,
+    path: &Path,
+) -> Result<(&'a PathBuf, PathBuf, String)> {
+    if !cfg!(windows) || !path.is_absolute() {
+        return Err("Recovery requires Windows guards and an absolute workspace".into());
+    }
+    let parent = path
+        .parent()
+        .ok_or("Workspace parent missing")?
+        .canonicalize()?;
+    let mut roots = cfg.cache_roots.iter().filter(|root| {
+        root.canonicalize()
+            .is_ok_and(|r| parent == r.join("staging/caminos"))
+    });
+    let cache = roots.next().ok_or("Workspace outside admitted staging")?;
+    if roots.next().is_some() {
+        return Err("Ambiguous workspace enrollment".into());
+    }
+    let workspace = lifecycle::checked_workspace(cfg, cache, path)?;
+    let id = workspace
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or("Invalid workspace identity")?;
+    if id.len() > 100 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+        return Err("Invalid workspace identity".into());
+    }
+    quiescent(cfg, id)?;
+    let id = id.to_owned();
+    Ok((cache, workspace, id))
+}
 fn publish(
     root: &Path,
     cfg: &Config,
@@ -107,28 +140,7 @@ pub fn salvage_admitted(
         );
     }
     let cfg = context.config;
-    let parent = spec
-        .workspace
-        .parent()
-        .ok_or("Workspace parent missing")?
-        .canonicalize()?;
-    let mut roots = cfg.cache_roots.iter().filter(|root| {
-        root.canonicalize()
-            .is_ok_and(|r| parent == r.join("staging/caminos"))
-    });
-    let cache = roots.next().ok_or("Workspace outside admitted staging")?;
-    if roots.next().is_some() {
-        return Err("Ambiguous workspace enrollment".into());
-    }
-    let workspace = lifecycle::checked_workspace(cfg, cache, spec.workspace)?;
-    let id = workspace
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or("Invalid workspace identity")?;
-    if id.len() > 100 || !id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
-        return Err("Invalid workspace identity".into());
-    }
-    quiescent(cfg, id)?;
+    let (cache, workspace, id) = quiescent_workspace(cfg, spec.workspace)?;
     let before = snapshot_owned_workspace(cfg, cache, &workspace)?;
     let size = before.entries.values().try_fold(0u64, |sum, e| {
         sum.checked_add(e.bytes).ok_or("Workspace size overflow")
@@ -231,7 +243,7 @@ pub fn salvage_admitted(
     if snapshot_owned_workspace(cfg, cache, &workspace)? != before {
         return Err("Workspace changed during salvage inspection".into());
     }
-    quiescent(cfg, id)?;
+    quiescent(cfg, &id)?;
     if spec.apply {
         let _reservation = admission::reserve_on(root, cfg, cache, publish_bytes)?;
         for (name, object) in &outputs {
@@ -259,7 +271,7 @@ pub fn salvage_admitted(
         if snapshot_owned_workspace(cfg, cache, &workspace)? != before {
             return Err("Workspace changed before salvage retention".into());
         }
-        quiescent(cfg, id)?;
+        quiescent(cfg, &id)?;
         let registration =
             crate::Temporary(crate::unique(&root.join(".local"), &evidence_pin.sha256));
         let assets:Vec<_>=outputs.values().chain([&manifest_pin,&evidence_pin]).map(|o|json!({"sha256":o.sha256,"bytes":o.bytes,"cache_uri":format!("cache://sha256/{}",o.sha256),"provenance":"Explicit interrupted-job salvage; no execution attestation","rights":"Private job custody; upstream restrictions remain; no publication approval","selection_state":"retained-private-job-candidate"})).collect();
@@ -271,7 +283,7 @@ pub fn salvage_admitted(
         file.sync_all()?;
         drop(file);
         context.retention.retain(&RetainedJob {
-            id: id.into(),
+            id: id.clone(),
             succeeded: false,
             request: manifest_pin,
             evidence: evidence_pin,

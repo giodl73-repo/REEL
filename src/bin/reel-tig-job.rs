@@ -39,6 +39,22 @@ enum Operation {
     },
     /// Verify retained components and assemble an episode in admitted scratch.
     RunEpisode { profile: PathBuf },
+    /// Inspect a checked interrupted episode prefix for retention and replay.
+    DescribeEpisodeResume {
+        profile: PathBuf,
+        inspection: PathBuf,
+    },
+    /// Retain an interrupted episode's verified checkpoint evidence.
+    RetainEpisodeResume {
+        profile: PathBuf,
+        inspection: PathBuf,
+    },
+    /// Resume an interrupted episode from a retained checkpoint.
+    ResumeEpisode {
+        profile: PathBuf,
+        inspection: PathBuf,
+        retained: PathBuf,
+    },
     /// Verify retained components against primaries without assembling an episode.
     VerifyEpisode { profile: PathBuf },
     /// Freeze/read back complete episode resources without adopting or rendering.
@@ -129,6 +145,7 @@ fn main() -> ExitCode {
     let episode_job = matches!(
         &operation,
         Operation::RunEpisode { .. }
+            | Operation::ResumeEpisode { .. }
             | Operation::VerifyEpisode { .. }
             | Operation::RunFrozen { .. }
     );
@@ -158,6 +175,19 @@ fn main() -> ExitCode {
             reel::tig_job_runner::retire_workspace(&profile, apply)
         }
         Operation::RunEpisode { profile } => reel::tig_episode_cli::run(&profile),
+        Operation::DescribeEpisodeResume {
+            profile,
+            inspection,
+        } => reel::tig_episode_cli::describe_resume(&profile, &inspection),
+        Operation::RetainEpisodeResume {
+            profile,
+            inspection,
+        } => reel::tig_episode_cli::retain_resume(&profile, &inspection),
+        Operation::ResumeEpisode {
+            profile,
+            inspection,
+            retained,
+        } => reel::tig_episode_cli::resume_episode(&profile, &inspection, &retained),
         Operation::VerifyEpisode { profile } => reel::tig_episode_cli::verify_components(&profile),
         Operation::PrepareEpisode { profile, output } => {
             reel::tig_episode_cli::prepare(&profile, &output)

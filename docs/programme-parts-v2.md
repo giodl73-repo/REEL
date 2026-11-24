@@ -43,6 +43,43 @@ on trust at delivery: the finalizer requires complete coverage from zero and
 recomputes every global frame/sample boundary. Build ranges in order when the
 preceding counts are not already known from native evidence.
 
+For a subsequent range, stage the frozen manifest, the exact part proofs from
+zero through the completed prefix, and their compact video and PCM. Declare
+the prefix set in the staged job. Choose the next exclusive segment index,
+then write the resulting range JSON into the next job's declared controls.
+
+```
+reel-episode-conform next-part-range PREFIX-SET.json --asset-root PREFIX-WORKSPACE --end NEXT-EXCLUSIVE-INDEX
+```
+
+The command verifies the prefix against the current producer and media tools,
+checks its frame and sample clock, and prints the next range to standard
+output. A gap, a changed proof or part, or an end outside the existing range
+limits is refused. This command plans a range without rendering or changing
+assets. Finalization still requires complete coverage.
+
+On Windows, a `tig-publication` build can export a bounded producer recipe
+from the prepared range workspace. Declare the local media runtime binding
+alongside the manifest and range. The exporter verifies the declared workspace
+and pins the worker, FFmpeg, FFprobe and configured runtime dependencies.
+
+```
+reel-episode-conform describe-part-job REQUEST.json --asset-root RANGE-WORKSPACE
+```
+
+The request stays outside the workspace. It names three workspace-relative
+controls and sets the runner's byte and time limits explicitly.
+
+```json
+{"schema":"reel.programme-part-job-request.v1","manifest":"manifest.json","range":"range.json","runtime":"runtime.json","budget_bytes":67108864,"scratch_bytes":16777216,"timeout_seconds":180,"lossless_max_bytes":8388608,"video_max_bytes":8388608,"pcm_max_bytes":2097152}
+```
+
+These example budgets are for small fixtures. The output is a local job
+recipe on stdout. Supply its exact inputs and installed tools through the
+runner's resource authority, then admit it using the project's existing
+runner and retention policy. A successful runner receipt provides the retained
+pins for the next range or finalization. This exporter covers part production.
+
 Each producer emits `lossless-NNNNN.mkv`, video-only `video-NNNNN.mp4`, raw stereo
 PCM24 `audio-NNNNN.pcm`, and `part-proof.json`. The proof is distinct from a
 same-workspace preparation checkpoint. It binds the exact parent manifest,

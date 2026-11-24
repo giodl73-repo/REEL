@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+pub mod cue_scene;
 pub mod film_inspect;
 pub mod film_rebuild;
 pub mod film_repair;

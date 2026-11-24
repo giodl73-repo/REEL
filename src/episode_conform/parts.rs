@@ -6,9 +6,13 @@ use std::io::{Read, Write};
 const PROOF: &str = "reel.programme-part-proof.v2";
 pub const RECEIPT: &str = "reel.episode-conform-receipt.v2";
 mod composition;
+#[cfg(feature = "tig-publication")]
+mod job;
 pub use composition::{
     COMPOSED_FINALIZATION, COMPOSED_RECEIPT, ComposedReceipt, CompositionProvenance, compose,
 };
+#[cfg(feature = "tig-publication")]
+pub use job::describe_job;
 
 const PROFILE: &str = "h264-independent-crf-yuv420p-bf0-mp3-continuous.v1";
 
@@ -141,7 +145,11 @@ fn run(mut cmd: Command) -> Result<()> {
     Ok(())
 }
 fn video_signature(path: &Path) -> Result<serde_json::Value> {
-    let out = command("ffprobe")
+    video_signature_with(command("ffprobe"), path)
+}
+
+fn video_signature_with(mut ffprobe: Command, path: &Path) -> Result<serde_json::Value> {
+    let out = ffprobe
         .args([
             "-v",
             "error",
@@ -190,7 +198,13 @@ fn video_signature(path: &Path) -> Result<serde_json::Value> {
 }
 /// Full decoded frame clock and packet DTS/keyframe checks. BF=0 is deliberate.
 fn video_clock(path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
-    let out = command("ffprobe")
+    video_clock_with(command("ffprobe"), path, frames, n, d)
+}
+
+fn video_clock_with(mut ffprobe: Command, path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
+    use std::io::{BufRead, BufReader, Seek};
+    let mut packets = tempfile::tempfile()?;
+    let status = ffprobe
         .args([
             "-v",
             "error",
@@ -200,36 +214,40 @@ fn video_clock(path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
             "-show_entries",
             "packet=pts_time,dts_time,flags",
             "-of",
-            "json",
+            "csv=p=0",
         ])
         .arg(path)
-        .output()?;
-    if !out.status.success() {
+        .stdout(packets.try_clone()?)
+        .status()?;
+    if !status.success() {
         bail!("video packet clock probe failed");
     }
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    let packets = value["packets"]
-        .as_array()
-        .context("video packets missing")?;
-    if packets.len() as u64 != frames
-        || !packets[0]["flags"]
-            .as_str()
-            .unwrap_or_default()
-            .contains('K')
-    {
-        bail!("video packet coverage or random access missing");
-    }
-    for (i, packet) in packets.iter().enumerate() {
-        let expected = i as f64 * d as f64 / n as f64;
-        for key in ["pts_time", "dts_time"] {
-            let actual: f64 = packet[key]
-                .as_str()
-                .context("video clock missing")?
-                .parse()?;
+    packets.rewind()?;
+    let mut reader = BufReader::new(packets);
+    let mut row = String::new();
+    let mut count = 0;
+    while reader.read_line(&mut row)? != 0 {
+        let mut fields = row.trim_end().split(',');
+        let (Some(pts), Some(dts), Some(flags), None) =
+            (fields.next(), fields.next(), fields.next(), fields.next())
+        else {
+            bail!("invalid video packet clock row");
+        };
+        if count >= frames || (count == 0 && !flags.contains('K')) {
+            bail!("video packet coverage or random access missing");
+        }
+        let expected = count as f64 * d as f64 / n as f64;
+        for clock in [pts, dts] {
+            let actual: f64 = clock.parse()?;
             if !actual.is_finite() || (actual - expected).abs() > 0.000_002 {
                 bail!("video PTS/DTS discontinuity");
             }
         }
+        count += 1;
+        row.clear();
+    }
+    if count == 0 || count != frames {
+        bail!("video packet coverage or random access missing");
     }
     Ok(())
 }
@@ -238,7 +256,7 @@ fn video_clock(path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
 /// Offsets are explicit controls; finalization rejects any false offset/coverage.
 pub fn produce(manifest: &Path, assets: &Path, range: &Range, output: &Path) -> Result<()> {
     let scope = checkpoint::snapshot_job_scope(assets)?;
-    produce_scoped(manifest, assets, range, output, scope)
+    produce_scoped(manifest, assets, range, output, scope, None)
 }
 
 fn produce_scoped(
@@ -247,12 +265,17 @@ fn produce_scoped(
     range: &Range,
     output: &Path,
     scope: Vec<scene_delivery::FileRef>,
+    programs: Option<&dyn scene_delivery::InputFiles>,
 ) -> Result<()> {
-    build_internal(
+    build_internal_with_inputs(
         manifest,
         assets,
         assets,
         output,
+        Provided {
+            programs,
+            ..Provided::default()
+        },
         Some(scope),
         None,
         Some(range),
@@ -267,6 +290,28 @@ pub fn produce_from_file(
     range: &Path,
     output: &Path,
 ) -> Result<()> {
+    produce_file(manifest, assets, range, output, None)
+}
+
+/// The closed job declares its runtime control and retains the bound tools
+/// for the entire part render and proof issuance.
+pub fn produce_from_file_with_runtime(
+    manifest: &Path,
+    assets: &Path,
+    range: &Path,
+    output: &Path,
+    runtime: &Path,
+) -> Result<()> {
+    produce_file(manifest, assets, range, output, Some(runtime))
+}
+
+fn produce_file(
+    manifest: &Path,
+    assets: &Path,
+    range: &Path,
+    output: &Path,
+    runtime: Option<&Path>,
+) -> Result<()> {
     let scope = checkpoint::snapshot_job_scope(assets)?;
     let reference = declared_control(range, assets, &scope)?;
     let mut raw = Vec::new();
@@ -278,7 +323,33 @@ pub fn produce_from_file(
         bail!("programme range differs from declared control");
     }
     let range: Range = serde_json::from_slice(&raw)?;
-    produce_scoped(manifest, assets, &range, output, scope)
+    let bound = runtime
+        .map(|path| -> Result<_> {
+            let pin = declared_control(path, assets, &scope)?;
+            if pin.bytes > 64 * 1024 {
+                bail!("programme runtime control exceeds bound");
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(path)?
+                .take(pin.bytes + 1)
+                .read_to_end(&mut bytes)?;
+            if bytes.len() as u64 != pin.bytes || sha(&bytes) != pin.sha256 {
+                bail!("programme runtime differs from declared control");
+            }
+            crate::media_runtime::BoundPrograms::bind(&serde_json::from_slice(&bytes)?)
+        })
+        .transpose()?;
+    let programs = bound.as_ref().map(|tools| tools.with_inputs(assets));
+    produce_scoped(
+        manifest,
+        assets,
+        &range,
+        output,
+        scope,
+        programs
+            .as_ref()
+            .map(|programs| programs as &dyn scene_delivery::InputFiles),
+    )
 }
 
 pub(super) fn declared_control<'a>(
@@ -296,6 +367,40 @@ pub(super) fn declared_control<'a>(
         .context("undeclared programme control")
 }
 
+const MAX_PART_CONTROL_BYTES: u64 = 4 * 1024 * 1024;
+
+fn read_part_control(path: &Path, pin: &scene_delivery::FileRef) -> Result<Vec<u8>> {
+    if pin.bytes > MAX_PART_CONTROL_BYTES {
+        bail!("programme part control exceeds byte bound");
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(path)?
+        .take(pin.bytes + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 != pin.bytes || sha(&bytes) != pin.sha256 {
+        bail!("programme part control differs from declared bytes");
+    }
+    Ok(bytes)
+}
+
+fn read_part_set(
+    path: &Path,
+    root: &Path,
+    scope: &[scene_delivery::FileRef],
+) -> Result<(PartSet, Vec<u8>)> {
+    let set: PartSet = serde_json::from_slice(&read_part_control(
+        path,
+        declared_control(path, root, scope)?,
+    )?)?;
+    let manifest_path = root.join(&set.manifest.path);
+    let declared_manifest = declared_control(&manifest_path, root, scope)?;
+    if declared_manifest != &set.manifest {
+        bail!("programme manifest differs from declared scope");
+    }
+    let bytes = read_part_control(&manifest_path, declared_manifest)?;
+    Ok((set, bytes))
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn publish(
     range: &Range,
@@ -306,13 +411,17 @@ pub(super) fn publish(
     work: &Path,
     assets: &Path,
     scope: &[scene_delivery::FileRef],
+    programs: &dyn scene_delivery::InputFiles,
 ) -> Result<()> {
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
     let profile = compact_profile(&manifest)?;
     // The shared engine's common geometry facts can retain the *input* sample
     // rate when a bounded range begins with a resampled source. Portable facts
     // describe the actual normalized output, never that input clock.
-    let normalized_facts = probe(normalized.first().context("empty normalized range")?)?;
+    let normalized_facts = probe_with_inputs(
+        normalized.first().context("empty normalized range")?,
+        programs,
+    )?;
     if (
         normalized_facts.width,
         normalized_facts.height,
@@ -329,8 +438,8 @@ pub(super) fn publish(
         let index = range.start + offset;
         // These are freshly checked in this bounded producer; finalizers consume
         // the resulting immutable proof without opening the lossless cache object.
-        let picture = decoded_digest(lossless, true)?;
-        let audio = decoded_digest(lossless, false)?;
+        let picture = decoded_digest_with_inputs(lossless, true, programs)?;
+        let audio = decoded_digest_with_inputs(lossless, false, programs)?;
         if picture.0 != native.decoded_picture_sha256
             || picture.1 != native.frames * facts.width * facts.height * 3
             || audio.0 != native.decoded_audio_sha256
@@ -338,12 +447,18 @@ pub(super) fn publish(
         {
             bail!("normalized part changed before proof issuance");
         }
-        episode_delivery::verify_timestamps(lossless, manifest.output_sample_rate, n, d)?;
+        episode_delivery::verify_timestamps_with_inputs(
+            lossless,
+            manifest.output_sample_rate,
+            n,
+            d,
+            programs,
+        )?;
         let lossless_name = format!("lossless-{index:05}.mkv");
         fs::copy(lossless, work.join(&lossless_name))?;
         let video_name = format!("video-{index:05}.mp4");
         let pcm_name = format!("audio-{index:05}.pcm");
-        let mut cmd = command("ffmpeg");
+        let mut cmd = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
         cmd.args(["-v", "error", "-nostdin", "-i"])
             .arg(lossless)
             .args(["-map", "0:v:0", "-an", "-c:v", "libx264", "-crf"])
@@ -371,7 +486,7 @@ pub(super) fn publish(
         }
         cmd.arg(work.join(&video_name));
         run(cmd)?;
-        let mut cmd = command("ffmpeg");
+        let mut cmd = command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?;
         cmd.args(["-v", "error", "-nostdin", "-i"])
             .arg(lossless)
             .args(["-map", "0:a:0", "-vn", "-c:a", "pcm_s24le", "-f", "s24le"])
@@ -381,7 +496,8 @@ pub(super) fn publish(
         if pcm.sha256 != native.decoded_audio_sha256 || pcm.bytes != native.samples * 6 {
             bail!("exported PCM differs from exact lossless audio");
         }
-        let compact = crate::decoded_video_hash::hash(
+        let compact = crate::decoded_video_hash::hash_with_command(
+            command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?,
             &work.join(&video_name),
             "yuv420p",
             None,
@@ -390,7 +506,13 @@ pub(super) fn publish(
         if compact.bytes != native.frames * facts.width * facts.height * 3 / 2 {
             bail!("compact video count mismatch");
         }
-        video_clock(&work.join(&video_name), native.frames, n, d)?;
+        video_clock_with(
+            command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?,
+            &work.join(&video_name),
+            native.frames,
+            n,
+            d,
+        )?;
         let file = reference(work, &lossless_name)?;
         parts.push(Part {
             index,
@@ -402,7 +524,10 @@ pub(super) fn publish(
             video: reference(work, &video_name)?,
             pcm,
             compact_yuv420_sha256: compact.values[0].clone(),
-            video_signature: video_signature(&work.join(&video_name))?,
+            video_signature: video_signature_with(
+                command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?,
+                &work.join(&video_name),
+            )?,
         });
     }
     for source in scope {
@@ -417,8 +542,12 @@ pub(super) fn publish(
         crf: profile.crf,
         audio_bitrate_kbps: profile.audio_bitrate_kbps,
         validator_sha256: file_sha(&std::env::current_exe()?)?,
-        ffmpeg_sha256: checkpoint::tool_hash("ffmpeg")?,
-        ffprobe_sha256: checkpoint::tool_hash("ffprobe")?,
+        ffmpeg_sha256: file_sha(Path::new(
+            command_with_inputs(programs, scene_delivery::MediaProgram::Ffmpeg)?.get_program(),
+        ))?,
+        ffprobe_sha256: file_sha(Path::new(
+            command_with_inputs(programs, scene_delivery::MediaProgram::Ffprobe)?.get_program(),
+        ))?,
         producer_job_sha256: file_sha(&assets.join("job.json"))?,
         source_scope: scope.to_vec(),
         range: serde_json::from_value(serde_json::to_value(range)?)?,
@@ -438,6 +567,7 @@ fn checked_proofs(set: &PartSet, root: &Path, manifest_bytes: &[u8]) -> Result<V
         root,
         manifest_bytes,
         &file_sha(&std::env::current_exe()?)?,
+        true,
     )
 }
 
@@ -448,6 +578,7 @@ fn checked_source_proofs(
     root: &Path,
     manifest_bytes: &[u8],
     validator: &str,
+    require_complete: bool,
 ) -> Result<Vec<Proof>> {
     let manifest: Manifest = serde_json::from_slice(manifest_bytes)?;
     let profile = compact_profile(&manifest)?;
@@ -463,11 +594,11 @@ fn checked_source_proofs(
     let mut signature = None;
     let mut proofs = Vec::new();
     for item in &set.proofs {
-        if item.bytes > 4 * 1024 * 1024 {
+        if item.bytes > MAX_PART_CONTROL_BYTES {
             bail!("portable part proof too large");
         }
-        let proof: Proof =
-            serde_json::from_slice(&fs::read(scene_delivery::checked_file(root, item)?)?)?;
+        let path = scene_delivery::checked_file(root, item)?;
+        let proof: Proof = serde_json::from_slice(&read_part_control(&path, item)?)?;
         proof.range.validate(&manifest)?;
         if proof.schema != PROOF
             || proof.manifest_sha256 != sha(manifest_bytes)
@@ -665,7 +796,7 @@ fn checked_source_proofs(
         }
         proofs.push(proof);
     }
-    if index != manifest.segments.len() {
+    if require_complete && index != manifest.segments.len() {
         bail!("incomplete programme part coverage");
     }
     Ok(proofs)
@@ -709,6 +840,39 @@ fn prepare_originals(proofs: &[Proof]) -> Result<Vec<PreparedPart>> {
         .collect()
 }
 
+/// Derive the exact exclusive next range from an explicitly declared,
+/// contiguous prefix. Uses the same checked evidence as part finalization.
+pub fn next_range(set_path: &Path, root: &Path, end: usize) -> Result<Range> {
+    let scope = checkpoint::snapshot_job_scope(root)?;
+    let (set, bytes) = read_part_set(set_path, root, &scope)?;
+    let manifest: Manifest = serde_json::from_slice(&bytes)?;
+    let proofs = checked_source_proofs(
+        &set,
+        root,
+        &bytes,
+        &file_sha(&std::env::current_exe()?)?,
+        false,
+    )?;
+    let last = proofs.last().context("programme prefix missing")?;
+    let part = last.parts.last().context("programme prefix has no parts")?;
+    let range = Range {
+        start: last.range.end,
+        end,
+        start_frame: part
+            .native
+            .start_frame
+            .checked_add(part.native.frames)
+            .context("next range frame overflow")?,
+        start_sample: part
+            .native
+            .start_sample
+            .checked_add(part.native.samples)
+            .context("next range sample overflow")?,
+    };
+    range.validate(&manifest)?;
+    Ok(range)
+}
+
 /// Finalize only explicitly declared compact/PCM/proof/control inputs in a new
 /// job. Original lossless parts remain immutable lifecycle dependencies.
 pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> {
@@ -716,12 +880,7 @@ pub fn finalize(set_path: &Path, root: &Path, output: &Path) -> Result<Receipt> 
         bail!("programme output must be a new directory");
     }
     let scope = checkpoint::snapshot_job_scope(root)?;
-    declared_control(set_path, root, &scope)?;
-    if fs::metadata(set_path)?.len() > 4 * 1024 * 1024 {
-        bail!("programme part set too large");
-    }
-    let set: PartSet = serde_json::from_slice(&fs::read(set_path)?)?;
-    let bytes = fs::read(scene_delivery::checked_file(root, &set.manifest)?)?;
+    let (set, bytes) = read_part_set(set_path, root, &scope)?;
     let proofs = checked_proofs(&set, root, &bytes)?;
     let prepared = prepare_originals(&proofs)?;
     finalize_checked(root, output, &bytes, &prepared, &set.proofs, None)
@@ -949,6 +1108,7 @@ fn finalize_checked(
 }
 
 fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
+    use std::io::{BufRead, BufReader, Seek};
     let out = command("ffprobe")
         .args([
             "-v",
@@ -956,8 +1116,9 @@ fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
             "-select_streams",
             "a:0",
             "-show_streams",
-            "-show_frames",
             "-show_format",
+            "-show_entries",
+            "stream=codec_name,sample_rate,channels:format=duration",
             "-of",
             "json",
         ])
@@ -974,27 +1135,56 @@ fn verify_mp3(path: &Path, rate: u32, samples: u64) -> Result<()> {
     {
         bail!("final audio is not selected stereo MP3");
     }
+    let mut frames = tempfile::tempfile()?;
+    let status = command("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_frames",
+            "-show_entries",
+            "frame=best_effort_timestamp_time,nb_samples",
+            "-of",
+            "compact",
+        ])
+        .arg(path)
+        .stdout(frames.try_clone()?)
+        .status()?;
+    if !status.success() {
+        bail!("MP3 frame probe failed");
+    }
+    frames.rewind()?;
+    let mut reader = BufReader::new(frames);
+    let mut row = String::new();
     let mut cursor = 0u64;
-    for frame in value["frames"]
-        .as_array()
-        .context("MP3 decoded frames missing")?
-    {
-        let time: f64 = frame["best_effort_timestamp_time"]
-            .as_str()
-            .context("MP3 timestamp missing")?
-            .parse()?;
+    while reader.read_line(&mut row)? != 0 {
+        let mut fields = row.trim_end().split('|');
+        if fields.next() != Some("frame") {
+            bail!("invalid MP3 frame row");
+        }
+        let mut time = None;
+        let mut frame_samples = None;
+        for field in fields {
+            if let Some(value) = field.strip_prefix("best_effort_timestamp_time=") {
+                time = Some(value.parse::<f64>()?);
+            } else if let Some(value) = field.strip_prefix("nb_samples=") {
+                frame_samples = Some(value.parse::<u64>()?);
+            }
+        }
+        let time = time.context("MP3 timestamp missing")?;
         if !time.is_finite() || (time - cursor as f64 / f64::from(rate)).abs() > 0.002 {
             bail!("MP3 priming/clock discontinuity");
         }
         cursor = cursor
-            .checked_add(
-                frame["nb_samples"]
-                    .as_u64()
-                    .context("MP3 samples missing")?,
-            )
+            .checked_add(frame_samples.context("MP3 samples missing")?)
             .context("MP3 count overflow")?;
+        if cursor.saturating_sub(samples) > 2304 {
+            bail!("MP3 decoded endpoint outside codec tail bound");
+        }
+        row.clear();
     }
-    if cursor < samples || cursor - samples > 2304 {
+    if cursor == 0 || cursor < samples {
         bail!("MP3 decoded endpoint outside codec tail bound");
     }
     let duration: f64 = value["format"]["duration"]

@@ -43,7 +43,7 @@ impl PcmWindow {
 /// Read the complete normalized source, including the unselected suffix, so a
 /// truncated/excess source cannot pass as the declared original. The caller owns
 /// output retirement on error and provides cancellation/deadline checks.
-#[cfg(any(all(windows, feature = "tig-history"), test))]
+#[cfg(any(all(windows, feature = "tig-publication"), test))]
 pub(crate) fn transform(
     input: impl Read,
     output: impl Write,

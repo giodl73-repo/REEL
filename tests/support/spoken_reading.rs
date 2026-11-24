@@ -77,7 +77,7 @@ impl ReadingFixture {
         }
         Self::from_fixture(f)
     }
-    fn from_fixture(f: Fixture) -> Self {
+    pub(super) fn from_fixture(f: Fixture) -> Self {
         let root = f.temp.path().to_path_buf();
         let runtime = producer::current_runtime().unwrap();
         let producer_pin = FileRef {
@@ -113,7 +113,12 @@ impl ReadingFixture {
         )
         .unwrap();
         let access = root.join("access");
-        checker::write_access(&mut checked, &access, || Ok(())).unwrap();
+        if access.exists() {
+            let manifest = fs::read(access.join("access.json")).unwrap();
+            checker::verify_access(&mut checked, &manifest, &access, || Ok(())).unwrap();
+        } else {
+            checker::write_access(&mut checked, &access, || Ok(())).unwrap();
+        }
         let (font, family) = [
             ("C:/Windows/Fonts/arial.ttf", "Arial"),
             (
@@ -265,7 +270,7 @@ impl ReadingFixture {
         reading::prepare(self.request.clone(), self.inputs(), Duration::from_secs(30))
     }
 }
-fn publish(prepared: &reading::Prepared<'_>, output: &Path) -> Result<reading::Summary> {
+pub(super) fn publish(prepared: &reading::Prepared<'_>, output: &Path) -> Result<reading::Summary> {
     reading::produce(
         prepared,
         output,

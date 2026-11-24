@@ -77,3 +77,91 @@ assembly, M04 independently checks media and matching text, and M05 proves
 retention/selective invalidation through admitted asset interfaces. Real
 language, word-fidelity, naturalness, authority and delivery decisions retain
 their separate gates throughout.
+
+Compare two staged revisions of the same declaration after a take selection
+changes. The compiler resolves alignment evidence beside each declaration.
+
+```sh
+reel spoken-edition-impact previous/edition.json current/edition.json --profile spoken
+```
+
+The private report gives exact consumed recipe hashes and one action per
+edition. `build` identifies a new edition, `rebuild` a changed recipe and
+`removed` an edition absent from the current declaration. `reuse` is eligible
+when a prior checked, retained result matches the current recipe and delivery
+settings. The report opens alignment metadata and writes no media or selections.
+
+Pass each affected edition to `spoken-edition-compile` with
+`--select-edition EDITION_ID`. Production and independent checking replay that
+scope from the compiled plan. They read audio only for the included editions.
+Keep the full declaration and its alignment metadata available so the compiler
+can validate reuse scope, authorship and dependencies. Supply any processing
+policy for the included editions. The checker can write the transcript and
+chapter evidence with `--write-access`.
+
+For managed execution, a `tig-publication` build can describe the selected
+compile, produce and check steps as one asset-runner recipe.
+
+```sh
+reel spoken-edition-describe-job request.json --asset-root WORKSPACE
+```
+
+The request uses `reel.spoken-workflow-job.v1` and names the workspace-relative
+`declaration` and optional `processing` control. Supply `profile`,
+`budget_bytes`, `scratch_bytes`, and `expected_editions` mapping affected
+edition IDs to their current recipe hashes from the impact report.
+
+The exporter checks those hashes against a freshly compiled plan and emits the
+recipe on stdout. Register its exact inputs and installed worker with the
+project's existing runner before admission. On success the runner retains the
+compiled plan, production receipt, audio, transcripts and access manifest with
+chapter clocks. An unchanged edition still needs its prior checked output and
+exact custody evidence before reuse.
+
+`reel spoken-edition-plan-rebuild REQUEST --previous-root PREVIOUS
+--asset-root CURRENT` combines impact and recipe export for a take replacement.
+Use schema `reel.spoken-workflow-rebuild.v1` with workspace-relative
+`previous` and `declaration`, optional `processing`, `profile`,
+`budget_bytes` and `scratch_bytes`. The report contains the impact and a
+`job` for new or changed editions. With no such editions, `job` is null.
+The planner leaves runner admission and verified reuse to the caller.
+
+With the required inputs and worker already registered, dispatch the approved
+job using the planner's `job_sha256`:
+
+```sh
+reel spoken-edition-dispatch-rebuild REQUEST --previous-root PREVIOUS \
+  --asset-root CURRENT --project PROJECT --job-sha256 HASH --dispatch NEW_DIRECTORY
+```
+
+The caller supplies a new directory for this attempt. It holds the exact
+`recipe.json` and, on success, `result.json`. Feed that result and the
+reported `result_sha256` into `bind-spoken-result`. If an interruption
+leaves the directory without a result, use the original recipe and runner
+evidence to reconcile the attempt before dispatching again.
+
+Build a private review board with `reel-workflow-ui project-spoken REQUEST
+SHA256 NEW_BOARD`. The `reel.workflow-spoken-board.v1` request names the
+`project`, `work_id`, `title`, `source_commit` and `bundles` to display.
+Each bundle supplies the `path` and `sha256` of its retained access manifest,
+and a `waves` map keyed by the edition IDs to include. Each entry binds
+`compiled_recipe_sha256`, `execution_recipe_sha256` and a normal board
+`media` binding for the exact WAV. Supply separate bundles when new and
+reused editions have different access manifests.
+
+On Windows the existing private viewer plays the WAV and seeks to chapter
+boundaries. It verifies preview bytes when requested. The projection checks
+manifest and recipe pins and records no approval or native retained ownership.
+
+For jobs run against the local asset registry, generate one bundle binding
+from the successful runner result and the exact expected edition recipes:
+
+```sh
+reel-workflow-ui bind-spoken-result PROJECT RESULT RESULT_SHA256 EXPECTED EXPECTED_SHA256
+```
+
+`EXPECTED` maps edition IDs to their compiled and execution recipe hashes.
+The adapter reopens registered active objects from the project's configured
+storage and checks the linked audio and transcripts against the access manifest.
+Use the emitted binding in `bundles`. Native Git-asset retained-owner
+acknowledgements require their own adapter.

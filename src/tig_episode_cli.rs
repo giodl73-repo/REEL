@@ -31,6 +31,7 @@ use tig_store::{
     metadata::{Checkpoint, MetadataReader, MetadataStore},
     source_claims::{self, Command, Selection, SourceJournal},
 };
+mod checkpoint_retention;
 mod handoff;
 mod planning;
 mod preparation;
@@ -148,6 +149,10 @@ struct Profile {
     operation: String,
     budget_bytes: u64,
     scratch_bytes: u64,
+    #[serde(default)]
+    preserve_workspace_on_failure: bool,
+    #[serde(default)]
+    pause_after_normalized_segments: Option<usize>,
     timeout_seconds: u64,
     reference_staging_bytes: u64,
     reference_picture_processes: u16,
@@ -171,6 +176,10 @@ struct Ticket {
     resources: Selection,
     root_revision: u64,
     recipe: Digest,
+    #[serde(default)]
+    preserve_workspace_on_failure: bool,
+    #[serde(default)]
+    pause_after_normalized_segments: Option<usize>,
     reference_staging_bytes: u64,
     reference_picture_processes: u16,
     timeout_seconds: u64,
@@ -283,6 +292,11 @@ fn validate(p: &Profile) -> Result<()> {
         || !p.metadata_root.is_absolute()
         || !p.journal_root.is_absolute()
         || !(1..=runner::MAX_STEP_TIMEOUT_SECONDS).contains(&p.timeout_seconds)
+        || p.pause_after_normalized_segments.is_some_and(|count| {
+            !p.preserve_workspace_on_failure
+                || p.inputs.purpose != Purpose::Assemble
+                || !(1..=2047).contains(&count)
+        })
         || p.reference_staging_bytes == 0
         || p.reference_staging_bytes > p.scratch_bytes
         || !(2..=130).contains(&p.reference_picture_processes)
@@ -319,6 +333,123 @@ fn validate(p: &Profile) -> Result<()> {
 
 /// Explicit execution only. Uses existing stores and runner admission; never
 /// initializes caches, changes project bindings or silently approves outputs.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ResumeInspection {
+    workspace: PathBuf,
+    request: Object,
+    ticket: Object,
+    completed: usize,
+}
+
+/// Inspect one explicitly named interrupted workspace. No publication or
+/// mutation is performed, even if the full prefix is available.
+pub fn describe_resume(profile: &Path, inspection: &Path) -> Result<Value> {
+    let p: Profile = read(profile, 256 * 1024, None)?;
+    let requested: ResumeInspection = read(inspection, 65536, None)?;
+    if !p.preserve_workspace_on_failure || p.inputs.purpose != Purpose::Assemble {
+        bail!("episode resume inspection requires checkpoint-enabled assembly");
+    }
+    let (cache, workspace, id) = runner::quiescent_workspace(&p.cache, &requested.workspace)
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let guard =
+        runner::open_workspace_directory(&workspace).map_err(|error| anyhow::anyhow!("{error}"))?;
+    let before = runner::snapshot_owned_workspace(&p.cache, cache, guard.path())
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    let request: Value = read(
+        &workspace.join("job.json"),
+        256 * 1024,
+        Some(&requested.request),
+    )?;
+    let ticket: Ticket = read(
+        &workspace.join("episode-ticket.json"),
+        65536,
+        Some(&requested.ticket),
+    )?;
+    if ticket.schema != TICKET
+        || !ticket.preserve_workspace_on_failure
+        || ticket.pause_after_normalized_segments != p.pause_after_normalized_segments
+        || request["preserve_workspace_on_failure"] != true
+        || ticket.source_id != p.source_id
+        || ticket.owner != p.owner
+        || ticket.operation != p.operation
+        || ticket.journal_root != p.journal_root
+        || ticket.metadata_root != p.metadata_root
+        || serde_json::to_value(&ticket.inputs)? != serde_json::to_value(&p.inputs)?
+        || request["files"]["episode-ticket.json"]
+            .as_str()
+            .is_none_or(|raw| Object::from_bytes(raw.as_bytes()) != requested.ticket)
+    {
+        bail!("episode resume workspace does not belong to this request and ticket");
+    }
+    let mut journal = SourceJournal::open(&p.journal_root, &ticket.journal_minimum)?;
+    worker::check(&ticket, &mut journal)?;
+    let prefix = crate::episode_conform::describe_native_prefix(
+        &workspace.join("native-normalization"),
+        requested.ticket.sha256.as_str(),
+        requested.completed,
+    )?;
+    let after = runner::snapshot_owned_workspace(&p.cache, cache, guard.path())
+        .map_err(|error| anyhow::anyhow!("{error}"))?;
+    if before != after {
+        bail!("episode resume workspace changed during inspection");
+    }
+    worker::check(&ticket, &mut journal)?;
+    let marker = json!({
+        "schema":"reel.native-episode-normalization-prefix.v1",
+        "ticket":requested.ticket,
+        "segments":prefix.segments
+    });
+    let marker_bytes = identity::canonical_json(&marker)?;
+    if marker_bytes.len() > 256 * 1024 {
+        bail!("native episode recovery marker exceeds intake bound");
+    }
+    let marker_path = "native-normalization/resume.json";
+    let mut seeds = BTreeMap::new();
+    for (path, file) in prefix.files {
+        let name = Path::new("native-normalization").join(path);
+        let name = name
+            .to_str()
+            .context("non-UTF8 checkpoint seed path")?
+            .replace('\\', "/");
+        seeds.insert(name, json!({"sha256":file.sha256,"bytes":file.bytes}));
+    }
+    let marker_pin = Object::from_bytes(&marker_bytes);
+    if seeds
+        .insert(marker_path.to_owned(), serde_json::to_value(&marker_pin)?)
+        .is_some()
+    {
+        bail!("native checkpoint seed collides with its prefix marker");
+    }
+    let descriptor = json!({
+        "schema":"reel.native-job-resume.v1",
+        "job_sha256":requested.request.sha256,
+        "source_job_id":id,
+        "start_step":0,
+        "files":seeds
+    });
+    if identity::canonical_json(&descriptor)?.len() > 256 * 1024 {
+        bail!("native episode recovery descriptor exceeds runner intake bound");
+    }
+    Ok(json!({
+        "schema":"reel.native-episode-resume-inspection.v1",
+        "request":requested.request,
+        "marker":{"path":marker_path,"object":marker_pin,
+            "utf8":std::str::from_utf8(&marker_bytes)?},
+        "descriptor":descriptor,
+        "retained":false,
+        "workspace_retained":true
+    }))
+}
+
+pub fn retain_resume(profile: &Path, inspection: &Path) -> Result<Value> {
+    checkpoint_retention::retain(profile, inspection)
+}
+
+pub fn resume_episode(profile: &Path, inspection: &Path, retained: &Path) -> Result<Value> {
+    checkpoint_retention::resume(profile, inspection, retained)
+}
+
 pub fn run(path: &Path) -> Result<Value> {
     run_for(path, Purpose::Assemble)
 }
@@ -454,6 +585,12 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     if let Some(pool) = &reused_children {
         ticket["reused_children"] = serde_json::to_value(pool)?;
     }
+    if p.preserve_workspace_on_failure && purpose == Purpose::Assemble {
+        ticket["preserve_workspace_on_failure"] = json!(true);
+    }
+    if let Some(count) = p.pause_after_normalized_segments {
+        ticket["pause_after_normalized_segments"] = json!(count);
+    }
     let ticket = identity::canonical_json(&ticket)?;
     if ticket.len() > 65536 {
         bail!("episode worker ticket exceeds budget");
@@ -479,12 +616,14 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     for (name, max) in records::limits(&p.inputs)? {
         outputs.insert(name.clone(), json!({"path":name,"max_bytes":max}));
     }
-    let request = identity::canonical_json(
-        &json!({"output_count_limit":256,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
+    let mut request = json!({"output_count_limit":256,"budget_bytes":p.budget_bytes,"scratch_bytes":p.scratch_bytes,"step_timeout_limit_seconds":p.timeout_seconds,
         "inputs":{},"tools":{},"installed_tools":{"worker":{"path":std::env::current_exe()?.canonicalize()?,"sha256":p.inputs.runtime.host.sha256,"bytes":p.inputs.runtime.host.bytes}},
         "files":{"episode-ticket.json":std::str::from_utf8(&ticket)?},"prepare_output_parents":false,
-        "steps":[{"tool":"worker","args":["episode-worker","episode-ticket.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":p.timeout_seconds}],"outputs":outputs}),
-    )?;
+        "steps":[{"tool":"worker","args":["episode-worker","episode-ticket.json","--sha256",ticket_pin.sha256,"--bytes",ticket_pin.bytes.to_string()],"timeout_seconds":p.timeout_seconds}],"outputs":outputs});
+    if p.preserve_workspace_on_failure && purpose == Purpose::Assemble {
+        request["preserve_workspace_on_failure"] = json!(true);
+    }
+    let request = identity::canonical_json(&request)?;
     runner::check_request(&request)
         .map_err(|error| anyhow::anyhow!("episode runner admission: {error}"))?;
     // Explicit request validation precedes source-journal adoption.
@@ -532,10 +671,56 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
             tree_limits: TreeLimits::default(),
         },
     );
+    finish_run(
+        &p,
+        purpose,
+        &mut journal,
+        result,
+        Object::from_bytes(&request),
+        ticket_pin,
+    )
+}
+
+fn finish_run(
+    p: &Profile,
+    purpose: Purpose,
+    journal: &mut SourceJournal,
+    result: Result<Value>,
+    request: Object,
+    ticket_pin: Object,
+) -> Result<Value> {
+    if let Some(preserved) = result
+        .as_ref()
+        .err()
+        .and_then(|error| error.downcast_ref::<runner::WorkspacePreserved>())
+    {
+        // Retention has not moved the source selection. Preserve the original
+        // root and temporary component owners for explicit recovery.
+        return Ok(json!({
+            "schema":"reel.tig-episode-job-result.experimental-1",
+            "succeeded":false,
+            "result":{
+                "schema":"reel.failed-job-result.v1",
+                "error":preserved.to_string(),
+                "job_id":preserved.job_id(),
+                "request":request,
+                "ticket":ticket_pin,
+                "workspace_retained":true,
+                "outputs":{},
+                "production_claim":null
+            },
+            "journal_checkpoint":journal.checkpoint(),
+            "production_claim":null,
+            "approval":false,
+            "bindings_changed":false,
+            "handoff":null,
+            "temporary_owner_cleanup_required":true
+        }));
+    }
     // A contained worker failure still returns an error after its diagnostic
     // result was durably retained. Cleanup follows that authoritative retained
     // outcome, never the presence/absence of a success report or error wording.
-    let handoff = handoff::finish(&p, &mut journal).with_context(|| {
+    let handoff = handoff::finish(p, journal).with_context(|| {
         result.as_ref().err().map_or_else(
             || "episode retained-context handoff incomplete".to_owned(),
             |error| {

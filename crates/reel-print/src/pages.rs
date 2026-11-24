@@ -49,7 +49,7 @@ impl Fonts {
         }
         Ok(Self { options, body })
     }
-    fn width(&self, value: &str, size: f32) -> Result<f32> {
+    pub(crate) fn width(&self, value: &str, size: f32) -> Result<f32> {
         self.options
             .fontdb
             .with_face_data(self.body, |raw, index| -> Result<f32> {
@@ -117,6 +117,24 @@ impl Fonts {
             &mut pixmap.as_mut(),
         );
         Ok((pdf, pixmap.encode_png()?))
+    }
+
+    pub(crate) fn transparent(&self, svg: &str) -> Result<resvg::tiny_skia::Pixmap> {
+        self.glyphs(svg)?;
+        let tree = usvg::Tree::from_str(svg, &self.options)?;
+        let size = tree.size().to_int_size();
+        ensure!(
+            size.width() <= 2048 && size.height() <= 2048,
+            "overlay dimensions exceed bound"
+        );
+        let mut pixels = resvg::tiny_skia::Pixmap::new(size.width(), size.height())
+            .context("overlay allocation failed")?;
+        resvg::render(
+            &tree,
+            resvg::tiny_skia::Transform::identity(),
+            &mut pixels.as_mut(),
+        );
+        Ok(pixels)
     }
 }
 pub(crate) fn escape(value: &str) -> String {

@@ -39,6 +39,7 @@ pub struct ApprovalReference {
 pub enum Format {
     Film,
     Comic,
+    Spoken,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -65,6 +66,8 @@ pub struct Unit {
     pub spans: Vec<Span>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review_spans: Vec<ReviewSpan>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub review_targets: Vec<String>,
     #[serde(default)]
     pub task: Option<String>,
 }
@@ -323,6 +326,10 @@ impl Board {
                 || !text(&unit.title, 256)
                 || unit.versions.len() > 32
                 || unit.spans.len() > 256
+                || unit.review_targets.len() > 256
+                || unit.review_targets.iter().any(|target| !id(target))
+                || unit.review_targets.iter().collect::<BTreeSet<_>>().len()
+                    != unit.review_targets.len()
                 || unit
                     .task
                     .as_ref()

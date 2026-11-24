@@ -29,6 +29,8 @@ type NativeScenes<'a> =
 #[cfg(not(feature = "tig-publication"))]
 type NativeScenes<'a> = BTreeMap<String, &'a ()>;
 mod checkpoint;
+#[cfg(feature = "tig-publication")]
+pub(crate) use checkpoint::describe_native_prefix;
 pub mod parts;
 
 pub const SCHEMA: &str = "reel.episode-conform.v1";
@@ -624,7 +626,7 @@ pub struct PresentationVerificationCache {
     pub policy: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MediaFacts {
     pub requires_lossless_normalization: bool,
@@ -889,6 +891,7 @@ fn probe_segment(
     })
 }
 
+#[cfg(test)]
 fn decoded_digest(path: &Path, video: bool) -> Result<(String, u64)> {
     decoded_digest_with_padding(path, video, 0)
 }
@@ -901,6 +904,7 @@ pub(crate) fn decoded_digest_with_inputs(
     decoded_digest_with_options(path, video, 0, None, "yuv444p", inputs)
 }
 
+#[cfg(test)]
 fn decoded_digest_with_padding(
     path: &Path,
     video: bool,
@@ -909,6 +913,7 @@ fn decoded_digest_with_padding(
     decoded_digest_with_filter(path, video, padding_samples, None)
 }
 
+#[cfg(test)]
 fn decoded_digest_with_filter(
     path: &Path,
     video: bool,
@@ -995,6 +1000,7 @@ mod color_declaration_tests {
     }
 }
 
+#[cfg(test)]
 fn decoded_digest_with_pixel_format(
     path: &Path,
     video: bool,
@@ -1973,6 +1979,23 @@ pub fn build_with_component_controls(
     files: Files<'_>,
     controls: ComponentControls<'_>,
 ) -> Result<Receipt> {
+    build_with_component_checkpoint(
+        manifest,
+        output,
+        files,
+        controls,
+        #[cfg(feature = "tig-publication")]
+        None,
+    )
+}
+
+pub(crate) fn build_with_component_checkpoint(
+    manifest: &scene_delivery::FileRef,
+    output: &Path,
+    files: Files<'_>,
+    controls: ComponentControls<'_>,
+    #[cfg(feature = "tig-publication")] checkpoint: Option<NativeNormalization<'_>>,
+) -> Result<Receipt> {
     build_impl(
         &manifest.path,
         Path::new(""),
@@ -1987,6 +2010,8 @@ pub fn build_with_component_controls(
             manifest: Some(manifest),
             scene_controls: Some(controls.scenes),
             presentation_controls: Some(controls.presentations),
+            #[cfg(feature = "tig-publication")]
+            checkpoint,
             ..Provided::default()
         },
     )
@@ -2002,6 +2027,7 @@ pub(crate) fn build_with_current_components(
     scenes: &BTreeMap<String, SceneControls<'_>>,
     native: &NativePresentations<'_>,
     native_scenes: &NativeScenes<'_>,
+    checkpoint: Option<NativeNormalization<'_>>,
 ) -> Result<Receipt> {
     build_impl(
         &manifest.path,
@@ -2017,6 +2043,7 @@ pub(crate) fn build_with_current_components(
             scene_controls: Some(scenes),
             native_presentations: Some(native),
             native_scenes: Some(native_scenes),
+            checkpoint,
             ..Provided::default()
         },
     )
@@ -2117,6 +2144,13 @@ fn read_parent_control(
     Ok(raw)
 }
 
+#[cfg(feature = "tig-publication")]
+pub(crate) struct NativeNormalization<'a> {
+    pub ticket_sha256: &'a str,
+    pub prefix: &'a [scene_delivery::FileRef],
+    pub pause_after: Option<usize>,
+}
+
 #[derive(Default)]
 struct Provided<'a> {
     scene_inputs: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
@@ -2129,6 +2163,8 @@ struct Provided<'a> {
     presentation_controls: Option<&'a BTreeMap<String, &'a dyn scene_delivery::InputFiles>>,
     native_presentations: Option<&'a NativePresentations<'a>>,
     native_scenes: Option<&'a NativeScenes<'a>>,
+    #[cfg(feature = "tig-publication")]
+    checkpoint: Option<NativeNormalization<'a>>,
 }
 
 pub fn prepare(
@@ -2319,6 +2355,8 @@ fn build_internal_with_inputs(
         presentation_controls,
         native_presentations,
         native_scenes,
+        #[cfg(feature = "tig-publication")]
+        checkpoint,
     } = provided;
     let explicit_programs = programs.is_some();
     let local_programs = PathBuf::from(".");
@@ -2358,7 +2396,7 @@ fn build_internal_with_inputs(
     let protected_inputs = scene_inputs.is_some()
         || scene_outputs.is_some()
         || presentations.is_some()
-        || explicit_programs
+        || (explicit_programs && part_range.is_none())
         || controls.is_some()
         || scene_controls.is_some()
         || presentation_controls.is_some()
@@ -3155,7 +3193,31 @@ fn build_internal_with_inputs(
         )
     };
     let work = stage.as_ref().map_or(output, |stage| stage.path());
-    let temp = tempfile::tempdir_in(work)?;
+    #[cfg(feature = "tig-publication")]
+    let native_checkpoint = checkpoint
+        .map(|checkpoint| -> Result<_> {
+            let directory = parent.join("native-normalization");
+            if checkpoint.prefix.is_empty() {
+                fs::create_dir(&directory)?;
+            } else if checkpoint.prefix.len() > manifest.segments.len() {
+                bail!("native checkpoint prefix exceeds the admitted episode");
+            }
+            Ok((directory, checkpoint, sha(&manifest_bytes)))
+        })
+        .transpose()?;
+    #[cfg(feature = "tig-publication")]
+    let temp_root = native_checkpoint.as_ref().map_or(work, |(dir, _, _)| dir);
+    #[cfg(not(feature = "tig-publication"))]
+    let temp_root = work;
+    let temp = tempfile::tempdir_in(temp_root)?;
+    #[cfg(feature = "tig-publication")]
+    let temp = {
+        let mut temp = temp;
+        if native_checkpoint.is_some() {
+            temp.disable_cleanup(true);
+        }
+        temp
+    };
     let mut normalized = Vec::new();
     let mut records = Vec::new();
     let mut common: Option<MediaFacts> = None;
@@ -3191,6 +3253,35 @@ fn build_internal_with_inputs(
             .is_some_and(|b| index - completed >= b.max_segments)
         {
             break;
+        }
+        #[cfg(feature = "tig-publication")]
+        if let Some(((directory, scope, manifest_hash), pin)) = native_checkpoint
+            .as_ref()
+            .and_then(|state| state.1.prefix.get(index).map(|pin| (state, pin)))
+        {
+            let binding = checkpoint::NativeSegmentBinding {
+                ticket_sha256: scope.ticket_sha256,
+                manifest_sha256: manifest_hash,
+                ordinal: index,
+                segment,
+                sample_rate: manifest.output_sample_rate,
+                start_frame: frame_cursor,
+                start_sample: sample_cursor,
+            };
+            let (selected, record, first) =
+                checkpoint::replay_native_segment(directory, pin, &binding, source)?;
+            if let Some(prior) = &common {
+                if prior != &first {
+                    bail!("native checkpoint episode format changed between segments");
+                }
+            } else {
+                common = Some(first);
+            }
+            frame_cursor += record.frames;
+            sample_cursor += record.samples;
+            records.push(record);
+            normalized.push(selected);
+            continue;
         }
         let retained = retained_sources[index];
         let facts = probe_segment(source, programs, retained)?;
@@ -3682,6 +3773,33 @@ fn build_internal_with_inputs(
         if drift > u128::from(manifest.output_sample_rate) * u128::from(fps_denominator) {
             bail!("cumulative episode audio/picture drift exceeds one frame");
         }
+        #[cfg(feature = "tig-publication")]
+        if let Some((directory, scope, manifest_hash)) = &native_checkpoint {
+            checkpoint::save_native_segment(
+                directory,
+                &checkpoint::NativeSegmentBinding {
+                    ticket_sha256: scope.ticket_sha256,
+                    manifest_sha256: manifest_hash,
+                    ordinal: index,
+                    segment,
+                    sample_rate: manifest.output_sample_rate,
+                    start_frame: frame_cursor - frames,
+                    start_sample: sample_cursor - samples,
+                },
+                records
+                    .last()
+                    .context("missing completed segment receipt")?,
+                common.as_ref().context("missing episode media facts")?,
+                &selected,
+                source,
+            )?;
+            if scope.pause_after == Some(index + 1) {
+                bail!(
+                    "episode paused after saving {} normalized segments",
+                    index + 1
+                );
+            }
+        }
         normalized.push(selected);
     }
     if let Some(range) = part_range {
@@ -3694,6 +3812,7 @@ fn build_internal_with_inputs(
             work,
             asset_root,
             &preparation_scope.context("part scope missing")?,
+            programs,
         )?;
         drop(temp);
         fs::rename(stage.context("part stage missing")?.keep(), output)?;

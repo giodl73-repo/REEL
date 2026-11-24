@@ -1,6 +1,7 @@
 //! Complete, nonrecursive source sets. Original proofs are never rewritten.
 use super::*;
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::{BufRead, BufReader, Seek};
 pub const COMPOSED_RECEIPT: &str = "reel.episode-conform-receipt.v3";
 pub const COMPOSED_FINALIZATION: &str = "reel.programme-composition-finalization.v1";
 const HISTORICAL_PRODUCERS: &[&str] =
@@ -239,8 +240,13 @@ pub fn compose(path: &Path, root: &Path, output: &Path) -> Result<Receipt> {
         {
             bail!("incompatible complete source set");
         }
-        let proofs =
-            checked_source_proofs(&set, &source_root, &original_bytes, &source.producer.sha256)?;
+        let proofs = checked_source_proofs(
+            &set,
+            &source_root,
+            &original_bytes,
+            &source.producer.sha256,
+            true,
+        )?;
         let originals = prepare_originals(&proofs)?;
         // Offsets must be integral, so original rounded local boundaries remain valid.
         if u128::from(frames) * u128::from(target.output_sample_rate) * u128::from(clock.1)
@@ -320,8 +326,9 @@ pub fn compose(path: &Path, root: &Path, output: &Path) -> Result<Receipt> {
         Some(&provenance),
     )
 }
-fn packet_hashes(path: &Path) -> Result<Vec<String>> {
-    let out = command("ffprobe")
+fn packet_hashes(path: &Path) -> Result<BufReader<fs::File>> {
+    let mut rows = tempfile::tempfile()?;
+    let status = command("ffprobe")
         .args([
             "-v",
             "error",
@@ -333,35 +340,42 @@ fn packet_hashes(path: &Path) -> Result<Vec<String>> {
             "-show_entries",
             "packet=data_hash",
             "-of",
-            "json",
+            "csv=p=0",
         ])
         .arg(path)
-        .output()?;
-    if !out.status.success() {
+        .stdout(rows.try_clone()?)
+        .status()?;
+    if !status.success() {
         bail!("coded packet probe failed");
     }
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    v["packets"]
-        .as_array()
-        .context("missing coded packets")?
-        .iter()
-        .map(|p| {
-            p["data_hash"]
-                .as_str()
-                .map(str::to_owned)
-                .context("packet hash missing")
-        })
-        .collect()
+    rows.rewind()?;
+    Ok(BufReader::new(rows))
 }
+
 pub(super) fn verify_packet_copy(root: &Path, parts: &[PreparedPart], target: &Path) -> Result<()> {
-    let mut expected = Vec::new();
-    for p in parts {
-        expected.extend(packet_hashes(&scene_delivery::checked_file(
-            root, &p.video,
-        )?)?);
+    let mut final_rows = packet_hashes(target)?;
+    let mut expected = String::new();
+    let mut actual = String::new();
+    for part in parts {
+        let mut source_rows = packet_hashes(&scene_delivery::checked_file(root, &part.video)?)?;
+        for _ in 0..part.native.frames {
+            expected.clear();
+            actual.clear();
+            source_rows.read_line(&mut expected)?;
+            final_rows.read_line(&mut actual)?;
+            let Some(hash) = expected.trim_end().strip_prefix("SHA256:") else {
+                bail!("source coded packet hash missing");
+            };
+            if !valid_sha(hash) || expected.trim_end() != actual.trim_end() {
+                bail!("coded H264 packet payloads changed");
+            }
+        }
+        if source_rows.read_line(&mut expected)? != 0 {
+            bail!("extra source coded packets");
+        }
     }
-    if packet_hashes(target)? != expected {
-        bail!("coded H264 packet payloads changed");
+    if final_rows.read_line(&mut actual)? != 0 {
+        bail!("extra final coded packets");
     }
     Ok(())
 }

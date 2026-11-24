@@ -558,6 +558,336 @@ fn processing_targets_gains_and_envelopes_are_strict() {
 }
 
 #[test]
+fn cli_spoken_impact_rebuilds_only_editions_using_the_changed_english_take() {
+    let before = Fixture::new();
+    let mut after = Fixture::new();
+    let number = after
+        .document
+        .performances
+        .iter()
+        .position(|take| take.id == "en-opening")
+        .unwrap();
+    after.signals[number][5000] += 1;
+    after.sync();
+    let write_declaration = |fixture: &Fixture| {
+        let path = fixture.temp.path().join("declaration.json");
+        fs::write(&path, serde_json::to_vec(&fixture.document).unwrap()).unwrap();
+        path
+    };
+    let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .arg("spoken-edition-impact")
+        .arg(write_declaration(&before))
+        .arg(write_declaration(&after))
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&result.stdout).unwrap();
+    assert_eq!(report["schema"], "reel.spoken-edition-impact.v1");
+    assert_eq!(report["reuse_requires_checked_retained_output"], true);
+    let editions = report["editions"].as_array().unwrap();
+    assert_eq!(editions.len(), 4);
+    for (edition, action) in [
+        ("en-executive", "rebuild"),
+        ("en-technical", "rebuild"),
+        ("es-executive", "reuse"),
+        ("es-technical", "reuse"),
+    ] {
+        let row = editions
+            .iter()
+            .find(|row| row["edition_id"] == edition)
+            .unwrap();
+        assert_eq!(row["action"], action);
+        assert_eq!(
+            row["previous_recipe_sha256"] == row["current_recipe_sha256"],
+            action == "reuse"
+        );
+    }
+    let stdout = String::from_utf8_lossy(&result.stdout);
+    assert!(!stdout.contains("take-0.wav"));
+    assert!(!stdout.contains("alignment-0.json"));
+    #[cfg(feature = "tig-publication")]
+    {
+        let request = after.temp.path().join("rebuild.json");
+        let run = |previous: &std::path::Path| {
+            let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+                .arg("spoken-edition-plan-rebuild")
+                .arg(&request)
+                .arg("--previous-root")
+                .arg(previous)
+                .arg("--asset-root")
+                .arg(after.temp.path())
+                .output()
+                .unwrap();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            serde_json::from_slice::<serde_json::Value>(&result.stdout).unwrap()
+        };
+        fs::write(
+            &request,
+            serde_json::to_vec(&json!({
+                "schema":"reel.spoken-workflow-rebuild.v1",
+                "previous":"declaration.json","declaration":"declaration.json",
+                "profile":"engineering","budget_bytes":192*1024*1024,"scratch_bytes":16*1024*1024
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let changed = run(before.temp.path());
+        let args = changed["job"]["steps"][0]["args"].as_array().unwrap();
+        let selected: Vec<_> = args
+            .windows(2)
+            .filter(|items| items[0] == "--select-edition")
+            .map(|items| items[1].as_str().unwrap())
+            .collect();
+        assert_eq!(selected, ["en-executive", "en-technical"]);
+        assert!(run(after.temp.path())["job"].is_null());
+    }
+}
+
+#[test]
+fn cli_produces_and_checks_only_selected_spoken_editions() {
+    let fixture = Fixture::new();
+    let root = fixture.temp.path();
+    let declaration = root.join("declaration.json");
+    fs::write(&declaration, serde_json::to_vec(&fixture.document).unwrap()).unwrap();
+    for take in &fixture.document.performances {
+        if take.language == "es" {
+            fs::remove_file(root.join(&take.source.path)).unwrap();
+        }
+    }
+    let plan = root.join("scoped-plan.json");
+    let candidate = fixture.output();
+    let access = root.join("access");
+    let invoke = |args: &[&str]| {
+        let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+    };
+    let declaration = declaration.to_str().unwrap();
+    let plan = plan.to_str().unwrap();
+    let candidate_path = candidate.to_str().unwrap();
+    let root = root.to_str().unwrap();
+    invoke(&[
+        "spoken-edition-compile",
+        declaration,
+        "--output",
+        plan,
+        "--select-edition",
+        "en-executive",
+        "--select-edition",
+        "en-technical",
+    ]);
+    invoke(&[
+        "spoken-edition-produce",
+        plan,
+        "--declaration",
+        declaration,
+        "--asset-root",
+        root,
+        "--output",
+        candidate_path,
+    ]);
+    invoke(&[
+        "spoken-edition-check",
+        declaration,
+        plan,
+        "--asset-root",
+        root,
+        "--candidate",
+        candidate_path,
+        "--write-access",
+        access.to_str().unwrap(),
+    ]);
+    let receipt: serde_json::Value =
+        serde_json::from_slice(&fs::read(candidate.join("receipt.json")).unwrap()).unwrap();
+    let ids: Vec<_> = receipt["editions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|edition| edition["edition_id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["en-executive", "en-technical"]);
+    assert!(!candidate.join("edition-002.wav").exists());
+    assert!(access.is_dir());
+}
+
+#[test]
+#[cfg(all(windows, feature = "tig-publication"))]
+fn managed_spoken_recipe_retains_audio_and_checked_access() {
+    let previous = Fixture::new();
+    fs::write(
+        previous.temp.path().join("declaration.json"),
+        serde_json::to_vec(&previous.document).unwrap(),
+    )
+    .unwrap();
+    let mut fixture = Fixture::new();
+    let opening = fixture
+        .document
+        .performances
+        .iter()
+        .position(|take| take.id == "en-opening")
+        .unwrap();
+    fixture.signals[opening][5000] += 1;
+    fixture.sync();
+    let root = fixture.temp.path();
+    let declaration = root.join("declaration.json");
+    fs::write(&declaration, serde_json::to_vec(&fixture.document).unwrap()).unwrap();
+    let invoke = |args: &[&str]| -> serde_json::Value {
+        let result = Command::new(env!("CARGO_BIN_EXE_reel"))
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        serde_json::from_slice(&result.stdout).unwrap()
+    };
+    let declaration_path = declaration.to_str().unwrap();
+    let impact = invoke(&["spoken-edition-impact", declaration_path, declaration_path]);
+    let selected: BTreeMap<_, _> = impact["editions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|edition| edition["language"] == "en")
+        .map(|edition| {
+            (
+                edition["edition_id"].as_str().unwrap(),
+                &edition["current_recipe_sha256"],
+            )
+        })
+        .collect();
+    let project = tempfile::tempdir().unwrap();
+    let request = project.path().join("request.json");
+    let cache = project.path().join("cache");
+    for dir in [
+        cache.as_path(),
+        &project.path().join(".local"),
+        &project.path().join("registry"),
+    ] {
+        fs::create_dir(dir).unwrap();
+    }
+    let write = |name: &str, value| {
+        fs::write(
+            project.path().join(name),
+            serde_json::to_vec(&value).unwrap(),
+        )
+        .unwrap();
+    };
+    write(
+        ".local/storage-rust.json",
+        json!({
+            "cache_roots":[cache],"capacity":{"minimum_free_bytes":0,"minimum_free_basis_points":0}
+        }),
+    );
+    write(
+        "request.json",
+        json!({
+            "schema":"reel.spoken-workflow-job.v1","declaration":"declaration.json",
+            "profile":"engineering","expected_editions":selected,
+            "budget_bytes":192*1024*1024,"scratch_bytes":16*1024*1024
+        }),
+    );
+    let recipe = invoke(&[
+        "spoken-edition-describe-job",
+        request.to_str().unwrap(),
+        "--asset-root",
+        root.to_str().unwrap(),
+    ]);
+    let mut assets = recipe["inputs"].as_object().unwrap().clone();
+    for take in fixture
+        .document
+        .performances
+        .iter()
+        .filter(|take| take.language == "es")
+    {
+        assert!(!assets.contains_key(take.source.path.to_str().unwrap()));
+    }
+    for (name, item) in &assets {
+        let stored = reel_assets::ingest(project.path(), &root.join(name)).unwrap();
+        assert_eq!(stored["sha256"], item["sha256"]);
+        assert_eq!(stored["bytes"], item["bytes"]);
+    }
+    assets.extend(recipe["installed_tools"].as_object().unwrap().clone());
+    write("catalog.json", json!({"videos":[{"record":"inputs.json"}]}));
+    write("inputs.json", json!({"assets":assets}));
+    let rebuild = project.path().join("rebuild.json");
+    write(
+        "rebuild.json",
+        json!({
+            "schema":"reel.spoken-workflow-rebuild.v1","previous":"declaration.json",
+            "declaration":"declaration.json","profile":"engineering",
+            "budget_bytes":192*1024*1024,"scratch_bytes":16*1024*1024
+        }),
+    );
+    let roots = [
+        rebuild.to_str().unwrap(),
+        "--previous-root",
+        previous.temp.path().to_str().unwrap(),
+        "--asset-root",
+        root.to_str().unwrap(),
+    ];
+    let planned = invoke(&[&["spoken-edition-plan-rebuild"][..], &roots].concat());
+    assert_eq!(planned["job"], recipe);
+    let dispatch = project.path().join("dispatch");
+    let args = [
+        &["spoken-edition-dispatch-rebuild"][..],
+        &roots,
+        &[
+            "--project",
+            project.path().to_str().unwrap(),
+            "--dispatch",
+            dispatch.to_str().unwrap(),
+            "--job-sha256",
+            planned["job_sha256"].as_str().unwrap(),
+        ],
+    ]
+    .concat();
+    let dispatched = invoke(&args);
+    let raw = fs::read(dispatch.join("result.json")).unwrap();
+    assert_eq!(dispatched["result_sha256"], hash(&raw));
+    let result: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+    let retry = Command::new(env!("CARGO_BIN_EXE_reel"))
+        .args(&args)
+        .output()
+        .unwrap();
+    assert!(!retry.status.success());
+    assert_eq!(fs::read(dispatch.join("result.json")).unwrap(), raw);
+    assert_eq!(result["workspace_retained"], false);
+    let access = &result["outputs"]["spoken-access/access.json"];
+    let package: serde_json::Value =
+        serde_json::from_slice(&fs::read(access["path"].as_str().unwrap()).unwrap()).unwrap();
+    let editions = package["editions"].as_array().unwrap();
+    assert_eq!(editions.len(), 2);
+    for (index, edition) in editions.iter().enumerate() {
+        assert_eq!(edition["language"], "en");
+        assert!(!edition["chapters"].as_array().unwrap().is_empty());
+        assert_eq!(
+            edition["wave"]["sha256"],
+            result["outputs"][format!("spoken-candidate/edition-{index:03}.wav")]["sha256"]
+        );
+        assert_eq!(
+            edition["transcript"]["sha256"],
+            result["outputs"][format!("spoken-access/edition-{index:03}.txt")]["sha256"]
+        );
+    }
+}
+
+#[test]
 fn cli_compiles_produces_and_refuses_overwrite() {
     let mut f = Fixture::new();
     f.document.id = "PRIVATE-PROGRAMME-CANARY".into();

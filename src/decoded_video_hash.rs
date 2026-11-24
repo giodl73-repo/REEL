@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, bail};
 use std::{
     fs,
-    io::{Read, Seek},
+    io::{BufRead, BufReader, Read, Seek},
     path::Path,
     process::Stdio,
 };
@@ -21,6 +21,22 @@ pub(crate) fn hash(
     filter: Option<&str>,
     frame_counts: Option<&[u64]>,
 ) -> Result<Hashes> {
+    hash_with_command(
+        crate::episode_conform::command("ffmpeg"),
+        path,
+        pixel_format,
+        filter,
+        frame_counts,
+    )
+}
+
+pub(crate) fn hash_with_command(
+    mut command: std::process::Command,
+    path: &Path,
+    pixel_format: &str,
+    filter: Option<&str>,
+    frame_counts: Option<&[u64]>,
+) -> Result<Hashes> {
     if frame_counts.is_some_and(|counts| counts.is_empty() || counts.contains(&0)) {
         bail!("decoded video segments must contain frames");
     }
@@ -32,7 +48,6 @@ pub(crate) fn hash(
         Some(filter) => format!("[0:v:0]{filter},split=2[digest][counter]"),
         None => "[0:v:0]split=2[digest][counter]".into(),
     };
-    let mut command = crate::episode_conform::command("ffmpeg");
     command
         .args([
             "-v",
@@ -112,8 +127,11 @@ pub(crate) fn hash(
     }
     let mut frames = 0u64;
     let mut bytes = 0u64;
-    for line in fs::read_to_string(counter)?.lines() {
+    let mut reader = BufReader::new(fs::File::open(counter)?);
+    let mut line = String::new();
+    while reader.read_line(&mut line)? != 0 {
         if line.starts_with('#') || line.trim().is_empty() {
+            line.clear();
             continue;
         }
         let cells = line.split(',').map(str::trim).collect::<Vec<_>>();
@@ -130,6 +148,7 @@ pub(crate) fn hash(
         frames = frames
             .checked_add(1)
             .context("decoded video frame overflow")?;
+        line.clear();
     }
     if let Some(counts) = frame_counts {
         let expected = counts

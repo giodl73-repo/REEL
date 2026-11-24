@@ -6,6 +6,9 @@ use reel::spoken_programme::{
 };
 use std::time::Duration;
 
+#[path = "interactive_branch_admission.rs"]
+mod interactive_branch_admission;
+
 fn checked(f: &Fixture, policy: &ProcessingPolicy) -> Result<CheckedPackage> {
     checker::check(
         CheckRequest {
@@ -221,6 +224,344 @@ fn four_transcripts_and_chapters_follow_edition_clock() {
         assert!(text.contains("Speaker 1:"));
         assert!(!text.contains("en-opening"));
     }
+}
+
+#[test]
+fn branch_admission_uses_verified_bilingual_records() {
+    let f = lexical_fixture();
+    let policy = ProcessingPolicy::identity();
+    f.produce(&policy).unwrap();
+    let mut result = checked(&f, &policy).unwrap();
+    let root = f.temp.path().join("branch-access");
+    checker::write_access(&mut result, &root, || Ok(())).unwrap();
+    let manifest = fs::read(root.join("access.json")).unwrap();
+    checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
+    interactive_branch_admission::assert_verified_bilingual_selections(&result);
+}
+
+#[test]
+fn interactive_replay_routes_pin_verified_edition_chapters() {
+    #[derive(serde::Deserialize)]
+    struct ReplaySelection {
+        edition: String,
+        module: String,
+        samples: [u64; 2],
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ReplayFixture {
+        sample_rate: u32,
+        selections: BTreeMap<String, BTreeMap<String, ReplaySelection>>,
+        expected_visits_by_choice: BTreeMap<String, Vec<String>>,
+    }
+
+    let fixture: ReplayFixture = serde_json::from_str(include_str!(
+        "../fixtures/spoken-programme/interactive-replay.json"
+    ))
+    .unwrap();
+    let f = lexical_fixture();
+    let policy = ProcessingPolicy::identity();
+    f.produce(&policy).unwrap();
+    let mut result = checked(&f, &policy).unwrap();
+    let root = f.temp.path().join("replay-access");
+    checker::write_access(&mut result, &root, || Ok(())).unwrap();
+    let manifest = fs::read(root.join("access.json")).unwrap();
+    checker::verify_access(&mut result, &manifest, &root, || Ok(())).unwrap();
+    assert_eq!(result.access().sample_rate, fixture.sample_rate);
+    use reel::spoken_programme::interactive::{Graph, Selection, Session, demo};
+
+    let graph_json = serde_json::json!({
+        "entry": "opening",
+        "nodes": [
+            {"kind":"playback","id":"opening","next":"choose","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"choice","id":"choose","choices":[
+                {"id":"example","target":"example","labels":{"en":"Worked example","es":"Ejemplo resuelto"}},
+                {"id":"summary","target":"summary","labels":{"en":"Summary","es":"Resumen"}}]},
+            {"kind":"playback","id":"example","next":"example-closing","selections":[
+                {"language":"en","edition":"en-technical"},{"language":"es","edition":"es-technical"}]},
+            {"kind":"playback","id":"example-closing","next":"end","selections":[
+                {"language":"en","edition":"en-technical"},{"language":"es","edition":"es-technical"}]},
+            {"kind":"playback","id":"summary","next":"end","selections":[
+                {"language":"en","edition":"en-executive"},{"language":"es","edition":"es-executive"}]},
+            {"kind":"end","id":"end"}
+        ]
+    });
+    let graph: Graph = serde_json::from_value(graph_json.clone()).unwrap();
+    let mut bindings = BTreeMap::new();
+    for (language, selections) in &fixture.selections {
+        for (node, authored) in selections {
+            let edition = result
+                .access()
+                .editions
+                .iter()
+                .find(|edition| {
+                    edition.edition_id == authored.edition && edition.language == *language
+                })
+                .unwrap();
+            bindings.insert(
+                (node.as_str(), language.as_str()),
+                Selection {
+                    edition: &authored.edition,
+                    language,
+                    module: &authored.module,
+                    programme_sha256: &edition.wave.sha256,
+                    access_sha256: &edition.transcript.sha256,
+                    first_frame: authored.samples[0],
+                    end_frame: authored.samples[1],
+                },
+            );
+        }
+    }
+
+    #[cfg(all(windows, feature = "installation-native"))]
+    {
+        let manifest = f.temp.path().join("interactive.json");
+        let declaration = f.temp.path().join("interactive-declaration.json");
+        let plan = f.temp.path().join("interactive-plan.json");
+        let authored = bindings
+            .iter()
+            .map(|((node, language), binding)| {
+                json!({
+                    "node": node, "language": language,
+                    "edition": binding.edition, "module": binding.module,
+                    "programme_sha256": binding.programme_sha256,
+                    "access_sha256": binding.access_sha256,
+                    "first_frame": binding.first_frame, "end_frame": binding.end_frame
+                })
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            &manifest,
+            serde_json::to_vec(&json!({
+                "graph": graph_json, "bindings": authored,
+                "ending":{"en":"End of briefing","es":"Fin del informe"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fs::write(&declaration, serde_json::to_vec(&f.document).unwrap()).unwrap();
+        fs::write(&plan, f.plan()).unwrap();
+        let command = || {
+            let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_reel-interactive"));
+            child
+                .arg("--demo")
+                .arg(&manifest)
+                .arg("--declaration")
+                .arg(&declaration)
+                .arg("--plan")
+                .arg(&plan)
+                .arg("--source-root")
+                .arg(f.temp.path())
+                .arg("--candidate")
+                .arg(f.output())
+                .arg("--access")
+                .arg(&root)
+                .arg("--compiler-producer")
+                .arg(std::env::current_exe().unwrap());
+            child
+        };
+        let output = command()
+            .args(["--check", "--language", "es"])
+            .output()
+            .unwrap();
+        if let Some(endpoint) = std::env::var_os("REEL_INTERACTIVE_SYNTHETIC_ENDPOINT") {
+            run_interactive_output_smoke(command(), &endpoint).unwrap();
+        }
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Checked the authored bilingual demo")
+        );
+    }
+
+    for language in ["en", "es"] {
+        for (choice, expected) in &fixture.expected_visits_by_choice {
+            let replay = |by_position: bool| {
+                let mut session =
+                    Session::start(&graph, &result, bindings.clone(), language).unwrap();
+                let opening = session.visit();
+                let mut delivered = Vec::new();
+                let mut visits = Vec::new();
+                while let Some(node) = session.node() {
+                    let node = node.to_owned();
+                    let visit = session.visit();
+                    let selection = session.selection();
+                    visits.push((node.clone(), selection));
+                    if let Some(span) = selection {
+                        assert_eq!(session.frame(), Some(span.first_frame));
+                        let transcript = demo::transcript(&session, &result).unwrap();
+                        assert!(transcript.iter().any(|entry| !entry.text.trim().is_empty()));
+                        assert!(
+                            transcript
+                                .iter()
+                                .all(|entry| entry.start_sample < span.end_frame
+                                    && entry.end_sample > span.first_frame)
+                        );
+                        if node == "example" {
+                            assert!(session.observe(visit, span.first_frame + 1));
+                            assert!(session.set_paused(visit, true));
+                            assert!(!session.observe(visit, span.end_frame));
+                            assert!(!session.seek(visit, span.end_frame));
+                            assert!(session.seek(visit, span.first_frame));
+                            assert!(session.set_paused(visit, false));
+                            assert!(!session.observe(opening, span.end_frame));
+                        }
+                        let mut pcm = Vec::new();
+                        while session.visit() == visit {
+                            let count = session
+                                .deliver(&result, &f.output(), 8192, |chunk| {
+                                    pcm.extend_from_slice(chunk);
+                                    Ok(())
+                                })
+                                .unwrap();
+                            assert!((1..=8192).contains(&count));
+                        }
+                        assert_eq!(pcm.len() as u64, (span.end_frame - span.first_frame) * 6);
+                        let edition = result
+                            .access()
+                            .editions
+                            .iter()
+                            .find(|edition| edition.edition_id == span.edition)
+                            .unwrap();
+                        let original = fs::read(f.output().join(&edition.wave.path)).unwrap();
+                        assert_eq!(&original[36..40], b"data");
+                        let first = 44 + span.first_frame as usize * 6;
+                        let end = 44 + span.end_frame as usize * 6;
+                        assert_eq!(pcm, original[first..end]);
+                        delivered.push(hash(&pcm));
+                    } else if node == "choose" {
+                        if by_position {
+                            assert!(!demo::command(&mut session, opening, "activate").unwrap());
+                            assert_eq!(session.focused_choice().unwrap().0, "example");
+                            if choice == "summary" {
+                                assert!(demo::command(&mut session, visit, "next").unwrap());
+                                assert!(demo::command(&mut session, visit, "previous").unwrap());
+                                assert_eq!(session.focused_choice().unwrap().0, "example");
+                                assert!(demo::command(&mut session, visit, "next").unwrap());
+                            }
+                            assert_eq!(session.focused_choice().unwrap().0, choice);
+                            assert!(demo::command(&mut session, visit, "activate").unwrap());
+                        } else {
+                            assert!(
+                                demo::command(&mut session, visit, &format!("choose {choice}"))
+                                    .unwrap()
+                            );
+                        }
+                    } else {
+                        break;
+                    }
+                }
+                assert!(session.selection().is_none());
+                assert_eq!(session.node(), Some("end"));
+                let old_visit = session.visit();
+                let other_language = if language == "en" { "es" } else { "en" };
+                session.restart_in(other_language).unwrap();
+                assert_eq!(session.node(), Some("opening"));
+                assert_eq!(session.selection().unwrap().language, other_language);
+                assert!(!session.observe(old_visit, 0));
+                session.close();
+                assert_eq!(session.node(), None);
+                assert_eq!(session.frame(), None);
+                (visits, delivered)
+            };
+            let (visits, delivered) = replay(false);
+            assert_eq!((visits.clone(), delivered), replay(true));
+            assert_eq!(
+                visits.iter().map(|(node, _)| node).collect::<Vec<_>>(),
+                expected.iter().collect::<Vec<_>>()
+            );
+        }
+    }
+    let mut interrupted = Session::start(&graph, &result, bindings.clone(), "en").unwrap();
+    assert!(
+        interrupted
+            .deliver(&result, &f.output(), 8192, |_| {
+                anyhow::bail!("local sink failed")
+            })
+            .is_err()
+    );
+    assert_eq!(interrupted.node(), None);
+    let mut missing = bindings.clone();
+    missing.remove(&("summary", "es"));
+    assert!(Session::start(&graph, &result, missing, "en").is_err());
+    let mut stale = bindings;
+    stale.get_mut(&("summary", "es")).unwrap().access_sha256 = "";
+    assert!(Session::start(&graph, &result, stale, "es").is_err());
+}
+
+#[cfg(all(windows, feature = "installation-native"))]
+fn run_interactive_output_smoke(
+    mut command: std::process::Command,
+    endpoint: &std::ffi::OsStr,
+) -> Result<()> {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        process::Stdio,
+        sync::mpsc,
+        time::Instant,
+    };
+    let mut child = command
+        .args(["--language", "es", "--endpoint"])
+        .arg(endpoint)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let result = (|| -> Result<()> {
+        let mut input = child.stdin.take().unwrap();
+        let output = child.stdout.take().unwrap();
+        let (send, receive) = mpsc::channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(output).lines() {
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let deadline = Instant::now() + Duration::from_secs(45);
+        let expect_line = |expected: &str| -> Result<()> {
+            loop {
+                let line =
+                    receive.recv_timeout(deadline.saturating_duration_since(Instant::now()))??;
+                if line == expected {
+                    return Ok(());
+                }
+            }
+        };
+        expect_line("choose")?;
+        writeln!(input, "choose summary")?;
+        expect_line("summary")?;
+        expect_line("Fin del informe")?;
+        writeln!(input, "language en")?;
+        expect_line("opening")?;
+        expect_line("choose")?;
+        writeln!(input, "activate")?;
+        expect_line("example")?;
+        expect_line("example-closing")?;
+        expect_line("End of briefing")?;
+        writeln!(input, "close")?;
+        drop(input);
+        loop {
+            if let Some(status) = child.try_wait()? {
+                anyhow::ensure!(status.success(), "synthetic playback failed");
+                return Ok(());
+            }
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "synthetic playback cleanup timed out"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    })();
+    if result.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+    result
 }
 
 #[test]
