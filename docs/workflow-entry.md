@@ -90,3 +90,16 @@ JSON files, `inventory.json` with per-scene workflow input declarations, and
 audit evidence and the listed inputs when constructing the next workflow task.
 Audio stays in its existing store. Import does not select takes, listen to
 playback, qualify timing, render, or adopt a production profile.
+
+To prepare a scene work packet, supply the imported directory and the pinned
+inventory hash. The authored plan still owns the task prompt, language, expected
+outputs and dependencies. A text-proposal task can omit its inputs by supplying
+an empty array, or declare the exact input list found in the inventory.
+
+```powershell
+reel-workflow prepare-cue-scene INTAKE INVENTORY_SHA256 SCENE_ID PLAN TASK ATTEMPT DEPENDENCIES_JSON NEW_DIRECTORY
+```
+
+The work directory contains the normal manual handoff, three verified source
+controls and an input binding map. The command checks their bytes before writing
+the work directory. It uses the existing packet rules for dependency results.
