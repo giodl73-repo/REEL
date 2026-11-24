@@ -25,6 +25,16 @@ Replace `payload` with:
 }
 ```
 
+Prepare the payload from the exact exported `KEY.json` draft:
+
+```text
+reel-workflow-http prepare-github-issue OWNER/REPO KEY.json DRAFT_SHA256
+```
+
+The command checks the draft's raw SHA-256 and emits the complete `payload`
+object on stdout. It makes no HTTP call. Use that object in the pinned owned
+request with the matching endpoint and registry.
+
 Those placeholders are not runnable values. `KEY-github.json` from
 [`draft-film-issues`](workflow-film-findings.md) supplies the `issue` object;
 `KEY.json` supplies both identities. Rust callers can use
@@ -32,6 +42,8 @@ Those placeholders are not runnable values. `KEY-github.json` from
 semantic subject/version before composing the request. The adapter does not
 re-read the movie or authenticate the reported observation. The pinned request
 and explicit `--apply` authorize sending this exact text to that repository.
+Findings drafted from a copied board reference use the same issue identity and
+version key as findings for the equivalent explicit attachment and frame.
 No media, file bindings or evidence payloads are attached. Issue text contains
 project identities and hashes; keep it in an authorized destination.
 

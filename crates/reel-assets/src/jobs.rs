@@ -282,11 +282,7 @@ pub fn run(root: &Path, manifest: &Path) -> Result<Value> {
 
 /// Explicit continuation of a trusted native recipe using registered checkpoints.
 pub fn resume(root: &Path, manifest: &Path, checkpoint: &Path) -> Result<Value> {
-    let seed = resume::Seed::read(checkpoint)?;
-    if seed.evidence_key() != "checkpoint_resume" {
-        return Err("Checkpoint resume requires a resume descriptor".into());
-    }
-    run_seeded(root, manifest, Some(seed))
+    run_seeded(root, manifest, Some(resume_descriptor(checkpoint)?))
 }
 
 pub fn run_with_execution_window(root: &Path, manifest: &Path, policy: &Path) -> Result<Value> {
@@ -318,13 +314,47 @@ fn run_seeded(root: &Path, manifest: &Path, seed: Option<resume::Seed>) -> Resul
 /// Run the same budgeted/contained lifecycle under explicit trusted project ports.
 /// No catalog lookup or registry registration occurs unless the supplied ports do it.
 pub fn run_admitted(root: &Path, manifest: &Path, context: &mut RunContext<'_>) -> Result<Value> {
+    run_admitted_seeded(root, manifest, None, context)
+}
+
+/// Continue an exact recipe under the caller's admitted checkpoint authority.
+/// The authority must admit the recipe, descriptor and every checkpoint pin.
+/// The retention sink owns the outcome before workspace retirement.
+pub fn resume_admitted(
+    root: &Path,
+    manifest: &Path,
+    checkpoint: &Path,
+    context: &mut RunContext<'_>,
+) -> Result<Value> {
+    run_admitted_seeded(
+        root,
+        manifest,
+        Some(resume_descriptor(checkpoint)?),
+        context,
+    )
+}
+
+fn resume_descriptor(checkpoint: &Path) -> Result<resume::Seed> {
+    let seed = resume::Seed::read(checkpoint)?;
+    if seed.evidence_key() != "checkpoint_resume" {
+        return Err("Checkpoint resume requires a resume descriptor".into());
+    }
+    Ok(seed)
+}
+
+fn run_admitted_seeded(
+    root: &Path,
+    manifest: &Path,
+    seed: Option<resume::Seed>,
+    context: &mut RunContext<'_>,
+) -> Result<Value> {
     let (bytes, job) = read_job(manifest)?;
     crate::validate_roots(
         &context.config.cache_roots,
         false,
         &context.config.path_policy,
     )?;
-    run_loaded(root, bytes, job, None, context)
+    run_loaded(root, bytes, job, seed, context)
 }
 fn read_job(manifest: &Path) -> Result<(Vec<u8>, Job)> {
     let mut bytes = Vec::new();
@@ -783,7 +813,12 @@ mod process;
 /// This is an admission ceiling, not a default or a reservation of host memory.
 pub const MAX_QUIET_CHILD_MEMORY_BYTES: u64 = 24 * 1024 * 1024 * 1024;
 #[cfg(windows)]
-pub use process::{QuietLimits, run_quiet};
+pub use process::{BorrowedPseudoConsole, run_pseudoconsole_observed};
+#[cfg(windows)]
+pub use process::{
+    QuietEvent, QuietLimits, QuietProcess, current_peak_working_set_bytes, run_quiet,
+    run_quiet_observed,
+};
 
 #[cfg(not(windows))]
 mod process {

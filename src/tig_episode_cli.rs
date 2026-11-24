@@ -345,13 +345,37 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
         source: key(&p.source_id)?,
         owner: key(&p.owner)?,
     };
-    let mut journal = SourceJournal::open(&p.journal_root, &p.journal_minimum)?;
-    if let Some(current) = journal.source(&identity.source)? {
-        if current.owner != identity.owner
-            || current.revision != p.expected_revision
-            || current.pending.is_some()
-        {
-            bail!("episode source owner, revision or pending state differs");
+    let mut journal =
+        wait.run_source(|| SourceJournal::open(&p.journal_root, &p.journal_minimum))?;
+    let prepare_operation = phase(&p.source_id, &p.operation, "prepare")?;
+    if let Some(current) = wait.run_source(|| journal.source(&identity.source))? {
+        if current.owner != identity.owner {
+            bail!("episode source owner differs");
+        }
+        if let Some(pending) = current.pending {
+            // Only a recorded prepare for this exact operation may proceed.
+            // The subsequent prepare replays against the rebuilt resource root.
+            let command = Command::Prepare {
+                source: identity.source.clone(),
+                owner: identity.owner.clone(),
+                expected_revision: p.expected_revision,
+                selection: pending.selection,
+            };
+            let recorded = wait.run_source(|| {
+                SourceJournal::acknowledge(
+                    &p.journal_root,
+                    &p.journal_minimum,
+                    prepare_operation.clone(),
+                    command.clone(),
+                )
+            })?;
+            if recorded.reference != pending.reference
+                || recorded.source_revision != current.revision
+            {
+                bail!("episode pending prepare differs from original operation");
+            }
+        } else if current.revision != p.expected_revision {
+            bail!("episode source revision differs");
         }
     } else if p.expected_revision != 0 {
         bail!("episode source missing");
@@ -466,8 +490,9 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
     // Explicit request validation precedes source-journal adoption.
     let _fence = jobs::fence(&coordination, &journal, &identity)?;
     source_reuse::check_retired(&p, reused_children.as_ref(), &mut journal)?;
-    let prepared = journal.apply(
-        phase(&p.source_id, &p.operation, "prepare")?,
+    let prepared = wait.apply_source(
+        &mut journal,
+        prepare_operation,
         Command::Prepare {
             source: identity.source.clone(),
             owner: identity.owner.clone(),
@@ -475,7 +500,8 @@ fn run_for(path: &Path, purpose: Purpose) -> Result<Value> {
             selection: root.resources.selection().clone(),
         },
     )?;
-    let adopted = journal.apply(
+    let adopted = wait.apply_source(
+        &mut journal,
         phase(&p.source_id, &p.operation, "adopt")?,
         Command::Adopt {
             source: identity.source.clone(),

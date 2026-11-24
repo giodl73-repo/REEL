@@ -45,7 +45,10 @@ The dispatcher checks every edition's exported packet and source, then
 reopens all original workspace tickets and holds their existing reservations
 before it starts the first render. An unavailable or replaced workspace
 prevents execution of the batch. It uses the export's task order
-and stops at the first failure. After interruption, preserve the original
+and stops at the first failure. When an edition reports an execution error,
+the command exits nonzero with the original error, the failing task,
+earlier successful editions and the tasks it did not attempt.
+After interruption, preserve the original
 requests and tickets, resume an interrupted edition, verify a completed
 edition, and run any edition that has yet to start.
 

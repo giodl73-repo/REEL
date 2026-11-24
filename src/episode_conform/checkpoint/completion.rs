@@ -32,13 +32,6 @@ fn closed_workspace(prepared: &Path, assets: &Path) -> Result<()> {
     Ok(())
 }
 
-fn bounded_bytes(path: &Path) -> Result<Vec<u8>> {
-    if fs::metadata(path)?.len() > 4 * 1024 * 1024 {
-        bail!("completion checkpoint exceeds its bound");
-    }
-    Ok(fs::read(path)?)
-}
-
 pub(super) fn verify_preparation(prepared: &Path, assets: &Path) -> Result<()> {
     closed_workspace(prepared, assets)?;
     // Uses precisely the existing ordered picture/PCM, clock and boundary gates.

@@ -35,12 +35,37 @@ struct ExecutionWindow {
     workspace_budget_bytes: Option<u64>,
 }
 
+fn read_descriptor(path: &Path) -> Result<Vec<u8>> {
+    const MAX_DESCRIPTOR_BYTES: usize = 256 * 1024;
+    let mut bytes = Vec::new();
+    File::open(path)?
+        .take(MAX_DESCRIPTOR_BYTES as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > MAX_DESCRIPTOR_BYTES {
+        return Err("Job recovery descriptor exceeds intake budget".into());
+    }
+    Ok(bytes)
+}
+
+#[test]
+fn recovery_descriptors_reject_oversized_inputs_before_parsing() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("recovery.json");
+    File::create(&path)
+        .unwrap()
+        .set_len(256 * 1024 + 1)
+        .unwrap();
+    for read in [Seed::read, Seed::read_execution_window] {
+        assert_eq!(
+            read(&path).err().unwrap().to_string(),
+            "Job recovery descriptor exceeds intake budget"
+        );
+    }
+}
+
 impl Seed {
     pub fn read(path: &Path) -> Result<Self> {
-        let bytes = fs::read(path)?;
-        if bytes.len() > 256 * 1024 {
-            return Err("Job checkpoint descriptor exceeds intake budget".into());
-        }
+        let bytes = read_descriptor(path)?;
         Ok(Self {
             checkpoint: serde_json::from_slice(&bytes)?,
             sha256: format!("{:x}", Sha256::digest(&bytes)),
@@ -49,10 +74,7 @@ impl Seed {
     }
 
     pub fn read_execution_window(path: &Path) -> Result<Self> {
-        let bytes = fs::read(path)?;
-        if bytes.len() > 256 * 1024 {
-            return Err("Execution-window descriptor exceeds intake budget".into());
-        }
+        let bytes = read_descriptor(path)?;
         let window: ExecutionWindow = serde_json::from_slice(&bytes)?;
         if !matches!(
             window.schema.as_str(),
@@ -116,6 +138,9 @@ impl Seed {
             return Err("Invalid checkpoint identity, coverage or resume step".into());
         }
         let windows = &checkpoint.step_timeout_seconds;
+        // Legacy recipes retain their two-hour recovery allowance. A longer
+        // window must fit the limit already declared by the pinned recipe.
+        let maximum_window = job.step_timeout_limit_seconds.max(7200);
         let resource_schema = matches!(
             checkpoint.schema.as_str(),
             "reel.native-job-resume.v3" | "reel.native-job-execution-window.v2"
@@ -144,10 +169,9 @@ impl Seed {
                         && checkpoint.metadata_outputs.is_empty())))
             || windows.iter().any(|(index, seconds)| {
                 *index < checkpoint.start_step
-                    || job
-                        .steps
-                        .get(*index)
-                        .is_none_or(|step| *seconds <= step.timeout_seconds || *seconds > 7200)
+                    || job.steps.get(*index).is_none_or(|step| {
+                        *seconds <= step.timeout_seconds || *seconds > maximum_window
+                    })
             })
         {
             return Err("Invalid explicitly scoped recovery execution window".into());

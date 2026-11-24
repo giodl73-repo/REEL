@@ -238,7 +238,16 @@ fn video_clock(path: &Path, frames: u64, n: u64, d: u64) -> Result<()> {
 /// Offsets are explicit controls; finalization rejects any false offset/coverage.
 pub fn produce(manifest: &Path, assets: &Path, range: &Range, output: &Path) -> Result<()> {
     let scope = checkpoint::snapshot_job_scope(assets)?;
-    declared_control(manifest, assets, &scope)?;
+    produce_scoped(manifest, assets, range, output, scope)
+}
+
+fn produce_scoped(
+    manifest: &Path,
+    assets: &Path,
+    range: &Range,
+    output: &Path,
+    scope: Vec<scene_delivery::FileRef>,
+) -> Result<()> {
     build_internal(
         manifest,
         assets,
@@ -259,23 +268,32 @@ pub fn produce_from_file(
     output: &Path,
 ) -> Result<()> {
     let scope = checkpoint::snapshot_job_scope(assets)?;
-    declared_control(range, assets, &scope)?;
-    if fs::metadata(range)?.len() > 4096 {
+    let reference = declared_control(range, assets, &scope)?;
+    let mut raw = Vec::new();
+    fs::File::open(range)?.take(4097).read_to_end(&mut raw)?;
+    if raw.len() > 4096 {
         bail!("programme range control too large");
     }
-    let range: Range = serde_json::from_slice(&fs::read(range)?)?;
-    produce(manifest, assets, &range, output)
+    if raw.len() as u64 != reference.bytes || sha(&raw) != reference.sha256 {
+        bail!("programme range differs from declared control");
+    }
+    let range: Range = serde_json::from_slice(&raw)?;
+    produce_scoped(manifest, assets, &range, output, scope)
 }
 
-fn declared_control(path: &Path, root: &Path, scope: &[scene_delivery::FileRef]) -> Result<()> {
+pub(super) fn declared_control<'a>(
+    path: &Path,
+    root: &Path,
+    scope: &'a [scene_delivery::FileRef],
+) -> Result<&'a scene_delivery::FileRef> {
     let absolute = path.canonicalize()?;
     let relative = absolute
         .strip_prefix(root.canonicalize()?)
         .context("control outside closed job")?;
-    if !scope.iter().any(|f| f.path == relative) {
-        bail!("undeclared programme control");
-    }
-    Ok(())
+    scope
+        .iter()
+        .find(|f| f.path == relative)
+        .context("undeclared programme control")
 }
 
 #[allow(clippy::too_many_arguments)]

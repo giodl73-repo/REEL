@@ -3,6 +3,18 @@ use std::{env, path::Path};
 
 fn run() -> Result<()> {
     let args: Vec<String> = env::args().collect();
+    if args.get(1).is_some_and(|arg| arg == "--help") {
+        println!(
+            "Usage: reel-episode-conform <command> ...\n\
+             Commands:\n\
+             \x20 produce-parts <manifest> --asset-root <dir> --range <range.json> --output-dir <new-dir>\n\
+             \x20 finalize-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
+             \x20 compose-parts <part-set> --asset-root <dir> --output-dir <new-dir>\n\
+             \x20 describe-resume <prepared> --asset-root <job-dir> --start-step <number>\n\
+             \x20 build <manifest> --input-root <dir> --asset-root <dir> --output-dir <new-dir>"
+        );
+        return Ok(());
+    }
     if let [
         _,
         command,
@@ -78,6 +90,20 @@ fn run() -> Result<()> {
             println!(
                 "bounded normalization batch retained; assembly and final verification remain pending"
             );
+            return Ok(());
+        }
+    }
+    if let [_, command, prepared, asset_flag, assets, step_flag, step] = args.as_slice() {
+        if command == "describe-resume"
+            && asset_flag == "--asset-root"
+            && step_flag == "--start-step"
+        {
+            let descriptor = reel::episode_conform::normalization_resume_descriptor(
+                Path::new(prepared),
+                Path::new(assets),
+                step.parse()?,
+            )?;
+            println!("{descriptor}");
             return Ok(());
         }
     }
