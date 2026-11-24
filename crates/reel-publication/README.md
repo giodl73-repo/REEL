@@ -81,3 +81,11 @@ fresh PNG/lettering-edit restoration or press readiness. Rendering new reading
 pixels, actual managed-job qualification, the review/fix
 loop and full project adoption remain required. Keep the selected BBJ inputs and
 approvals immutable while producing candidate versions.
+
+## Verify a one-page correction
+
+Run `check-book-delta BASELINE BASELINE_SHA256 CANDIDATE CANDIDATE_SHA256 PAGE_ID`
+with the two private reader directories and their independently pinned
+`receipt.json` hashes. It rechecks each sheet's SVG, reading PNG and source
+receipt, verifies stable page order, and requires only the designated page's
+SVG and reading pixels to change. Use the stable page ID shown in the reader.
