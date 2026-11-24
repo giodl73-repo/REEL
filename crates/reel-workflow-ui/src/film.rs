@@ -184,6 +184,7 @@ pub fn project(request: &Request, reader: &mut impl film_inspect::Reader) -> Res
                         versions: vec![],
                         spans: vec![],
                         review_spans: vec![],
+                        review_targets: vec![],
                         task: None,
                     });
                     board.units.len() - 1

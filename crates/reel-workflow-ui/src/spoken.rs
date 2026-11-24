@@ -285,6 +285,7 @@ fn project(request: Request) -> Result<Board> {
                     title: chapter.module_id,
                     versions: vec![],
                     review_spans: vec![],
+                    review_targets: vec![],
                     task: None,
                     spans: vec![Span {
                         language: edition.language.clone(),
