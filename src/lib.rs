@@ -57,6 +57,8 @@ pub mod production;
 pub mod production_binding;
 pub mod production_operations;
 pub mod production_package;
+#[cfg(feature = "tig")]
+pub mod retained_cue_intake;
 pub mod retained_dialogue_gain;
 pub mod review_decision;
 pub mod scene_authoring_inputs;

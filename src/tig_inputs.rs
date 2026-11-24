@@ -26,6 +26,7 @@ use tig_store::source_claims::Selection;
 
 pub const PROFILE_SCHEMA: &str = "reel.tig-input-profile.experimental-1";
 pub const ARCHIVE_PROFILE_SCHEMA: &str = "reel.tig-archive-input-profile.experimental-1";
+pub const GIT_ASSET_PROFILE_SCHEMA: &str = "reel.git-asset-input-profile.v1";
 const PROFILE_BYTES_MAX: usize = 65_536;
 pub const JOB_BYTES_MAX: usize = 4 * 1024 * 1024;
 const INPUT_NAMES_MAX: usize = 4096;
@@ -87,8 +88,8 @@ fn bounded_file(path: &Path, max: usize) -> Result<Vec<u8>> {
 impl Profile {
     pub fn read(path: &Path) -> Result<Self> {
         let value = tig_core::identity::parse_json(&bounded_file(path, PROFILE_BYTES_MAX)?)
-            .map_err(|_| anyhow!("invalid Tig profile JSON"))?;
-        serde_json::from_value(value).map_err(|_| anyhow!("invalid Tig profile fields"))
+            .map_err(|_| anyhow!("invalid Git-asset input profile JSON"))?;
+        serde_json::from_value(value).map_err(|_| anyhow!("invalid Git-asset input profile fields"))
     }
 }
 pub fn read_job(path: &Path) -> Result<Job> {
@@ -136,8 +137,11 @@ pub struct Source {
 }
 impl Source {
     pub fn open(profile: Profile) -> Result<Self> {
-        if profile.schema != PROFILE_SCHEMA {
-            bail!("unsupported or unbounded Tig profile");
+        if !matches!(
+            profile.schema.as_str(),
+            PROFILE_SCHEMA | GIT_ASSET_PROFILE_SCHEMA
+        ) {
+            bail!("unsupported Git-asset input profile schema");
         }
         let admitted = Self::admit(profile.admitted)?;
         let required = profile.byte_source.required;

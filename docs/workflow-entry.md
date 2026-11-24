@@ -65,3 +65,41 @@ before adopting a replacement profile.
 Comics are a separate publication lane and are not a film release gate. Current
 Season 5 production, selected media, recordings, approvals and active profiles
 remain with their existing accepted workflows until explicit project adoption.
+
+### Import a retained cue package
+
+Run the following from the Windows workflow bundle or a REEL build with
+`tig-history`.
+
+```powershell
+reel import-retained-cues PROFILE RECORD_ID NEW_DIRECTORY
+```
+
+Use a `reel.git-asset-input-profile.v1` with the exact source repository
+commit, scoped cue record and definition, an explicit selected-payload admission,
+and the existing read-only Git-asset byte stores. Existing input profiles use
+the same fields. The importer accepts the private
+recorded-episode cue package used for S5E03. It verifies ordered scene controls,
+matches each cue's audio identity to the package and its spoken-text and order
+pins to the performance plan, and streams verification of each retained audio
+object using the existing byte reader.
+
+The new directory contains the exact package, performance plan, numbered scene
+JSON files, `inventory.json` with per-scene workflow input declarations, and
+`file-bindings.json` with the local control paths. Use the inventory as source
+audit evidence and the listed inputs when constructing the next workflow task.
+Audio stays in its existing store. Import does not select takes, listen to
+playback, qualify timing, render, or adopt a production profile.
+
+To prepare a scene work packet, supply the imported directory and the pinned
+inventory hash. The authored plan still owns the task prompt, language, expected
+outputs and dependencies. A text-proposal task can omit its inputs by supplying
+an empty array, or declare the exact input list found in the inventory.
+
+```powershell
+reel-workflow prepare-cue-scene INTAKE INVENTORY_SHA256 SCENE_ID PLAN TASK ATTEMPT DEPENDENCIES_JSON NEW_DIRECTORY
+```
+
+The work directory contains the normal manual handoff, three verified source
+controls and an input binding map. The command checks their bytes before writing
+the work directory. It uses the existing packet rules for dependency results.

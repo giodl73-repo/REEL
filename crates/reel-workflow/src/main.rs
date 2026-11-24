@@ -4,6 +4,14 @@ use std::{collections::BTreeMap, env, path::Path};
 fn run() -> Result<serde_json::Value> {
     let args: Vec<String> = env::args().skip(1).collect();
     match args.as_slice() {
+        [command, intake, pin, scene, plan, task, attempt, dependencies, output] if command == "prepare-cue-scene" => {
+            let task_key = cue_scene::export(cue_scene::Export {
+                intake: Path::new(intake), inventory_sha256: pin, scene_id: scene,
+                plan: manual::read_control(Path::new(plan))?, task_id: task, attempt,
+                dependencies: manual::read_control(Path::new(dependencies))?, output: Path::new(output),
+            })?;
+            Ok(serde_json::json!({"ok":true,"task_key":task_key,"provider_invoked":false,"production_admitted":false}))
+        }
         [command, packet, result, receipt] if command == "check-speech-handoff" => {
             let packet = manual::read_control(Path::new(packet))?;
             let result = manual::read_control(Path::new(result))?;
@@ -76,7 +84,8 @@ fn main() {
     {
         println!(
             "reel-workflow capabilities\n\
-reel-workflow check-plan PLAN\n\
+reel-workflow check-plan PLAN
+reel-workflow prepare-cue-scene INTAKE INVENTORY_SHA256 SCENE_ID PLAN TASK ATTEMPT DEPENDENCIES_JSON NEW_DIRECTORY\n\
 reel-workflow inspect-film REPOSITORY REQUEST NEW_SIDECAR\n\
 reel-workflow draft-film-issues REQUEST SHA256 NEW_DIRECTORY\n\
 reel-workflow prepare-film-repair REQUEST SHA256 NEW_DIRECTORY\n\
