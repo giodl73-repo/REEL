@@ -116,6 +116,8 @@ enum Operation {
     CheckStores { bindings: PathBuf },
     /// Freeze and read back a committed scene/episode into a private fragment.
     CaptureContext { profile: PathBuf, output: PathBuf },
+    /// Preview native capture metadata node/byte demand without writing the store.
+    InspectCaptureBudget { profile: PathBuf, output: PathBuf },
     /// Adopt planned resources, render in bounded scratch and retain exact results.
     Run { profile: PathBuf },
     /// Run a bounded planning job and retain its output contract; no media render.
@@ -150,6 +152,9 @@ fn main() -> ExitCode {
     let result = match operation {
         Operation::CaptureFrozen { profile, output } => {
             reel::tig_frozen_job_cli::capture(&profile, &output)
+        }
+        Operation::InspectCaptureBudget { profile, output } => {
+            reel::tig_native_job_cli::inspect_capture_budget(&profile, &output)
         }
         Operation::RunFrozen {
             profile,

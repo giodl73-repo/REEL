@@ -3,6 +3,11 @@ use super::metadata_wait::{MetadataWait, Waiting};
 use super::*;
 use anyhow::Context;
 use reel_assets::admission;
+use tig_core::tree::NodeStore;
+use tig_git::source::native::context::ProductionContext;
+
+mod budget;
+pub use budget::inspect_capture_budget;
 
 const SCHEMA: &str = "reel.tig-native-capture-profile.experimental-1";
 const EPISODE_SCHEMA: &str = "reel.tig-episode-capture-profile.experimental-1";
@@ -43,6 +48,38 @@ enum Contract {
     Presentation(crate::tig_presentation::Request),
 }
 impl Contract {
+    fn freeze(
+        &self,
+        source: &mut crate::tig_inputs::Source,
+        before: Option<&Path>,
+        store: &mut impl NodeStore,
+    ) -> Result<ProductionContext> {
+        let limits = TreeLimits::default();
+        match self {
+            Self::Presentation(request) => {
+                crate::tig_presentation::freeze_context(source, request, store, limits)
+            }
+            Self::Browser(request) => {
+                crate::tig_browser::freeze_context(source, request, store, limits)
+                    .map(|(_, context)| context)
+            }
+            Self::Scene(request) => tig_scene::freeze_render_context(
+                source,
+                request,
+                before.ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?,
+                store,
+                limits,
+            ),
+            Self::Episode(request) => {
+                crate::tig_episode::freeze_composition_context(source, request, store, limits)
+            }
+            Self::Delivery(request) => {
+                crate::tig_delivery_template::freeze_context(source, request, store, limits)
+                    .map(|(_, context)| context)
+            }
+        }
+    }
+
     fn parse(schema: &str, value: Value) -> Result<Self> {
         match schema {
             PRESENTATION_SCHEMA => {
@@ -177,44 +214,9 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
         bail!("metadata bounds changed before capture");
     }
     let before = preparation.as_ref().map(|p| p.path().join("capture"));
-    let context = match &contract {
-        Contract::Presentation(request) => crate::tig_presentation::freeze_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        ),
-        Contract::Browser(request) => crate::tig_browser::freeze_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        )
-        .map(|(_, context)| context),
-        Contract::Scene(request) => tig_scene::freeze_render_context(
-            &mut source,
-            request,
-            before
-                .as_deref()
-                .ok_or_else(|| anyhow::anyhow!("scene preparation missing"))?,
-            &mut store,
-            TreeLimits::default(),
-        ),
-        Contract::Episode(request) => crate::tig_episode::freeze_composition_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        ),
-        Contract::Delivery(request) => crate::tig_delivery_template::freeze_context(
-            &mut source,
-            request,
-            &mut store,
-            TreeLimits::default(),
-        )
-        .map(|(_, context)| context),
-    }
-    .context(CaptureStage("native freeze"))?;
+    let context = contract
+        .freeze(&mut source, before.as_deref(), &mut store)
+        .context(CaptureStage("native freeze"))?;
     let mut archive = json!({
         "schema": crate::tig_inputs::ARCHIVE_PROFILE_SCHEMA,
         "archive": context.archive(), "checkpoint": source.checkpoint(),
@@ -357,19 +359,74 @@ fn capture(profile: &Path, output: &Path) -> Result<Value> {
 /// Explicit write action. Existing stores/coordination only, private output;
 /// public diagnostics omit source identity, paths and raw compiler errors.
 pub fn capture_context(profile: &Path, output: &Path) -> Result<Value> {
-    capture(profile, output).map_err(|error| {
-        // Only our bounded stage names are public. Lower-level provider/IO errors
-        // may contain private paths; do not format their error chain.
-        match error.downcast_ref::<CaptureStage>() {
-            Some(stage)=>anyhow::anyhow!("source capture refused during {stage}; verify profile, roots, capacity and source contracts"),
-            None=>anyhow::anyhow!("source capture refused; verify profile, roots, capacity and source contracts"),
-        }
-    })
+    capture(profile, output).map_err(capture_failure)
+}
+
+fn capture_failure(error: anyhow::Error) -> anyhow::Error {
+    // Only our bounded stage names are public. Lower-level provider/IO errors
+    // may contain private paths; do not format their error chain.
+    let budget = matches!(
+        error.downcast_ref::<tig_git::source::Error>(),
+        Some(tig_git::source::Error::Budget)
+    ) || matches!(
+        error.downcast_ref::<tig_core::tree::TreeError>(),
+        Some(tig_core::tree::TreeError::Budget)
+    ) || matches!(
+        error.downcast_ref::<tig_store::metadata::Error>(),
+        Some(tig_store::metadata::Error::Budget)
+    );
+    match (error.downcast_ref::<CaptureStage>(), budget) {
+        (Some(stage), true) => anyhow::anyhow!(
+            "source capture refused during {stage}: bounded resource budget exceeded"
+        ),
+        (None, true) => anyhow::anyhow!("source capture refused: bounded resource budget exceeded"),
+        (Some(stage), false) => anyhow::anyhow!(
+            "source capture refused during {stage}; verify profile, roots, capacity and source contracts"
+        ),
+        (None, false) => anyhow::anyhow!(
+            "source capture refused; verify profile, roots, capacity and source contracts"
+        ),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn typed_budget_refusals_keep_the_public_stage_without_private_error_context() {
+        let errors = [
+            anyhow::Error::new(tig_git::source::Error::Budget),
+            anyhow::Error::new(tig_core::tree::TreeError::Budget),
+            anyhow::Error::new(tig_store::metadata::Error::Budget),
+        ];
+        for error in errors {
+            let error = error
+                .context("private/source/path and private artifact text")
+                .context(CaptureStage("native freeze"));
+            let public = format!("{:#}", capture_failure(error));
+            assert_eq!(
+                public,
+                "source capture refused during native freeze: bounded resource budget exceeded"
+            );
+        }
+    }
+
+    #[test]
+    fn arbitrary_error_text_does_not_become_a_public_budget_or_private_diagnostic() {
+        let error = anyhow::anyhow!("Budget: private/source/path and private artifact text")
+            .context(CaptureStage("native freeze"));
+        assert_eq!(
+            format!("{:#}", capture_failure(error)),
+            "source capture refused during native freeze; verify profile, roots, capacity and source contracts"
+        );
+        assert_eq!(
+            format!(
+                "{:#}",
+                capture_failure(anyhow::Error::new(tig_store::metadata::Error::Budget))
+            ),
+            "source capture refused: bounded resource budget exceeded"
+        );
+    }
     #[test]
     fn delivery_capture_requires_its_own_schema_and_bounded_request_before_store_access() {
         let mut value = json!({"schema":crate::tig_delivery_template::SCHEMA,"root_id":"delivery/source",
