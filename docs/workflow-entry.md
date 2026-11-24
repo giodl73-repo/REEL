@@ -66,18 +66,19 @@ Comics are a separate publication lane and are not a film release gate. Current
 Season 5 production, selected media, recordings, approvals and active profiles
 remain with their existing accepted workflows until explicit project adoption.
 
-### Import a retained Melena cue package
+### Import a retained cue package
 
 Run the following from the Windows workflow bundle or a REEL build with
 `tig-history`.
 
 ```powershell
-reel-tig-job import-melena-cues PROFILE RECORD_ID NEW_DIRECTORY
+reel import-retained-cues PROFILE RECORD_ID NEW_DIRECTORY
 ```
 
-Use an existing `reel.tig-input-profile.experimental-1` with the exact Melena
+Use a `reel.git-asset-input-profile.v1` with the exact source repository
 commit, scoped cue record and definition, an explicit selected-payload admission,
-and the existing read-only byte stores. The importer accepts the private
+and the existing read-only Git-asset byte stores. Existing input profiles use
+the same fields. The importer accepts the private
 recorded-episode cue package used for S5E03. It verifies ordered scene controls,
 matches each cue's audio identity to the package and its spoken-text and order
 pins to the performance plan, and streams verification of each retained audio

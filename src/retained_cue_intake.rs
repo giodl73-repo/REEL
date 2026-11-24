@@ -223,7 +223,7 @@ pub fn import(profile: &Path, id: &str, output: &Path) -> Result<Value> {
         "package scene coverage"
     );
 
-    let evidence = json!({"schema":"reel.melena-cue-intake.v1","episode":package.metadata.episode_id,
+    let evidence = json!({"schema":"reel.retained-cue-intake.v1","episode":package.metadata.episode_id,
         "source_commit":commit,"source_checkpoint":source.checkpoint(),
         "source_record":id,"package":package_pin,"scenes":inventory,
         "takes_selected":false,"playback_listened":false,"timing_qualified":false});

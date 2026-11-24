@@ -732,6 +732,15 @@ fn run_cli() -> Result<()> {
                 serde_json::to_string_pretty(&reel::spoken_programme::validate(&document)?)?
             );
         }
+        #[cfg(feature = "tig-history")]
+        Command::ImportRetainedCues {
+            profile,
+            record_id,
+            output,
+        } => {
+            let report = reel::retained_cue_intake::import(&profile, &record_id, &output)?;
+            println!("{}", serde_json::to_string(&report)?);
+        }
         Command::SpokenEditionImpact {
             previous,
             current,
@@ -3086,6 +3095,13 @@ enum Command {
         select_edition: Vec<String>,
         #[arg(long, value_enum, default_value_t = reel::spoken_programme::compiler::CompilationProfile::Engineering)]
         profile: reel::spoken_programme::compiler::CompilationProfile,
+    },
+    /// Import a retained cue package from Git-asset and export local workflow inputs.
+    #[cfg(feature = "tig-history")]
+    ImportRetainedCues {
+        profile: PathBuf,
+        record_id: String,
+        output: PathBuf,
     },
     /// Identify spoken editions affected by a changed declaration or selected take.
     SpokenEditionImpact {
