@@ -30,7 +30,46 @@ fn main() -> std::process::ExitCode {
         println!(
             "reel-publication bbj-prepare SELECTION INPUT_ROOT PUBLICATION LANGUAGE NEW_DIRECTORY\nreel-publication layered-compose REQUEST INPUT_BINDINGS NEW_DIRECTORY\nreel-publication layered-compose-book PREPARED_BOOK NEW_DIRECTORY\nBBJ preparation reads named controls; layered composition verifies SVG sources and writes an editable source bundle without rasterization or native retention. Book composition reuses exact selected reading PNGs after SVG comparison."
         );
+        #[cfg(feature = "comic")]
+        println!(
+            "reel-publication check-book-delta BASELINE BASELINE_SHA256 CANDIDATE CANDIDATE_SHA256 PAGE_ID"
+        );
         return std::process::ExitCode::SUCCESS;
+    }
+    #[cfg(feature = "comic")]
+    if let [
+        command,
+        baseline,
+        baseline_sha,
+        candidate,
+        candidate_sha,
+        target,
+    ] = args.as_slice()
+        && command == "check-book-delta"
+    {
+        use std::path::Path;
+        return match reel_publication::book_delta::check(
+            Path::new(baseline),
+            baseline_sha,
+            Path::new(candidate),
+            candidate_sha,
+            target,
+        ) {
+            Ok(unchanged) => {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":true,"target_page":target,"unchanged_pages":unchanged})
+                );
+                std::process::ExitCode::SUCCESS
+            }
+            Err(error) => {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":false,"error":{"code":"book-delta-refused","detail":error.to_string()}})
+                );
+                std::process::ExitCode::FAILURE
+            }
+        };
     }
     let result = match args.as_slice() {
         #[cfg(feature = "comic")]

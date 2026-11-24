@@ -68,7 +68,7 @@ pub(crate) fn read_bytes(path: &Path) -> Result<Vec<u8>> {
     }
     Ok(raw)
 }
-fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)

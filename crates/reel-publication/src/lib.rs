@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 #[cfg(feature = "comic")]
+pub mod book_delta;
+#[cfg(feature = "comic")]
 pub mod comic;
 #[cfg(feature = "comic")]
 pub mod comic_issue;

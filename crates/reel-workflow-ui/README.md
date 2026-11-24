@@ -161,3 +161,18 @@ Native preview-provider integration, complete multi-scene project projection, ad
 music/effects/review-film shelves and W4 issue/fix/rebuild actions remain separate
 work. Generic git-asset registration/guarded preview requirements are tracked in
 [git-asset #75](https://github.com/giodl73-repo/git-asset/issues/75).
+
+### Comic reading board
+
+Use the prepared book control and the pinned receipt from its completed local
+reading copy. Supply the source commit associated with that book selection.
+
+```powershell
+reel-workflow-ui project-comic PREPARED_BOOK REVIEW_DIRECTORY RECEIPT_SHA256 SOURCE_COMMIT NEW_BOARD
+```
+
+The projection checks the ordered page identities and reading-image and SVG pins
+against both controls. The board shows page previews and lets you copy a page,
+panel, or lettering review reference. It checks preview bytes when opened. The
+source commit is a caller-supplied label. Approval and Git-asset custody are
+separate from this board projection.
