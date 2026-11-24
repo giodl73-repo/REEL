@@ -50,7 +50,10 @@ fn main() -> std::process::ExitCode {
                 language,
                 std::path::Path::new(output),
             )
-            .map_err(|_| "bbj-prepare-refused-preserve-partial")
+            .map_err(|error| {
+                eprintln!("{error:#}");
+                "bbj-prepare-refused-preserve-partial"
+            })
         }
         #[cfg(feature = "comic")]
         [command, request, bindings, output] if command == "layered-compose" => {
