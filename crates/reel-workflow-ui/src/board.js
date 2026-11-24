@@ -50,7 +50,7 @@
       }container.append(grid);
     }highlight();
   }
-  function reviewReference(unit, version, span, review) {
+  function reviewReference(unit, version, span, review, target) {
     const language = state.language;
     const reference = {
       project: state.data.project,
@@ -62,12 +62,13 @@
       semantic_id: unit.semantic_id,
       language,
       version: {id: version.id, designation: version.designation, asset: version.asset},
+      ...(target && {review_target: target}),
       ...(span && {cue_span: span}),
       ...(review && {scene_review_span: review}),
     };
     const text = JSON.stringify(reference, null, 2);
     const control = node("div", "review-reference");
-    const button = node("button", "marker", "Copy review reference");
+    const button = node("button", "marker", target ? `Copy reference for ${target}` : "Copy review reference");
     const status = node("p", "muted");
     status.setAttribute("role", "status");
     button.addEventListener("click", async () => {
@@ -103,7 +104,23 @@
       const end=clock(review.end_sample/review.sample_rate);
       root.append(node("h3","","Scene review timing"),node("p","",`${start}–${end}`));
     }
-    if(version)root.append(reviewReference(unit, version, span, review));
+    if(version){
+      root.append(reviewReference(unit, version, span, review));
+      if(unit.review_targets?.length){
+        const select=node("select");
+        select.setAttribute("aria-label","Panel or lettering ID");
+        for(const target of unit.review_targets){
+          const option=node("option","",target);
+          option.value=target;
+          select.append(option);
+        }
+        const panelReference=node("div");
+        const renderTarget=()=>panelReference.replaceChildren(reviewReference(unit,version,span,review,select.value));
+        select.addEventListener("change",renderTarget);
+        renderTarget();
+        root.append(select,panelReference);
+      }
+    }
     const details=node("details");details.append(node("summary","","Source & lineage"));const list=node("dl");
     const approvals=(state.data.approvals||[]).filter(a=>a.subject.logical_id===version?.asset.logical_id);
     const recorded=version?.approval_reference || approvals.some(a=>exactSubject(a.subject,version?.asset));
