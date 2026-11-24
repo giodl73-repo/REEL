@@ -295,6 +295,17 @@ pub fn compose(request_path: &Path, bindings_path: &Path, output: &Path) -> Resu
     write_new(&std::path::absolute(output)?, &files)
 }
 
+fn relative_font_path(root: &Path, path: &Path) -> Result<String> {
+    let resolved = path.canonicalize().context("book font provenance")?;
+    let relative = resolved
+        .strip_prefix(root)
+        .context("book font must be inside the source root")?;
+    Ok(relative
+        .to_str()
+        .context("non-Unicode book font path")?
+        .replace(std::path::MAIN_SEPARATOR, "/"))
+}
+
 /// Prepare one ordered request per selected sheet from an exact BBJ book control.
 /// Reads named JSON controls only; actual layer bytes are opened by compose.
 pub fn prepare_bbj(
@@ -395,7 +406,11 @@ pub fn prepare_bbj(
         for field in ["script", "font", "font_license"] {
             if let Some(value) = author.get(field).filter(|v| !v.is_null()) {
                 let asset: Asset = serde_json::from_value(value.clone())?;
-                provenance.push(asset.pin());
+                let mut pin = asset.pin();
+                if matches!(field, "font" | "font_license") && Path::new(&pin.path).is_absolute() {
+                    pin.path = relative_font_path(&root, Path::new(&pin.path))?;
+                }
+                provenance.push(pin);
             }
         }
         let mut bindings = BTreeMap::new();
@@ -721,6 +736,21 @@ pub fn compose_book(prepared: &Path, output: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn book_font_path_is_relative_and_cannot_escape_source_root() {
+        let source = tempfile::tempdir().unwrap();
+        let external = tempfile::tempdir().unwrap();
+        let root = source.path().canonicalize().unwrap();
+        let inside = root.join("included.ttf");
+        let outside = external.path().join("excluded.ttf");
+        std::fs::write(&inside, b"exact font").unwrap();
+        std::fs::write(&outside, b"exact font").unwrap();
+        assert_eq!(
+            super::relative_font_path(&root, &inside).unwrap(),
+            "included.ttf"
+        );
+        assert!(super::relative_font_path(&root, &outside).is_err());
+    }
     use super::*;
     fn fixture() -> (Request, BTreeMap<String, Vec<u8>>) {
         let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="100" height="200"><text x="2" y="4">Exact &amp; words</text></svg>"#.to_vec();
