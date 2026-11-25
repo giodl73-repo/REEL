@@ -124,6 +124,9 @@ pub struct DeliveryProfile {
     pub score_gain_db: f64,
     pub score_fade_in_samples: u64,
     pub score_fade_out_samples: u64,
+    /// Continue the final score run through the template-owned presentation tail.
+    #[serde(default)]
+    pub score_through_presentation_tail: bool,
     /// Explicit phase in the delivery sample clock, pinned to the selected music.
     #[serde(default)]
     pub score_source_starts_by_binding: BTreeMap<String, ScoreSourceStart>,
@@ -1202,6 +1205,14 @@ fn compile_with_budget(
             "end":{"kind":"cue-end","cue_id":cue.cue_id}
         }));
     }
+    if profile.score_through_presentation_tail
+        && (tail_samples == 0
+            || !events
+                .last()
+                .is_some_and(|event| event.end == duration && event.score_role.is_some()))
+    {
+        bail!("score tail requires a presentation tail and a score run ending at the cue clock");
+    }
     let mut used_roles = BTreeSet::new();
     let mut run = 0usize;
     let mut index = 0usize;
@@ -1227,7 +1238,12 @@ fn compile_with_budget(
         run += 1;
         let attachment = format!("m-{safe_role}-{run}");
         let start_sample = events[start].start;
-        let end_sample = events[index - 1].end;
+        let through_tail = profile.score_through_presentation_tail && index == events.len();
+        let end_sample = if through_tail {
+            picture_duration
+        } else {
+            events[index - 1].end
+        };
         let run_len = end_sample - start_sample;
         if profile.score_fade_in_samples + profile.score_fade_out_samples > run_len {
             bail!("score fades exceed semantic run length");
@@ -1251,7 +1267,7 @@ fn compile_with_budget(
             "id":attachment,
             "target":{"kind":"audio","audio_event_id":attachment},
             "start":anchor(start_sample,&cues)?,
-            "end":anchor(end_sample,&cues)?
+            "end":if through_tail { scene_end_anchor(&cues, tail_samples)? } else { anchor(end_sample,&cues)? }
         }));
         for binding in &mut event_bindings[start..index] {
             binding["audio_attachment_ids"] = json!([attachment]);
