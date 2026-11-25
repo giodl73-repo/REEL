@@ -1,0 +1,26 @@
+[package]
+name = "reel-workflow-git-asset"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+publish = false
+description = "Isolated public git-asset workflow preparation, claims and retained candidates"
+
+[workspace]
+
+[dependencies]
+reel-workflow = { path = "../reel-workflow" }
+reel-assets = { path = "../reel-assets" }
+reel-publication = { path = "../reel-publication" }
+git-asset = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71", features = ["assets", "annex-publish"] }
+git-asset-core = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71" }
+git-asset-store = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71" }
+git-asset-model = { git = "https://github.com/giodl73-repo/git-asset", rev = "0ccb137cf5a78416e780f8a3372017f642a5cb71" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.11.0"
+
+[dev-dependencies]
+fs2 = "=0.4.3"
+tempfile = "=3.27.0"

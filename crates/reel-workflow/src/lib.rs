@@ -11,6 +11,7 @@ pub mod film_rebuild;
 pub mod film_repair;
 pub mod film_review;
 pub mod handoff;
+pub mod input;
 pub mod manual;
 pub mod speech_handoff;
 

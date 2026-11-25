@@ -1,0 +1,57 @@
+name: Public git-asset workflow adapter
+
+on:
+  push:
+    paths:
+      - '.github/workflows/public-git-asset.yml'
+      - 'crates/reel-workflow-git-asset/**'
+      - 'crates/reel-workflow/**'
+      - 'crates/reel-publication/**'
+      - 'crates/reel-assembly/**'
+      - 'crates/reel-assets/**'
+      - '!**/*.md'
+  pull_request:
+    paths:
+      - '.github/workflows/public-git-asset.yml'
+      - 'crates/reel-workflow-git-asset/**'
+      - 'crates/reel-workflow/**'
+      - 'crates/reel-publication/**'
+      - 'crates/reel-assembly/**'
+      - 'crates/reel-assets/**'
+      - '!**/*.md'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-git-asset-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
+  CARGO_INCREMENTAL: '0'
+  CARGO_BUILD_JOBS: '1'
+
+jobs:
+  inputs:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@1.98.0
+        with:
+          components: rustfmt, clippy
+      - name: Check isolated package formatting
+        run: cargo fmt --manifest-path crates/reel-workflow-git-asset/Cargo.toml -- --check
+      - name: Check locked public dependency graph
+        run: cargo clippy --manifest-path crates/reel-workflow-git-asset/Cargo.toml --all-targets --locked -- -D warnings
+      - name: Test exact synthetic snapshots without media or native caches
+        shell: pwsh
+        run: |
+          $env:GIT_ASSET_TEST_GIT_EXE = (Get-Command git -ErrorAction Stop).Source
+          cargo test --manifest-path crates/reel-workflow-git-asset/Cargo.toml --all-targets --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
