@@ -211,7 +211,7 @@ pub fn validate_with_inputs(
     let manifest = load_with_inputs(path, inputs)?;
     validate_loaded(path, &manifest, inputs)
 }
-fn validate_loaded(
+pub(crate) fn validate_loaded(
     path: &Path,
     manifest: &AnalysisManifest,
     inputs: &mut crate::validation_inputs::ValidationInputs<'_>,

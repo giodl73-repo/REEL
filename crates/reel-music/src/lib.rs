@@ -1,9 +1,12 @@
 pub mod analysis;
 pub mod arrangement_plan;
+pub mod capture_comparison;
 pub mod comparison;
+pub mod conformance;
 pub mod edl;
 pub mod evidence;
 pub mod export;
+pub mod extensions;
 pub mod external_repair;
 pub mod hash;
 pub mod interchange;
