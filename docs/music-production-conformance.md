@@ -84,3 +84,16 @@ note transcription against the same source clock. Demucs has a residual
 an arrangement. A MuScriptor target-conditioned pass answers a different
 question from an unprompted instrument test. Keep those evidence types
 distinct when deciding whether a production standard is supported.
+
+### Compare note candidates across perspectives
+
+```powershell
+reel-music-conformance compare-captures mix.json other.json trumpet soprano_and_alto_sax 120
+```
+
+Supply captures that share a source clock, such as a full excerpt and an
+aligned estimated stem. The report retains both capture hashes, both audio
+hashes and one-to-one matches at the same MIDI pitch within the requested
+number of milliseconds. It compares note starts even if the analyzer assigns
+different labels. Keep the agreed note candidates available for phrase review.
+The common-clock binding and instrument identity need independent evidence.

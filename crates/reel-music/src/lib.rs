@@ -1,5 +1,6 @@
 pub mod analysis;
 pub mod arrangement_plan;
+pub mod capture_comparison;
 pub mod comparison;
 pub mod conformance;
 pub mod edl;

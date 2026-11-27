@@ -2,7 +2,7 @@ use std::{env, path::PathBuf};
 
 use anyhow::{Context, Result, bail};
 use reel_music::{
-    conformance,
+    capture_comparison, conformance,
     extensions::{self, FilePin, Registry},
 };
 
@@ -34,6 +34,18 @@ fn main() -> Result<()> {
         [option, registry, root, request, output] if option.as_os_str() == "run-pop2piano" => {
             extensions::run_pop2piano(&Registry::load(registry)?, root, request, output)?;
         }
+        [option, left, right, left_label, right_label, tolerance]
+            if option.as_os_str() == "compare-captures" =>
+        {
+            let report = capture_comparison::compare(
+                left,
+                right,
+                left_label.to_str().context("invalid left label")?,
+                right_label.to_str().context("invalid right label")?,
+                tolerance.to_str().context("invalid tolerance")?.parse()?,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
         [policy, analysis] => {
             println!(
                 "{}",
@@ -41,7 +53,7 @@ fn main() -> Result<()> {
             );
         }
         _ => bail!(
-            "usage: reel-music-conformance POLICY ANALYSIS | extensions REGISTRY | capture-muscriptor REGISTRY WAV SHA256 BYTES OUTPUT"
+            "usage: reel-music-conformance POLICY ANALYSIS | extensions REGISTRY | capture-muscriptor REGISTRY WAV SHA256 BYTES OUTPUT | run-demucs REGISTRY AUDIO OUTPUT | run-pop2piano REGISTRY ROOT REQUEST OUTPUT | compare-captures LEFT RIGHT LEFT_LABEL RIGHT_LABEL TOLERANCE_MS"
         ),
     }
     Ok(())
