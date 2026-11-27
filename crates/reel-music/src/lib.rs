@@ -5,6 +5,7 @@ pub mod conformance;
 pub mod edl;
 pub mod evidence;
 pub mod export;
+pub mod extensions;
 pub mod external_repair;
 pub mod hash;
 pub mod interchange;

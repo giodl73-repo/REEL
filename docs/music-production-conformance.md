@@ -39,3 +39,48 @@ observation IDs and source sample ranges. It produces production findings.
 Artistic ratings for groove, phrasing, development and payoff belong to the
 listening rubric. The CLI runs offline and consumes existing REEL evidence;
 it does not execute a transcription or instrument-recognition model.
+
+## Optional local tools
+
+Use a `reel.music-extensions.v1` registry to configure these tools. The
+`installations` map keys are `muscriptor`, `demucs`, `pop2piano`, `ffmpeg`,
+and `musescore`. Each installation provides a version and a `files` map.
+Every file entry provides an absolute path, SHA-256 and byte count. Additional
+runtime files such as interpreter, processor and soundfont assets can also be
+pinned. The crate reports which entries are unconfigured, invalid or verified.
+
+| Extension | Required file keys | Evidence |
+| --- | --- | --- |
+| MuScriptor | executable, weights, config | Raw time-stamped candidate notes and instrument labels |
+| Demucs | executable, adapter, weights, config | Estimated audio stems |
+| Pop2Piano | executable, adapter, weights, config | Piano reduction candidates |
+| FFmpeg | executable | Audio decoding and preparation |
+| MuseScore | executable | Notation and deliberate instrument control renders |
+
+MuScriptor uses its installed CLI and local weights with the sibling model
+config. Demucs supports the CAIMITOS lossless soundfile CLI adapter and the
+local htdemucs repository format. Pop2Piano supports the CAIMITOS single
+private request adapter. Its model config and processor files need to be
+available in the pinned local snapshot. FFmpeg and MuseScore are exposed
+through the Rust registry for use by evidence producers.
+
+```powershell
+reel-music-conformance extensions registry.json
+reel-music-conformance capture-muscriptor registry.json excerpt.wav SHA256 BYTES events.json
+reel-music-conformance run-demucs registry.json excerpt.wav estimated-stems
+reel-music-conformance run-pop2piano registry.json SOURCE_ROOT request.json reduction
+```
+
+The capture command stages the exact local WAV and writes raw, unprompted
+MuScriptor events with an input and installation identity. The model runner
+requests CPU and offline mode. Demucs uses a private staged local checkpoint.
+The legacy PyTorch loading exception is limited to the exact retained
+htdemucs checkpoint. The tools must be installed by the operator. Registry
+verification checks declared files and does not establish detector accuracy.
+
+The songbook precedent is to compare the original mix, estimated stems, and
+note transcription against the same source clock. Demucs has a residual
+`other` stream that can still mix several instruments. Pop2Piano proposes
+an arrangement. A MuScriptor target-conditioned pass answers a different
+question from an unprompted instrument test. Keep those evidence types
+distinct when deciding whether a production standard is supported.
